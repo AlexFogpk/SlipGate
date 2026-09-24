@@ -14,10 +14,14 @@ const MONSTER_DEFS = {
   vore: { name: 'Ворог', hp: 400, w: 22, h: 24, speed: 38, pain: 0.2, painT: 0.3, gib: -80, mass: 3, voice: 0.5, headCol: '#b08080', cd: [2.0, 3.2], keep: 140, squash: true },
   spawn: { name: 'Порождение', hp: 80, w: 12, h: 10, speed: 70, pain: 0, painT: 0, gib: -9999, mass: 0.8, voice: 1.6, headCol: '#2a4490', cd: [0.3, 0.7], squash: true },
   shambler: { name: 'Шамблер', hp: 600, w: 24, h: 36, speed: 52, pain: 0.12, painT: 0.3, gib: -60, mass: 6, voice: 0.4, headCol: '#cfc8b8', cd: [1.7, 2.8], halfExplosion: true },
+  gargoyle: { name: 'Гаргулья', hp: 110, w: 16, h: 16, speed: 95, pain: 0.4, painT: 0.2, gib: -50, mass: 1.5, voice: 0.9, headCol: '#7a7a70', fly: true, cd: [1.1, 2.0] },
+  shub: { name: 'Шуб-Ниггурат', hp: 1, w: 84, h: 92, speed: 0, pain: 0, painT: 0, gib: -9999, mass: 99, voice: 0.3, headCol: '#4a2a3a', boss: true, cd: [2.2, 3.2] },
   chthon: { name: 'Хтон', hp: 3, w: 56, h: 120, speed: 0, pain: 0, painT: 0, gib: -9999, mass: 99, voice: 0.3, headCol: '#4a2c1c', boss: true, cd: [1.6, 2.4] },
 };
 
-const MONSTER_CHARS = { g: 'grunt', d: 'dog', e: 'enforcer', k: 'knight', o: 'ogre', z: 'zombie', f: 'fiend', s: 'scrag', n: 'hknight', v: 'vore', t: 'spawn', m: 'shambler', c: 'chthon' };
+const SHUB_EYES = [[-18, -62], [-6, -70], [8, -66], [20, -56], [-24, -44], [26, -40], [0, -50], [-12, -34], [14, -30]];
+
+const MONSTER_CHARS = { g: 'grunt', d: 'dog', e: 'enforcer', k: 'knight', o: 'ogre', z: 'zombie', f: 'fiend', s: 'scrag', n: 'hknight', v: 'vore', t: 'spawn', m: 'shambler', c: 'chthon', a: 'gargoyle', w: 'shub' };
 
 class Monster {
   constructor(type, cx, bottom) {
@@ -60,7 +64,8 @@ class Monster {
     // босс
     this.hits = 0;
     this.throwT = 0;
-    if (d.boss) this.y += 14; // босс по пояс в лаве
+    if (type === 'chthon') this.y += 14; // Хтон по пояс в лаве
+    if (type === 'shub') this.facing = 1;
     this.baseY = this.y;
   }
 
@@ -165,11 +170,17 @@ class Monster {
         this.stateT += dt;
         if (this.target && !this.leapHit && overlap(this, { x: this.target.x - 3, y: this.target.y - 3, w: this.target.w + 6, h: this.target.h + 6 })) {
           this.leapHit = true;
-          const dmg = this.type === 'fiend' ? rand(30, 40) : 10;
+          const dmg = this.type === 'fiend' ? rand(30, 40) : this.type === 'gargoyle' ? rand(12, 18) : 10;
           applyDamage(this.target, dmg, this, 'melee', this.facing * 150, -80);
-          Sound.play(this.type === 'fiend' ? 'axehit' : 'bark', this.cx, this.cy);
+          Sound.play(this.type === 'fiend' || this.type === 'gargoyle' ? 'axehit' : 'bark', this.cx, this.cy);
         }
-        if (this.onGround && this.stateT > 0.15) { this.state = 'chase'; this.cd = rand(...this.def.cd) * Game.skillCdScale(); }
+        if (this.def.fly) {
+          // гаргулья после пике взмывает вверх
+          if (this.stateT > 0.75 || this.leapHit || this.blockedX) {
+            this.state = 'chase'; this.vy = -150; this.vx *= 0.3;
+            this.cd = rand(...this.def.cd) * Game.skillCdScale();
+          }
+        } else if (this.onGround && this.stateT > 0.15) { this.state = 'chase'; this.cd = rand(...this.def.cd) * Game.skillCdScale(); }
         break;
       case 'down':
         this.stateT -= dt;
@@ -186,7 +197,7 @@ class Monster {
 
     // физика
     if (this.def.fly && this.state !== 'down') {
-      moveBody(this, dt);
+      this.blockedX = moveBody(this, dt).hitX;
     } else {
       const g = this.waterLevel >= 2 ? 0.35 : 1;
       this.vy = Math.min(this.vy + GRAVITY * g * dt, 800);
@@ -286,6 +297,14 @@ class Monster {
         else if (see && this.onGround && d > 55 && d < 230 && Math.abs(t.cy - this.cy) < 70) this.leap(330, 250);
         break;
       case 'scrag': if (see && d < 380) this.startAttack('ranged'); break;
+      case 'gargoyle':
+        if (see && d < 250) {
+          const a = Math.atan2(t.cy - this.cy, t.cx - this.cx);
+          this.state = 'leap'; this.stateT = 0; this.leapHit = false;
+          this.vx = Math.cos(a) * 330; this.vy = Math.sin(a) * 330;
+          Sound.play('sight', this.cx, this.cy, { p: 1.6, gap: 0.2 });
+        }
+        break;
       case 'vore': if (see && d < 420) this.startAttack('ranged'); break;
       case 'shambler':
         if (gap < 10) this.startAttack('melee');
@@ -350,9 +369,17 @@ class Monster {
   takeDamage(dmg, attacker, kind, kx = 0, ky = 0) {
     if (this.gibbed) return;
     if (this.def.boss) {
+      if (this.type === 'shub' && kind === 'telefrag' && this.alive && this.state !== 'dying') {
+        this.state = 'dying'; this.stateT = 0;
+        HUD.center('Шуб-Ниггурат разорвана изнутри!', 3);
+        Sound.play('roar'); Sound.play('gib');
+        for (const m of Game.monsters) if (m.minion && m.alive) applyDamage(m, 5000, attacker, 'telefrag');
+        return;
+      }
+      this.hurtFlash = 0.05;
       if (attacker && attacker.isPlayer && !Game.bossHintShown) {
         Game.bossHintShown = true;
-        HUD.center('Оружие бессильно против Хтона!\nИщите иной способ...', 3);
+        HUD.center(this.type === 'shub' ? 'Её плоть не берёт оружие!\nПроникните внутрь...' : 'Оружие бессильно против Хтона!\nИщите иной способ...', 3);
       }
       return;
     }
@@ -450,6 +477,7 @@ class Monster {
 
   // --- босс ---
   updateBoss(dt) {
+    if (this.type === 'shub') { this.updateShub(dt); return; }
     const p = Game.player;
     this.throwT = Math.max(0, this.throwT - dt);
     this.stateT += dt;
@@ -522,8 +550,77 @@ class Monster {
     return true;
   }
 
+  // --- Шуб-Ниггурат: неподвижна, плюётся шарами и порождает слуг; погибает только от телефрага ---
+  updateShub(dt) {
+    const p = Game.player;
+    this.stateT += dt;
+    this.hurtFlash -= dt;
+    switch (this.state) {
+      case 'idle':
+        if (p && p.alive && dist(p.cx, p.cy, this.cx, this.cy) < 520) {
+          this.state = 'active'; this.stateT = 0; this.cd = 2; this.spawnCd = 2.5;
+          Sound.play('roar'); Game.shake(this.cx, this.cy, 8);
+          HUD.center('Шуб-Ниггурат пробудилась!', 2.5);
+        }
+        break;
+      case 'active': {
+        this.cd -= dt; this.spawnCd -= dt;
+        if (this.cd <= 0 && p && p.alive) {
+          this.cd = rand(...this.def.cd) * Game.skillCdScale();
+          const sx = this.cx, sy = this.y + 40;
+          if (Game.level.los(sx, sy, p.cx, p.cy)) {
+            spawnProjectile('voreball', this, sx, sy, Math.atan2(p.cy - sy, p.cx - sx) - 0.4 + Math.random() * 0.8, { target: p });
+            Sound.play('voreball', sx, sy);
+          }
+        }
+        if (this.spawnCd <= 0) {
+          this.spawnCd = rand(5, 8) * Game.skillCdScale();
+          const alive = Game.monsters.filter((m) => m.minion && m.alive).length;
+          if (alive < 5) this.spawnMinion();
+        }
+        break;
+      }
+      case 'dying':
+        this.shubBoomT = (this.shubBoomT || 0) - dt;
+        if (this.shubBoomT <= 0) {
+          this.shubBoomT = 0.18;
+          const x = this.x + rand(0, this.w), y = this.y + rand(0, this.h);
+          FX.explosion(x, y, 0.8);
+          Sound.play('explode', x, y);
+          FX.blood(x, y, 0, -1, 12, 2);
+          Game.shake(x, y, 6);
+        }
+        if (this.stateT > 3) {
+          this.alive = false;
+          this.gibbed = true;
+          Game.kills++;
+          for (let i = 0; i < 30; i++) FX.gib(this.x + rand(0, this.w), this.y + rand(0, this.h), rand(-300, 300), rand(-450, -100), pick(['#3a2430', '#5a2a3a', '#7a1a10', '#2a1a20']), randInt(3, 6));
+          FX.explosion(this.cx, this.cy, 2);
+          Sound.play('gib');
+          Game.onBossDefeated();
+        }
+        break;
+      default: break;
+    }
+  }
+
+  spawnMinion() {
+    this.minionIdx = ((this.minionIdx || 0) + 1) % 4;
+    const type = ['spawn', 'gargoyle', 'spawn', 'scrag'][this.minionIdx];
+    const x = this.cx + rand(-this.w / 2, this.w / 2);
+    const fly = MONSTER_DEFS[type].fly;
+    const m = new Monster(type, x, fly ? this.y + 10 : this.y + this.h);
+    m.counted = false;
+    m.minion = true;
+    if (Game.player && Game.player.alive) m.alert(Game.player, false);
+    Game.monsters.push(m);
+    FX.teleport(m.cx, m.cy);
+    Sound.play('teleport', m.cx, m.cy);
+  }
+
   lights(out) {
     if (this.type === 'chthon' && this.state !== 'idle') out.push({ x: this.cx, y: this.y + 40, r: 180, c: [1, 0.5, 0.2], i: 0.7 });
+    if (this.type === 'shub') out.push({ x: this.cx, y: this.cy, r: 200, c: [0.7, 0.3, 0.9], i: this.state === 'idle' ? 0.35 : 0.65 });
     if (this.type === 'shambler' && this.state === 'attack' && this.attackKind === 'ranged') {
       out.push({ x: this.cx + this.facing * 6, y: this.y - 8, r: 70, c: [0.6, 0.7, 1], i: 0.8 * Math.random() + 0.3 });
     }
@@ -565,6 +662,17 @@ class Monster {
       ctx.fillStyle = '#ff6030';
       const ex = x + (this.facing > 0 ? 1 : -4);
       ctx.fillRect(ex, y + 3, 3, 1);
+    }
+    if (this.type === 'shub' && this.state !== 'dying') {
+      for (const [ex, ey] of SHUB_EYES) {
+        const blink = Math.sin(this.anim * 1.7 + ex) > 0.93;
+        ctx.fillStyle = blink ? '#3a2430' : '#ffe060';
+        ctx.fillRect(x + ex - 1, y + this.h + ey - 1, 3, 2);
+      }
+    }
+    if (this.type === 'gargoyle') {
+      ctx.fillStyle = '#ff4020';
+      ctx.fillRect(x + this.facing * 4 - 1, y + this.h - 15, 2, 1);
     }
     if (this.type === 'dog' || this.type === 'scrag') {
       ctx.fillStyle = '#ff3010';
@@ -702,4 +810,6 @@ const ATTACKS = {
     if (m.stateT > 1.2) m.endAttack();
   },
   chthon() { /* босс атакует в updateBoss */ },
+  gargoyle() { /* атака — пике, см. tryAttack */ },
+  shub() { /* см. updateShub */ },
 };

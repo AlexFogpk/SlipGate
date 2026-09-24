@@ -203,6 +203,13 @@ const SFX = {
     S.noise(o, t, 0.9, 0.35 * v, 'lowpass', 400, 150, 1, 0.05);
     S.osc(o, 'sawtooth', 55, 48, t, 0.9, 0.12 * v, 0.05);
   },
+  lift(S, o, t, v) {
+    S.noise(o, t, 0.7, 0.25 * v, 'lowpass', 260, 180, 2, 0.08);
+    S.osc(o, 'square', 70, 62, t, 0.5, 0.05 * v, 0.05);
+  },
+  checkpoint(S, o, t, v) {
+    [523, 659, 784, 1046].forEach((f, i) => S.osc(o, 'sine', f, f, t + i * 0.07, 0.5, 0.16 * v));
+  },
   button(S, o, t, v) {
     S.osc(o, 'square', 420, 420, t, 0.05, 0.2 * v);
     S.osc(o, 'square', 640, 640, t + 0.06, 0.07, 0.2 * v);

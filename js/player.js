@@ -47,6 +47,11 @@ class Player {
     };
   }
 
+  // Снимок для контрольной точки: как инвентарь, но с ключами.
+  checkpointState() {
+    return Object.assign(this.inventory(), { keys: Object.assign({}, this.keys) });
+  }
+
   applyInventory(inv) {
     if (!inv) return;
     this.health = inv.health; this.armor = inv.armor; this.armorType = inv.armorType;
@@ -148,6 +153,7 @@ class Player {
   }
 
   onPlatform() {
+    if (this.lift) return true;
     const lv = Game.level;
     const ty = Math.floor((this.y + this.h + 1) / TILE);
     const a = lv.tile(Math.floor(this.x / TILE), ty), b = lv.tile(Math.floor((this.x + this.w - 0.01) / TILE), ty);

@@ -29,6 +29,15 @@ function moveAxisY(e, dy) {
   const oldBottom = e.y + e.h;
   e.y += dy;
   const x0 = Math.floor(e.x / TILE), x1 = Math.floor((e.x + e.w - 0.01) / TILE);
+  if (dy > 0 && !e.dropThrough && !e.noPlatforms) {
+    for (const lf of lv.lifts) {
+      if (e.x + e.w > lf.x && e.x < lf.x + lf.w && oldBottom <= lf.y + 2.5 && e.y + e.h >= lf.y) {
+        e.y = lf.y - e.h;
+        e.lift = lf;
+        return true;
+      }
+    }
+  }
   if (dy > 0) {
     const ty = Math.floor((e.y + e.h - 0.01) / TILE);
     for (let tx = x0; tx <= x1; tx++) {
@@ -56,6 +65,15 @@ function moveAxisY(e, dy) {
 
 // Перемещение с подшагами; возвращает сведения о столкновениях.
 function moveBody(e, dt) {
+  // стоящего на лифте везём вместе с ним
+  const lf = e.lift;
+  e.lift = null;
+  if (lf && (lf.dx || lf.dy)) {
+    if (lf.dx) moveAxisX(e, lf.dx);
+    const y0 = e.y;
+    e.y = lf.y - e.h;
+    if (lf.dy < 0 && !Game.level.boxFree(e.x, e.y, e.w, e.h)) e.y = y0;
+  }
   let dx = e.vx * dt, dy = e.vy * dt;
   const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 5));
   dx /= steps; dy /= steps;

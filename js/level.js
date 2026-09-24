@@ -56,6 +56,34 @@ class Box {
   }
 }
 
+// Лифт: движущаяся односторонняя платформа, ездит между стартом ('_') и отметкой (':').
+class Lift {
+  constructor(tx, ty, len, ex, ey) {
+    this.x0 = tx * TILE; this.y0 = ty * TILE;
+    this.x1 = ex * TILE; this.y1 = ey * TILE;
+    this.w = len * TILE; this.h = 7;
+    this.x = this.x0; this.y = this.y0;
+    this.dx = 0; this.dy = 0;
+    this.t = 0; this.dir = 1; this.wait = 1.2;
+    this.dur = Math.max(0.6, dist(this.x0, this.y0, this.x1, this.y1) / 58);
+  }
+  update(dt) {
+    const px = this.x, py = this.y;
+    if (this.wait > 0) {
+      this.wait -= dt;
+      if (this.wait <= 0) Sound.play('lift', this.x + this.w / 2, this.y);
+    } else {
+      this.t += this.dir * dt / this.dur;
+      if (this.t >= 1) { this.t = 1; this.dir = -1; this.wait = 1.6; }
+      else if (this.t <= 0) { this.t = 0; this.dir = 1; this.wait = 1.6; }
+    }
+    const k = this.t * this.t * (3 - 2 * this.t);
+    this.x = lerp(this.x0, this.x1, k);
+    this.y = lerp(this.y0, this.y1, k);
+    this.dx = this.x - px; this.dy = this.y - py;
+  }
+}
+
 class Level {
   constructor(def) {
     this.def = def;
@@ -73,6 +101,7 @@ class Level {
     this.teleports = [];
     this.exits = [];
     this.decor = [];
+    this.lifts = [];
     this.hasSky = false;
     this.hasLiquid = false;
     this.pxW = this.w * TILE;
@@ -84,7 +113,7 @@ class Level {
         const ch = grid[y][x];
         let t;
         if (ch in TILE_CHARS) t = TILE_CHARS[ch];
-        else if (ch in MOVER_CHARS) { t = T.EMPTY; moverMark[y * this.w + x] = ch; }
+        else if (ch in MOVER_CHARS) { t = this.inheritTile(grid, x, y, true); moverMark[y * this.w + x] = ch; }
         else { t = this.inheritTile(grid, x, y); this.spawns.push({ ch, tx: x, ty: y }); }
         this.tiles[y * this.w + x] = t;
         if (t === T.SKY) this.hasSky = true;
@@ -114,6 +143,12 @@ class Level {
         this.movers.push(new Mover(MOVER_CHARS[ch], x0, y0, x1, y1));
       }
     }
+    this.moverMark = moverMark;
+    this.explored = new Uint8Array(this.w * this.h);
+    this.mapCanvas = makeCanvas(this.w, this.h);
+    this.mapCtx = this.mapCanvas.getContext('2d');
+    this.mapImg = this.mapCtx.createImageData(this.w, this.h);
+    this.mapDirty = false;
     this.solids = this.movers.slice();
     this.totalSecrets = this.movers.filter((m) => m.kind === 'secret').length;
 
@@ -131,14 +166,32 @@ class Level {
         case 'L': this.decor.push({ kind: 'torch', x: px + 8, y: py + 8 }); break;
         case '*': this.decor.push({ kind: 'lamp', x: px + 8, y: py + 4 }); break;
         case '@': this.decor.push({ kind: 'electrode', x: px + 8, y: py + TILE }); break;
+        case '&': this.decor.push({ kind: 'checkpoint', x: px + 8, y: py + TILE, active: false }); break;
         default: break;
       }
+    }
+    // лифты: горизонтальные отрезки '_' и ближайшая отметка ':' в том же столбце или ряду
+    const runs = this.spawns.filter((s) => s.ch === '_').sort((a, b) => a.ty - b.ty || a.tx - b.tx);
+    const marks = this.spawns.filter((s) => s.ch === ':');
+    for (let i = 0; i < runs.length;) {
+      let j = i;
+      while (j + 1 < runs.length && runs[j + 1].ty === runs[i].ty && runs[j + 1].tx === runs[j].tx + 1) j++;
+      const r = runs[i], len = j - i + 1;
+      let best = null, bd = Infinity;
+      for (const m of marks) {
+        if (m.tx !== r.tx && m.ty !== r.ty) continue;
+        const d = Math.abs(m.tx - r.tx) + Math.abs(m.ty - r.ty);
+        if (d < bd) { bd = d; best = m; }
+      }
+      this.lifts.push(new Lift(r.tx, r.ty, len, best ? best.tx : r.tx, best ? best.ty : r.ty));
+      i = j + 1;
     }
     srcs.forEach((s, i) => {
       s.dest = dests[i] || dests[0] || { x: s.cx, y: s.bottom };
       this.teleports.push(s);
     });
     if (def.skillPortals) this.exits.forEach((e, i) => { e.skill = def.skillPortals[i]; });
+    if (def.exitAfterBoss) this.exits.forEach((e) => { e.hidden = true; });
     this.computeHidden();
   }
 
@@ -183,6 +236,42 @@ class Level {
     });
   }
 
+  // Карта уровня (Tab): открываем клетки, попавшие в кадр.
+  reveal(tx0, ty0, tx1, ty1) {
+    tx0 = Math.max(0, tx0); ty0 = Math.max(0, ty0);
+    tx1 = Math.min(this.w - 1, tx1); ty1 = Math.min(this.h - 1, ty1);
+    const d = this.mapImg.data;
+    const MOVER_COL = { D: [200, 160, 64], '[': [200, 208, 220], ']': [232, 184, 48], '=': [130, 130, 150] };
+    for (let y = ty0; y <= ty1; y++) {
+      for (let x = tx0; x <= tx1; x++) {
+        const i = y * this.w + x;
+        if (this.explored[i]) continue;
+        if (this.hidden[i] >= 0 && this.movers[this.hidden[i]].open < 0.3) continue;
+        this.explored[i] = 1;
+        const t = this.tiles[i];
+        const mk = this.moverMark[i];
+        let c;
+        if (mk && MOVER_COL[mk]) c = MOVER_COL[mk];
+        else if (mk === '$' && this.movers.find((m) => m.kind === 'secret' && m.found && x * TILE >= m.x && x * TILE < m.x + m.w && y * TILE >= m.y && y * TILE < m.y + m.h)) c = [60, 40, 28];
+        else if (isSolidType(t) || mk === '$') c = [118, 92, 62];
+        else if (t === T.WATER) c = [40, 90, 140];
+        else if (t === T.SLIME) c = [70, 130, 40];
+        else if (t === T.LAVA) c = [230, 90, 20];
+        else if (t === T.PLAT) c = [150, 120, 80];
+        else if (t === T.SKY) c = [44, 36, 78];
+        else c = [34, 24, 18];
+        d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = 255;
+        this.mapDirty = true;
+      }
+    }
+  }
+
+  drawMap(ctx, x, y, scale) {
+    if (this.mapDirty) { this.mapCtx.putImageData(this.mapImg, 0, 0); this.mapDirty = false; }
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.mapCanvas, x, y, this.w * scale, this.h * scale);
+  }
+
   isHiddenAt(px, py) {
     const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
     if (tx < 0 || ty < 0 || tx >= this.w || ty >= this.h) return false;
@@ -200,13 +289,13 @@ class Level {
   }
 
   // Объект внутри воды/неба сохраняет фон соседей.
-  inheritTile(grid, x, y) {
+  inheritTile(grid, x, y, liquidsOnly = false) {
     const counts = {};
     const around = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
     for (const [nx, ny] of around) {
       if (ny < 0 || ny >= grid.length || nx < 0 || nx >= grid[ny].length) continue;
       const t = TILE_CHARS[grid[ny][nx]];
-      if (t === T.WATER || t === T.LAVA || t === T.SLIME || t === T.SKY) counts[t] = (counts[t] || 0) + 1;
+      if (t === T.WATER || t === T.LAVA || t === T.SLIME || (t === T.SKY && !liquidsOnly)) counts[t] = (counts[t] || 0) + 1;
     }
     let best = T.EMPTY, bc = 1;
     for (const k in counts) if (counts[k] > bc) { bc = counts[k]; best = +k; }
@@ -294,6 +383,7 @@ class Level {
   // --- логика дверей, кнопок и тайников ---
   update(dt) {
     const p = Game.player;
+    for (const lf of this.lifts) lf.update(dt);
     for (const m of this.movers) {
       if (m.kind === 'door' || m.kind === 'silver' || m.kind === 'gold') {
         const nearP = p && p.alive && p.x + p.w > m.x - 18 && p.x < m.x + m.w + 18 && p.y + p.h > m.y - 2 && p.y < m.y + m.h + 2;
@@ -372,6 +462,7 @@ class Level {
     if (m.found) return;
     m.found = true;
     m.target = 1;
+    for (let y = m.y / TILE; y < (m.y + m.h) / TILE; y++) for (let x = m.x / TILE; x < (m.x + m.w) / TILE; x++) this.explored[y * this.w + x] = 0;
     Game.secrets++;
     HUD.center('Вы нашли секретное место!', 2);
     Sound.play('secret');
@@ -437,7 +528,26 @@ class Level {
         if (t === T.PLAT) this.drawPlatform(ctx, x, y);
       }
     }
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-atop';
+    for (const lf of this.lifts) {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      const xa = Math.min(lf.x0, lf.x1), xb = Math.max(lf.x0, lf.x1) + lf.w;
+      const ya = Math.min(lf.y0, lf.y1), yb = Math.max(lf.y0, lf.y1) + lf.h;
+      if (lf.x0 === lf.x1) {
+        ctx.fillRect(xa + 3, ya, 2, yb - ya + 4); ctx.fillRect(xb - 5, ya, 2, yb - ya + 4);
+      } else ctx.fillRect(xa, ya + 2, xb - xa, 2);
+    }
+    ctx.restore();
     for (const d of this.decor) {
+      if (d.kind === 'checkpoint') {
+        ctx.fillStyle = '#2a2622'; ctx.fillRect(d.x - 6, d.y - 5, 12, 5);
+        ctx.fillStyle = '#5a544a'; ctx.fillRect(d.x - 6, d.y - 5, 12, 1);
+        ctx.fillStyle = '#3a3630'; ctx.fillRect(d.x - 3, d.y - 19, 6, 14);
+        ctx.fillStyle = '#4e4840'; ctx.fillRect(d.x - 3, d.y - 19, 1, 14);
+        ctx.fillStyle = '#1a1612'; ctx.fillRect(d.x - 1, d.y - 16, 2, 8);
+        continue;
+      }
       if (d.kind === 'torch') {
         ctx.fillStyle = '#2a221a'; ctx.fillRect(d.x - 1, d.y - 1, 3, 9);
         ctx.fillStyle = '#4a3a2a'; ctx.fillRect(d.x - 3, d.y - 2, 7, 3);
@@ -470,7 +580,7 @@ class Level {
       else if (d.kind === 'lamp') L.push({ x: d.x, y: d.y + 3, r: 175, c: [1.0, 0.95, 0.82], i: 1.15 });
       else if (d.kind === 'electrode') L.push({ x: d.x, y: d.y - 30, r: 80, c: [0.6, 0.7, 1.0], i: 0.6 });
     }
-    for (const e of this.exits.concat(this.teleports)) L.push({ x: e.cx, y: e.bottom - 18, r: 80, c: [0.65, 0.5, 1.0], i: 0.9 });
+    for (const e of this.exits.concat(this.teleports)) if (!e.hidden) L.push({ x: e.cx, y: e.bottom - 18, r: 80, c: [0.65, 0.5, 1.0], i: 0.9 });
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
         const t = this.tiles[y * this.w + x];
@@ -657,6 +767,18 @@ class Level {
       }
       ctx.restore();
     }
+    for (const lf of this.lifts) {
+      const x = Math.round(lf.x - cam.x), y = Math.round(lf.y - cam.y);
+      if (x > 2000 || y > 2000 || x + lf.w < -20 || y < -20) continue;
+      ctx.fillStyle = '#1e1a16'; ctx.fillRect(x, y, lf.w, lf.h);
+      ctx.fillStyle = '#5e564a'; ctx.fillRect(x + 1, y + 1, lf.w - 2, lf.h - 2);
+      ctx.fillStyle = '#9a8e78'; ctx.fillRect(x, y, lf.w, 1);
+      ctx.fillStyle = '#3a342c'; ctx.fillRect(x + 1, y + 4, lf.w - 2, 1);
+      ctx.fillStyle = '#c8a040';
+      for (let i = 4; i < lf.w - 2; i += 8) ctx.fillRect(x + i, y + 2, 2, 1);
+      ctx.fillStyle = '#2a2520';
+      ctx.fillRect(x + 2, y + lf.h, 2, 3); ctx.fillRect(x + lf.w - 4, y + lf.h, 2, 3);
+    }
     for (const b of this.buttons) {
       const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
       ctx.fillStyle = '#2a2622'; ctx.fillRect(x, y, 12, 12);
@@ -670,6 +792,7 @@ class Level {
   drawPortals(ctx, cam, t, bright) {
     const list = this.exits.concat(this.teleports);
     for (const e of list) {
+      if (e.hidden) continue;
       const x = Math.round(e.cx - cam.x), y = Math.round(e.bottom - cam.y);
       if (x < -40 || x > 2000 || y < -60 || y > 2000) continue;
       if (!bright) {
@@ -711,6 +834,14 @@ class Level {
         ctx.fillStyle = '#ffffff'; ctx.fillRect(x - 3, y, 6, 1);
       } else if (d.kind === 'electrode') {
         drawElectrode(ctx, x, y, t, Game.bossFx);
+      } else if (d.kind === 'checkpoint') {
+        const pulse = 0.6 + Math.sin(t * 3) * 0.4;
+        ctx.fillStyle = d.active ? '#60e0ff' : '#8a2a14';
+        ctx.globalAlpha = d.active ? 0.7 + pulse * 0.3 : 0.8;
+        ctx.fillRect(x - 1, y - 16, 2, 8);
+        ctx.fillRect(x - 2, y - 13, 4, 1);
+        if (d.active) { ctx.fillStyle = '#e0fbff'; ctx.fillRect(x, y - 15, 1, 5); }
+        ctx.globalAlpha = 1;
       }
     }
   }

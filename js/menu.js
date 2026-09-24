@@ -25,8 +25,8 @@ const Menu = {
   items() {
     switch (this.screen) {
       case 'main': return [
-        { label: 'Новая игра', act: () => Game.newGame() },
-        { label: 'Выбор уровня', act: () => this.open('levels') },
+        { label: 'Новая игра', act: () => this.open('episodes') },
+        { label: 'Выбор уровня', act: () => this.open('levelEp') },
         { label: 'Настройки', act: () => this.open('options') },
         { label: 'Управление', act: () => this.open('help') },
       ];
@@ -44,11 +44,22 @@ const Menu = {
         { label: 'Во весь экран', act: () => Game.toggleFullscreen() },
         { label: 'Назад', act: () => this.back() },
       ];
+      case 'episodes':
+      case 'levelEp': {
+        const list = EPISODES.map((ep) => ({
+          label: `Эпизод ${ep.id}: ${ep.title}`,
+          act: () => {
+            if (this.screen === 'episodes') Game.newGame(ep.id);
+            else { this.pendingEpisode = ep.id; this.open('levels'); }
+          },
+        }));
+        list.push({ label: 'Назад', act: () => this.back() });
+        return list;
+      }
       case 'levels': {
-        const unlocked = Store.get('unlocked', 1);
-        const list = LEVELS.filter((l) => l.episode).map((l, i) => ({
+        const list = LEVELS.filter((l) => l.episode === this.pendingEpisode).map((l) => ({
           label: `${l.name}  ${l.title}`,
-          disabled: i >= unlocked,
+          disabled: !Game.levelUnlocked(l),
           act: () => { this.pendingLevel = l.id; this.open('skill'); },
         }));
         list.push({ label: 'Назад', act: () => this.back() });
@@ -118,7 +129,8 @@ const Menu = {
       HUD.text(ctx, this.screen === 'pause' ? 'ПАУЗА' : 'двумерный шутер в духе Quake', W / 2, y, 6.5 * u, '#a88858', 'center');
       y += 26 * u;
     } else {
-      const hdr = { options: 'НАСТРОЙКИ', levels: 'ЭПИЗОД 1: ИЗМЕРЕНИЕ ДОБЛЕСТИ', skill: 'СЛОЖНОСТЬ', help: 'УПРАВЛЕНИЕ' }[this.screen];
+      const ep = EPISODES.find((e) => e.id === this.pendingEpisode) || EPISODES[0];
+      const hdr = { options: 'НАСТРОЙКИ', episodes: 'НОВАЯ ИГРА', levelEp: 'ВЫБОР УРОВНЯ', levels: `ЭПИЗОД ${ep.id}: ${ep.title.toUpperCase()}`, skill: 'СЛОЖНОСТЬ', help: 'УПРАВЛЕНИЕ' }[this.screen];
       ctx.font = `${Math.round(Math.min(18 * u, W / 22))}px ${TITLE_FONT}`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillStyle = '#1a0e06'; ctx.fillText(hdr, W / 2 + u, y + u);

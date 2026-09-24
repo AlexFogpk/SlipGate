@@ -373,6 +373,63 @@ const MONSTER_ART = {
     R(ctx, 2, -4, 2, 1, '#1a2a60');
     ctx.globalAlpha = 1;
   },
+  gargoyle(ctx, m) {
+    const dive = m.state === 'leap';
+    const flap = Math.sin(m.anim * (dive ? 22 : 11));
+    const wy = Math.round(flap * 4);
+    R(ctx, -12, -15 + wy, 9, 2, '#44443e');
+    R(ctx, -15, -13 + Math.round(wy * 1.4), 5, 2, '#3a3a34');
+    R(ctx, -6, -8, 4, 1, '#56564e');
+    R(ctx, -4, -13, 8, 9, '#6a6a62');
+    R(ctx, -4, -13, 8, 1, '#8a8a80');
+    R(ctx, -2, -10, 4, 5, '#56564e');
+    R(ctx, 1, -17, 6, 5, '#727268');
+    R(ctx, 1, -17, 6, 1, '#8e8e84');
+    R(ctx, 1, -19, 1, 2, '#c8c0a8'); R(ctx, 5, -19, 1, 2, '#c8c0a8');
+    R(ctx, 4, -13, 3, 1, '#2a1a14');
+    R(ctx, -3, -4, 2, 3, '#56564e'); R(ctx, 2, -4, 2, 3, '#56564e');
+    R(ctx, -4, -1, 3, 1, '#c8c0a8'); R(ctx, 2, -1, 3, 1, '#c8c0a8');
+    R(ctx, -9, -17 - wy, 10, 2, '#5a5a54');
+    R(ctx, -13, -19 - Math.round(wy * 1.4), 6, 2, '#4a4a44');
+    R(ctx, -15, -17 - Math.round(wy * 1.6), 3, 3, '#3e3e38');
+  },
+  shub(ctx, m) {
+    const t = m.anim;
+    const dying = m.state === 'dying';
+    if (dying) {
+      const k = clamp(m.stateT / 3, 0, 1);
+      ctx.translate(rand(-2, 2), 0);
+      ctx.scale(1 - k * 0.35, 1 - k * 0.45);
+    }
+    // щупальца
+    for (let i = 0; i < 9; i++) {
+      let a = -Math.PI + 0.35 + i * (Math.PI - 0.7) / 8;
+      let px = Math.cos(a) * 30, py = -44 + Math.sin(a) * 26;
+      for (let k = 0; k < 8; k++) {
+        a += Math.sin(t * 1.6 + i * 1.3 + k * 0.6) * 0.22;
+        px += Math.cos(a) * 5; py += Math.sin(a) * 5;
+        const r = 5 - k * 0.5;
+        R(ctx, Math.round(px - r), Math.round(py - r), Math.ceil(r * 2), Math.ceil(r * 2), k % 2 ? '#4a2a3c' : '#5a3448');
+      }
+    }
+    const pulse = Math.sin(t * 2.2) * 2;
+    ctx.fillStyle = C('#2a1822');
+    ctx.beginPath(); ctx.ellipse(0, -42, 44 + pulse, 42 - pulse * 0.5, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = C('#3e2432');
+    ctx.beginPath(); ctx.ellipse(-2, -46, 40 + pulse, 36 - pulse * 0.5, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = C('#5a3448');
+    for (const [fx, fy, fw] of [[-20, -70, 14], [6, -74, 18], [-28, -50, 10], [18, -52, 16], [-8, -30, 20]]) R(ctx, fx, fy, fw, 2, '#5a3448');
+    // глазницы (сами глаза светятся в ярком проходе)
+    for (const [ex, ey] of SHUB_EYES) R(ctx, ex - 2, ey - 2, 5, 4, '#1a0e14');
+    // пасть
+    const open = 3 + Math.round((Math.sin(t * 3) + 1) * 2);
+    R(ctx, -12, -18, 24, open, '#4a0a10');
+    for (let i = 0; i < 6; i++) { R(ctx, -11 + i * 4, -18, 2, 2, '#e8e0c8'); R(ctx, -9 + i * 4, -18 + open - 2, 2, 2, '#e8e0c8'); }
+    // корни на полу
+    for (const sx of [-1, 1]) {
+      for (let k = 0; k < 6; k++) R(ctx, sx * (30 + k * 5) - 3, -6 + Math.round(Math.sin(t * 2 + k) * 1), 6, 5 - (k >> 1), '#3a2230');
+    }
+  },
   chthon(ctx, m) {
     ctx.scale(1.25, 1.25);
     const throwing = m.throwT > 0;

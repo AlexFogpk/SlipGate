@@ -223,6 +223,7 @@ const HUD = {
       { name: 'pause', x: W - 18 * u, y: 18 * u, r: 13 * u, label: 'II' },
       { name: 'next', x: W - 22 * u, y: by - 58 * u, r: 16 * u, label: '⇄' },
       { name: 'jump', x: W - 58 * u, y: by - 26 * u, r: 20 * u, label: '▲' },
+      { name: 'map', x: W - 48 * u, y: 18 * u, r: 11 * u, label: '▦' },
     ];
   },
 

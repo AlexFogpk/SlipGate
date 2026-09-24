@@ -6,22 +6,38 @@ const OBITS = {
   knight: 'Вас зарубил рыцарь', hknight: 'Вас сжёг рыцарь смерти', ogre: 'Вас распилил огр',
   zombie: 'Вас закидал плотью зомби', fiend: 'Вас растерзал изверг', scrag: 'Вас оплевал скраг',
   vore: 'Вас уничтожил ворог', spawn: 'Вас сожрало порождение', shambler: 'Вас испепелил шамблер',
-  chthon: 'Вас испепелил Хтон',
+  chthon: 'Вас испепелил Хтон', gargoyle: 'Вас растерзала гаргулья', shub: 'Вас поглотила Шуб-Ниггурат',
 };
-const FINALE_TEXT = [
-  'Туша Хтона погружается обратно в лаву,',
-  'из которой он поднялся. Земля затихает.',
-  '',
-  'На остывающем камне лежит древняя руна.',
-  'Вы сжимаете её — и чувствуете, как',
-  'по жилам течёт чужая, первобытная сила.',
-  '',
-  'Но это лишь первая из четырёх рун.',
-  'За слипгейтами ждут иные измерения,',
-  'и нечто древнее уже знает ваше имя.',
-  '',
-  'Эпизод 1 пройден.',
-];
+const FINALES = {
+  e1: [
+    'Туша Хтона погружается обратно в лаву,',
+    'из которой он поднялся. Земля затихает.',
+    '',
+    'На остывающем камне лежит древняя руна.',
+    'Вы сжимаете её — и чувствуете, как',
+    'по жилам течёт чужая, первобытная сила.',
+    '',
+    'Руна раскрывает новый слипгейт. За ним —',
+    'Царство Чёрной Магии, где ждёт та,',
+    'что породила Хтона.',
+    '',
+    'Эпизод 1 пройден. Впереди — Эпизод 2.',
+  ],
+  e2: [
+    'Телепорт вышвыривает вас прямо в её чрево,',
+    'и Шуб-Ниггурат рвётся изнутри, как гнилой плод.',
+    '',
+    'Щупальца опадают. Глаза гаснут один за другим.',
+    'Из тысячи порождений не остаётся ни одного.',
+    '',
+    'Вторая руна тёплая, как живое сердце.',
+    'Слипгейты по всему миру медленно гаснут —',
+    'но вы знаете: пока руны не собраны вместе,',
+    'тьма лишь затаилась.',
+    '',
+    'Эпизод 2 пройден. Спасибо за игру!',
+  ],
+};
 
 const Game = {
   state: 'boot',
@@ -114,14 +130,23 @@ const Game = {
   toMenu() {
     this.state = 'menu';
     Menu.reset('main');
-    this.loadLevel('e1m1', { attract: true });
+    this.loadLevel(Store.get('done', {}).e1m6 && Math.random() < 0.5 ? 'e2m1' : 'e1m1', { attract: true });
     Music.start(41);
   },
 
-  newGame() {
+  newGame(episode = 1) {
     this.skill = 1;
+    this.newEpisode = episode;
     this.loadLevel('start', { inv: null });
     this.state = 'playing';
+  },
+
+  levelUnlocked(def) {
+    const eps = LEVELS.filter((l) => l.episode === def.episode);
+    const i = eps.indexOf(def);
+    if (i <= 0) return true;
+    if (Store.get('done', {})[eps[i - 1].id]) return true;
+    return def.episode === 1 && i < Store.get('unlocked', 1);
   },
 
   startFromSelect(id, skill) {
@@ -162,6 +187,9 @@ const Game = {
     this.totalSecrets = this.level.totalSecrets;
     this.levelTime = 0;
     this.damageFlash = 0; this.bonusFlash = 0; this.bossFx = 0; this.bossHintShown = false;
+    this.checkpoint = null;
+    this.mapOpen = false;
+    this.revealT = 0;
     this.attract = !!opts.attract;
     let start = { cx: 40, bottom: 40 };
     for (const s of this.level.spawns) {
@@ -192,7 +220,9 @@ const Game = {
 
   nextLevel() {
     const def = this.levelDef;
-    if (!def.next) { this.startFinale(); return; }
+    if (def.finale && !this.finaleDone) { this.startFinale(def.finale); return; }
+    this.finaleDone = false;
+    if (!def.next) { this.toMenu(); return; }
     const inv = this.player.inventory();
     inv.health = clamp(inv.health, 50, 100);
     this.loadLevel(def.next, { inv });
@@ -202,13 +232,15 @@ const Game = {
   startIntermission() {
     this.state = 'intermission';
     this.interT = 0;
-    const idx = LEVELS.filter((l) => l.episode).findIndex((l) => l.id === this.levelDef.next);
-    if (idx >= 0) Store.set('unlocked', Math.max(Store.get('unlocked', 1), idx + 1));
+    const done = Store.get('done', {});
+    done[this.levelDef.id] = true;
+    Store.set('done', done);
     Sound.play('secret');
   },
 
-  startFinale() {
+  startFinale(key) {
     this.state = 'finale';
+    this.finaleKey = key;
     this.finaleT = 0;
     Music.start(36);
   },
@@ -228,6 +260,11 @@ const Game = {
 
   onBossDefeated() {
     this.level.openAllGates();
+    for (const e of this.level.exits) {
+      if (!e.hidden) continue;
+      e.hidden = false;
+      FX.teleport(e.cx, e.bottom - 16);
+    }
     HUD.center('Путь к руне открыт', 3);
     Sound.play('secret');
   },
@@ -310,7 +347,7 @@ const Game = {
 
   cameraTarget() {
     const p = this.player;
-    let tx = p.cx - this.viewW / 2, ty = p.cy - this.viewH / 2 + 14;
+    let tx = p.cx - this.viewW / 2, ty = p.cy - this.viewH * 0.58;
     if (Input.touchMode) tx += p.facing * 40;
     else if (p.alive) {
       const a = this.aimWorld();
@@ -330,7 +367,7 @@ const Game = {
 
   snapCamera() {
     const p = this.player;
-    const c = this.clampCam(p.cx - this.viewW / 2, p.cy - this.viewH / 2 + 14);
+    const c = this.clampCam(p.cx - this.viewW / 2, p.cy - this.viewH * 0.58);
     this.cam.x = c.x; this.cam.y = c.y;
   },
 
@@ -355,7 +392,7 @@ const Game = {
         break;
       case 'finale':
         this.finaleT += dt;
-        if (this.finaleT > 3 && this.anyKey()) { Store.set('unlocked', LEVELS.filter((l) => l.episode).length); this.toMenu(); }
+        if (this.finaleT > 3 && this.anyKey()) { this.finaleDone = true; this.nextLevel(); }
         break;
       default: break;
     }
@@ -382,7 +419,14 @@ const Game = {
     if (Input.wasPressed('KeyM')) {
       if (Music.playing) Music.stop(); else Music.start(this.levelDef.music || 55);
     }
-    this.showStats = Input.isDown('Tab');
+    if (Input.buttonPresses.has('map') || Input.wasPressed('KeyN')) this.mapOpen = !this.mapOpen;
+    this.showStats = Input.isDown('Tab') || this.mapOpen;
+    this.revealT -= dt;
+    if (this.revealT <= 0) {
+      this.revealT = 0.2;
+      const c = this.cam;
+      this.level.reveal(Math.floor(c.x / TILE), Math.floor(c.y / TILE), Math.ceil((c.x + this.viewW) / TILE), Math.ceil((c.y + this.viewH) / TILE));
+    }
     if (p.alive) this.levelTime += dt;
     for (let i = this.timers.length - 1; i >= 0; i--) {
       const tm = this.timers[i];
@@ -410,11 +454,45 @@ const Game = {
     this.bonusFlash = Math.max(0, this.bonusFlash - dt * 1.5);
     this.bossFx = Math.max(0, this.bossFx - dt);
     Sound.listenerX = p.cx; Sound.listenerY = p.cy;
-    if (!p.alive && p.deadT > 1 && (Input.clicks.length || Input.wasPressed('Space', 'Enter', 'KeyW', 'ArrowUp') || Input.buttonPresses.has('jump'))) this.restartLevel();
+    if (!p.alive && p.deadT > 1 && (Input.clicks.length || Input.wasPressed('Space', 'Enter', 'KeyW', 'ArrowUp') || Input.buttonPresses.has('jump'))) {
+      if (this.checkpoint) this.respawnAtCheckpoint(); else this.restartLevel();
+    }
+  },
+
+  // Возрождение у контрольной точки: мир остаётся как был, монстры теряют след.
+  respawnAtCheckpoint() {
+    const cp = this.checkpoint;
+    const p = new Player(cp.x, cp.y);
+    p.applyInventory(cp.state);
+    p.keys = Object.assign({}, cp.state.keys);
+    p.health = Math.max(p.health, 60);
+    this.player = p;
+    this.projectiles = [];
+    for (const m of this.monsters) {
+      if (!m.alive || m.def.boss) continue;
+      m.target = null;
+      if (m.state !== 'down') m.state = 'idle';
+    }
+    this.damageFlash = 0;
+    this.snapCamera();
+    FX.teleport(p.cx, p.cy);
+    Sound.play('teleport');
+    HUD.center('Контрольная точка', 1.5);
   },
 
   checkTriggers(p) {
     const lv = this.level;
+    for (const d of lv.decor) {
+      if (d.kind !== 'checkpoint' || d.active) continue;
+      if (Math.abs(p.cx - d.x) < 10 && p.y < d.y && p.y + p.h > d.y - 24) {
+        for (const o of lv.decor) if (o.kind === 'checkpoint') o.active = false;
+        d.active = true;
+        this.checkpoint = { x: d.x, y: d.y, state: p.checkpointState() };
+        HUD.center('Контрольная точка', 1.5);
+        Sound.play('checkpoint');
+        FX.teleport(d.x, d.y - 12);
+      }
+    }
     for (const tp of lv.teleports) {
       if (!overlap(p, tp)) continue;
       FX.teleport(p.cx, p.cy);
@@ -428,12 +506,13 @@ const Game = {
       return;
     }
     for (const e of lv.exits) {
-      if (!overlap(p, e)) continue;
+      if (e.hidden || !overlap(p, e)) continue;
       Sound.play('teleport');
       if (e.skill !== null && e.skill !== undefined) {
         this.skill = e.skill;
         HUD.center('Сложность: ' + SKILL_NAMES[e.skill], 2);
-        this.loadLevel(this.levelDef.next, { inv: null });
+        const ep = EPISODES.find((x) => x.id === (this.newEpisode || 1)) || EPISODES[0];
+        this.loadLevel(ep.first, { inv: null });
         return;
       }
       this.startIntermission();
@@ -475,12 +554,15 @@ const Game = {
       if (this.state === 'playing') {
         if (!p.alive) {
           HUD.text(ctx, this.deathMsg, W / 2, H * 0.36, 9 * u, '#e05040', 'center');
-          if (p.deadT > 1) HUD.text(ctx, Input.touchMode ? 'Коснитесь экрана, чтобы начать заново' : 'Нажмите огонь, чтобы начать заново', W / 2, H * 0.36 + 20 * u, 6 * u, '#c8a878', 'center');
+          if (p.deadT > 1) {
+            const what = this.checkpoint ? 'вернуться к контрольной точке' : 'начать заново';
+            HUD.text(ctx, (Input.touchMode ? 'Коснитесь экрана, чтобы ' : 'Нажмите огонь, чтобы ') + what, W / 2, H * 0.36 + 20 * u, 6 * u, '#c8a878', 'center');
+          }
         } else if (!Input.touchMode) {
           HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u);
         }
         if (Input.touchMode) HUD.drawTouch(ctx, W, H, u);
-        if (this.showStats) this.drawLevelStats(ctx, W, H, u, null);
+        if (this.showStats) this.drawAutomap(ctx, W, H, u);
       }
     }
     if (this.state === 'intermission') this.drawLevelStats(ctx, W, H, u, Input.touchMode ? 'Коснитесь, чтобы продолжить' : 'Нажмите огонь, чтобы продолжить');
@@ -499,6 +581,32 @@ const Game = {
       ['Сложность', SKILL_NAMES[this.skill]],
     ];
     HUD.stats(ctx, W, H, u, def.name + ' ' + def.title, rows, footer, this.time);
+  },
+
+  // Карта уровня с исследованными клетками и сводкой.
+  drawAutomap(ctx, W, H, u) {
+    const lv = this.level, p = this.player;
+    ctx.fillStyle = 'rgba(6,4,2,0.95)';
+    ctx.fillRect(0, 0, W, H);
+    const def = this.levelDef;
+    HUD.text(ctx, def.name + '  ' + def.title, W / 2, 8 * u, 8 * u, '#e0b060', 'center');
+    const line = `Убито ${this.kills}/${this.totalKills}   Секреты ${this.secrets}/${this.totalSecrets}   Время ${fmtTime(this.levelTime)}   ${SKILL_NAMES[this.skill]}`;
+    HUD.text(ctx, line, W / 2, 22 * u, 5.5 * u, '#c8a878', 'center');
+    const top = 34 * u, bottom = H - 36 * u;
+    const scale = Math.max(1, Math.min((W - 16 * u) / lv.w, (bottom - top) / lv.h));
+    const mx = Math.round((W - lv.w * scale) / 2), my = Math.round(top + (bottom - top - lv.h * scale) / 2);
+    ctx.strokeStyle = '#4a3622'; ctx.lineWidth = Math.max(1, u * 0.5);
+    ctx.strokeRect(mx - 2, my - 2, lv.w * scale + 4, lv.h * scale + 4);
+    lv.drawMap(ctx, mx, my, scale);
+    const seen = (x, y) => lv.explored[Math.floor(y / TILE) * lv.w + Math.floor(x / TILE)];
+    const mark = (x, y, col, r) => { ctx.fillStyle = col; ctx.fillRect(mx + (x / TILE) * scale - r, my + (y / TILE) * scale - r, r * 2, r * 2); };
+    const r = Math.max(2, scale * 0.8);
+    for (const e of lv.exits) if (seen(e.cx, e.bottom - 8) && !e.hidden) mark(e.cx, e.bottom - 16, '#b090ff', r);
+    for (const tp of lv.teleports) if (seen(tp.cx, tp.bottom - 8)) mark(tp.cx, tp.bottom - 16, '#8060d0', r);
+    for (const d of lv.decor) if (d.kind === 'checkpoint' && seen(d.x, d.y - 8)) mark(d.x, d.y - 8, d.active ? '#60e0ff' : '#6a8a90', r);
+    for (const lf of lv.lifts) if (seen(lf.x + 4, lf.y)) { ctx.fillStyle = '#d0a040'; ctx.fillRect(mx + (lf.x / TILE) * scale, my + (lf.y / TILE) * scale, (lf.w / TILE) * scale, Math.max(1, scale * 0.4)); }
+    if (p && Math.floor(this.time * 3) % 2 === 0) mark(p.cx, p.cy, '#ff4030', r * 1.2);
+    HUD.text(ctx, Input.touchMode ? 'Кнопка «карта» — закрыть' : 'Tab — карта (N — закрепить)', W / 2, H - 30 * u, 5 * u, '#806040', 'center');
   },
 
   drawLabels(ctx) {
@@ -524,6 +632,9 @@ const Game = {
       if (d.x < this.cam.x - 80 || d.x > this.cam.x + this.viewW + 80 || d.y < this.cam.y - 80 || d.y > this.cam.y + this.viewH + 80) continue;
       const f = Math.sin(this.time * 11 + d.x) * 0.5 + Math.sin(this.time * 17.3 + d.y) * 0.5;
       out.push({ x: d.x, y: d.y - 6, r: 44, c: [1, 0.6, 0.25], i: 0.2 + f * 0.1 });
+    }
+    for (const d of this.level.decor) {
+      if (d.kind === 'checkpoint') out.push({ x: d.x, y: d.y - 12, r: d.active ? 70 : 34, c: d.active ? [0.4, 0.85, 1] : [0.9, 0.3, 0.15], i: d.active ? 0.7 : 0.35 });
     }
     if (this.bossFx > 0) {
       for (const d of this.level.decor) if (d.kind === 'electrode') out.push({ x: d.x, y: d.y - 34, r: 160, c: [0.6, 0.7, 1], i: this.bossFx * 1.5 });
@@ -608,11 +719,13 @@ const Game = {
     const size = Math.min(7 * u, W / 48);
     const chars = Math.floor(t * 38);
     let used = 0;
-    FINALE_TEXT.forEach((line, i) => {
+    const text = FINALES[this.finaleKey] || FINALES.e1;
+    text.forEach((line, i) => {
       const n = clamp(chars - used, 0, line.length);
       used += line.length + 4;
-      if (n > 0) HUD.text(ctx, line.slice(0, n), W / 2, H * 0.28 + i * size * 2, size, i === FINALE_TEXT.length - 1 ? '#f8d070' : '#d8c098', 'center');
+      if (n > 0) HUD.text(ctx, line.slice(0, n), W / 2, H * 0.26 + i * size * 2, size, i === text.length - 1 ? '#f8d070' : '#d8c098', 'center');
     });
-    if (t > 3 && Math.floor(t * 2) % 2 === 0) HUD.text(ctx, 'Нажмите огонь', W / 2, H - 20 * u, 6 * u, '#a08058', 'center');
+    const cont = this.levelDef && this.levelDef.next ? 'Нажмите огонь, чтобы продолжить' : 'Нажмите огонь';
+    if (t > 3 && Math.floor(t * 2) % 2 === 0) HUD.text(ctx, cont, W / 2, H - 20 * u, 6 * u, '#a08058', 'center');
   },
 };

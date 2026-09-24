@@ -259,6 +259,15 @@ const THEMES = {
     ambient: [0.19, 0.17, 0.14],
     sky: ['#0c1010', '#243030', '#6a8070'],
   },
+  rune: {
+    wall: () => genRuneBlocks({ base: '#50566a', mortar: '#181b24', glow: '#6a9aff', runeChance: 0.3 }, 71),
+    wall2: () => genBricks({ base: '#454a5a', alt: '#3e4a4a', mortar: '#15171e', bw: 16, bh: 8, vary: 0.2 }, 72),
+    back: () => genRuneBlocks({ base: '#2e3240', mortar: '#101218', runeChance: 0.18 }, 73),
+    door: () => genDoor({ base: '#5c6070', band: '#303440' }, 74),
+    plat: '#6e7280',
+    ambient: [0.18, 0.19, 0.25],
+    sky: ['#04081a', '#1a2a5e', '#7a9ae0'],
+  },
   elder: {
     wall: () => genRock({ dark: '#2e1512', light: '#6a4034', vein: '#e0601c' }, 51),
     wall2: () => genRuneBlocks({ base: '#4a3c3a', mortar: '#1a1212', glow: '#e87030', runeChance: 0.5 }, 52),

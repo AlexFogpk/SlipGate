@@ -11,8 +11,8 @@ const SOLID = new Set(['#', '%']);
 const LIQUID = new Set(['~', '!', ';']);
 const TILE_CH = new Set([' ', '#', '%', '-', '~', '!', ';', ',']);
 const MOVER_CH = new Set(['D', '[', ']', '=', '$']);
-const ENTITY_CH = new Set('PE><L*b@x()+HMAYRUNKCQXVW345678gdekozfsnvtmc'.split(''));
-const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1 };
+const ENTITY_CH = new Set('PE><L*b@x&_:()+HMAYRUNKCQXVW345678gdekozfsnvtmcaw'.split(''));
+const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1, a: 1, w: 6 };
 
 function analyze(def, show) {
   const errors = [], warnings = [];
@@ -51,6 +51,31 @@ function analyze(def, show) {
   const srcs = spawns.filter((s) => s.c === '>'), dsts = spawns.filter((s) => s.c === '<');
   if (srcs.length !== dsts.length) errors.push(`телепорты: входов ${srcs.length}, выходов ${dsts.length}`);
 
+  // лифты: путь лифта считается опорой на каждой высоте (герой может на нём доехать)
+  const liftSupport = new Set();
+  const runs = spawns.filter((s) => s.c === '_');
+  const marks = spawns.filter((s) => s.c === ':');
+  for (let i = 0; i < runs.length;) {
+    let j = i;
+    while (j + 1 < runs.length && runs[j + 1].y === runs[i].y && runs[j + 1].x === runs[j].x + 1) j++;
+    const r = runs[i], len = j - i + 1;
+    let best = null, bd = Infinity;
+    for (const m of marks) {
+      if (m.x !== r.x && m.y !== r.y) continue;
+      const d = Math.abs(m.x - r.x) + Math.abs(m.y - r.y);
+      if (d < bd) { bd = d; best = m; }
+    }
+    if (!best) warnings.push(`лифт в (${r.x},${r.y}) без отметки ':'`);
+    const ex = best ? best.x : r.x, ey = best ? best.y : r.y;
+    for (let y = Math.min(r.y, ey); y <= Math.max(r.y, ey); y++) {
+      for (let x = Math.min(r.x, ex); x <= Math.max(r.x, ex) + len - 1; x++) {
+        if (SOLID.has(raw(x, y))) warnings.push(`путь лифта (${r.x},${r.y}) упирается в стену в (${x},${y})`);
+        liftSupport.add(y * w + x);
+      }
+    }
+    i = j + 1;
+  }
+
   for (const s of spawns) {
     const hh = MONSTER_H[s.c];
     if (hh) for (let k = 1; k < hh; k++) if (SOLID.has(base(s.x, s.y - k))) warnings.push(`монстру '${s.c}' в (${s.x},${s.y}) тесно`);
@@ -68,7 +93,7 @@ function analyze(def, show) {
   };
   const deadly = (x, y) => { const c = base(x, y); return c === '!' || (c === ';' && !state.suit); };
   const water = (x, y) => LIQUID.has(base(x, y)) && !deadly(x, y);
-  const support = (x, y) => SOLID.has(base(x, y)) || base(x, y) === '-' || (!passable(x, y) && MOVER_CH.has(base(x, y)));
+  const support = (x, y) => SOLID.has(base(x, y)) || base(x, y) === '-' || liftSupport.has(y * w + x) || (!passable(x, y) && MOVER_CH.has(base(x, y)));
   const fits = (x, y) => passable(x, y) && passable(x, y - 1);
   const stand = (x, y) => fits(x, y) && !deadly(x, y) && (support(x, y + 1) || water(x, y));
 
@@ -112,6 +137,11 @@ function analyze(def, show) {
       }
       // спрыгнуть сквозь платформу
       if (base(x, y + 1) === '-') { const f = fall(x, y + 2); if (f) push(f[0], f[1]); }
+      // съехать на лифте вниз по его пути
+      if (liftSupport.has((y + 1) * w + x) && fits(x, y + 1)) {
+        if (liftSupport.has((y + 2) * w + x)) push(x, y + 1);
+        else { const f = fall(x, y + 1); if (f) push(f[0], f[1]); }
+      }
       // прыжки
       if (!support(x, y + 1) && !inWater) continue;
       for (let dy = -3; dy <= 0; dy++) {
@@ -149,18 +179,28 @@ function analyze(def, show) {
   }
   const near = (s) => reach.has(s.y * w + s.x) || reach.has((s.y + 1) * w + s.x) || reach.has((s.y - 1) * w + s.x) || reach.has(s.y * w + s.x + 1) || reach.has(s.y * w + s.x - 1);
   const reachedExits = exits.filter(near);
+  if (def.exitAfterBoss && !srcs.some(near)) errors.push('телепорт к боссу недостижим');
+  const cps = spawns.filter((s) => s.c === '&');
+  const lostCp = cps.filter((s) => !near(s));
+  if (lostCp.length) warnings.push('недостижимые контрольные точки: ' + lostCp.map((s) => `(${s.x},${s.y})`).join(' '));
   if (exits.length && !reachedExits.length) errors.push('выход E недостижим');
   if (def.skillPortals && reachedExits.length < exits.length) errors.push(`достижимо порталов сложности: ${reachedExits.length}/${exits.length}`);
   const items = spawns.filter((s) => '()+HMAYRUNKCQXVW345678'.includes(s.c));
   const lost = items.filter((s) => !near(s));
   if (lost.length) warnings.push('недостижимые предметы: ' + lost.map((s) => `${s.c}(${s.x},${s.y})`).join(' '));
   const monsters = spawns.filter((s) => MONSTER_H[s.c]);
-  const stats = `${w}x${h}, монстров ${monsters.length}, предметов ${items.length}, секретов ${countGroups(g, '$')}`;
+  const stats = `${w}x${h}, монстров ${monsters.length}, предметов ${items.length}, секретов ${countGroups(g, '$')}, лифтов ${new Set([...liftSupport]).size ? runs.length && countRuns(runs) : 0}, точек ${cps.length}`;
   if (show) {
     const out = g.map((r, y) => r.split('').map((c, x) => (reach.has(y * w + x) && c === ' ' ? '·' : c)).join(''));
     console.log(out.join('\n'));
   }
   return { errors, warnings, stats };
+}
+
+function countRuns(runs) {
+  let n = 0;
+  runs.forEach((r, i) => { if (i === 0 || runs[i - 1].y !== r.y || runs[i - 1].x !== r.x - 1) n++; });
+  return n;
 }
 
 function countGroups(g, ch) {
