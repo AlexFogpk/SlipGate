@@ -8,6 +8,7 @@ const WEAPON_PICKUP = {
   6: { ammo: 'rockets', amount: 5, msg: 'Вы получили гранатомёт' },
   7: { ammo: 'rockets', amount: 5, msg: 'Вы получили ракетницу' },
   8: { ammo: 'cells', amount: 15, msg: 'Вы получили громовержец' },
+  9: { ammo: 'cells', amount: 20, msg: 'Вы получили лазерную пушку' },
 };
 const AMMO_PICKUP = { U: ['shells', 20], N: ['nails', 30], K: ['rockets', 5], C: ['cells', 10] };
 const ARMOR_PICKUP = { A: [0.3, 100, 'зелёную'], Y: [0.6, 150, 'жёлтую'], R: [0.8, 200, 'красную'] };
@@ -17,7 +18,7 @@ const POWERUPS = {
   V: ['ring', 'Кольцо теней!'],
   W: ['suit', 'Биокостюм!'],
 };
-const ITEM_CHARS = '+HMAYRUNKCQXVW()345678';
+const ITEM_CHARS = '+HMAYRUNKCQXVW()3456789';
 
 class Item {
   constructor(ch, cx, bottom, extra = {}) {
@@ -98,7 +99,7 @@ class Item {
       if (hadNone) p.weapon = p.bestWeapon();
       return true;
     }
-    if (ch >= '3' && ch <= '8') {
+    if (ch >= '3' && ch <= '9') {
       const n = +ch;
       const def = WEAPON_PICKUP[n];
       const isNew = !p.weapons[n];

@@ -11,8 +11,8 @@ const SOLID = new Set(['#', '%']);
 const LIQUID = new Set(['~', '!', ';']);
 const TILE_CH = new Set([' ', '#', '%', '-', '~', '!', ';', ',']);
 const MOVER_CH = new Set(['D', '[', ']', '=', '$']);
-const ENTITY_CH = new Set('PE><L*b@x&_:()+HMAYRUNKCQXVW345678gdekozfsnvtmcaw'.split(''));
-const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1, a: 1, w: 6 };
+const ENTITY_CH = new Set('PE><L*b@x&_:^|()+HMAYRUNKCQXVW3456789gdekozfsnvtmcawruyh'.split(''));
+const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1, a: 1, w: 6, r: 1, u: 1, y: 2, h: 4 };
 
 function analyze(def, show) {
   const errors = [], warnings = [];
@@ -61,10 +61,11 @@ function analyze(def, show) {
     const r = runs[i], len = j - i + 1;
     let best = null, bd = Infinity;
     for (const m of marks) {
-      if (m.x !== r.x && m.y !== r.y) continue;
+      if (m.used || (m.x !== r.x && m.y !== r.y)) continue;
       const d = Math.abs(m.x - r.x) + Math.abs(m.y - r.y);
       if (d < bd) { bd = d; best = m; }
     }
+    if (best) best.used = true;
     if (!best) warnings.push(`лифт в (${r.x},${r.y}) без отметки ':'`);
     const ex = best ? best.x : r.x, ey = best ? best.y : r.y;
     for (let y = Math.min(r.y, ey); y <= Math.max(r.y, ey); y++) {
@@ -77,6 +78,7 @@ function analyze(def, show) {
   }
 
   for (const s of spawns) {
+    if (s.c === 'u' && !LIQUID.has(base(s.x, s.y))) warnings.push(`угорь в (${s.x},${s.y}) не в воде`);
     const hh = MONSTER_H[s.c];
     if (hh) for (let k = 1; k < hh; k++) if (SOLID.has(base(s.x, s.y - k))) warnings.push(`монстру '${s.c}' в (${s.x},${s.y}) тесно`);
   }
@@ -142,6 +144,20 @@ function analyze(def, show) {
         if (liftSupport.has((y + 2) * w + x)) push(x, y + 1);
         else { const f = fall(x, y + 1); if (f) push(f[0], f[1]); }
       }
+      // прыжковая площадка: подброс до 11 клеток
+      if (raw(x, y) === '^') {
+        for (let dy = -1; dy >= -11; dy--) {
+          if (!fits(x, y + dy)) break;
+          for (const dir of [-1, 1]) {
+            for (let dx = 0; dx <= 6; dx++) {
+              const nx = x + dir * dx;
+              if (!fits(nx, y + dy)) break;
+              const f = fall(nx, y + dy);
+              if (f) push(f[0], f[1]);
+            }
+          }
+        }
+      }
       // прыжки
       if (!support(x, y + 1) && !inWater) continue;
       for (let dy = -3; dy <= 0; dy++) {
@@ -179,13 +195,13 @@ function analyze(def, show) {
   }
   const near = (s) => reach.has(s.y * w + s.x) || reach.has((s.y + 1) * w + s.x) || reach.has((s.y - 1) * w + s.x) || reach.has(s.y * w + s.x + 1) || reach.has(s.y * w + s.x - 1);
   const reachedExits = exits.filter(near);
-  if (def.exitAfterBoss && !srcs.some(near)) errors.push('телепорт к боссу недостижим');
+  if (def.exitAfterBoss && spawns.some((s) => s.c === 'w') && !srcs.some(near)) errors.push('телепорт к боссу недостижим');
   const cps = spawns.filter((s) => s.c === '&');
   const lostCp = cps.filter((s) => !near(s));
   if (lostCp.length) warnings.push('недостижимые контрольные точки: ' + lostCp.map((s) => `(${s.x},${s.y})`).join(' '));
   if (exits.length && !reachedExits.length) errors.push('выход E недостижим');
   if (def.skillPortals && reachedExits.length < exits.length) errors.push(`достижимо порталов сложности: ${reachedExits.length}/${exits.length}`);
-  const items = spawns.filter((s) => '()+HMAYRUNKCQXVW345678'.includes(s.c));
+  const items = spawns.filter((s) => '()+HMAYRUNKCQXVW3456789'.includes(s.c));
   const lost = items.filter((s) => !near(s));
   if (lost.length) warnings.push('недостижимые предметы: ' + lost.map((s) => `${s.c}(${s.x},${s.y})`).join(' '));
   const monsters = spawns.filter((s) => MONSTER_H[s.c]);

@@ -107,8 +107,8 @@ const HUD = {
     const rowY = by + 3 * u;
 
     // слоты оружия
-    const slotW = Math.min(20, cw * 0.4 / 8);
-    for (let n = 1; n <= 8; n++) {
+    const slotW = Math.min(18, cw * 0.42 / 9);
+    for (let n = 1; n <= 9; n++) {
       const sx = X((n - 1) * slotW);
       const owned = p.weapons[n];
       const cur = p.weapon === n;
@@ -118,7 +118,7 @@ const HUD = {
       this.text(ctx, String(n), sx + (slotW - 2) * u / 2, rowY + 1.5 * u, 6 * u, owned ? (cur ? '#fff0c0' : '#c8a060') : '#4a3a28', 'center', false);
     }
     // счётчики патронов
-    const ammoX = 8 * slotW + 6;
+    const ammoX = 9 * slotW + 6;
     const kinds = [['shells', '#c04020'], ['nails', '#9a9aa4'], ['rockets', '#b07030'], ['cells', '#e0c030']];
     const aw = (cw - ammoX) / 4;
     kinds.forEach(([k, col], i) => {
@@ -179,6 +179,17 @@ const HUD = {
       ctx.fillRect(bx, byy, bw * clamp(p.air / 12, 0, 1), 4 * u);
     }
 
+    // полоска здоровья Вестника
+    const boss = Game.monsters.find((m) => m.type === 'herald' && m.alive && m.state !== 'idle');
+    if (boss) {
+      const bw = Math.min(W * 0.5, 220 * u), bx = (W - bw) / 2, byy = 8 * u;
+      const shielded = boss.heraldShielded();
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx - 2 * u, byy - 2 * u, bw + 4 * u, 9 * u);
+      ctx.fillStyle = shielded ? '#5a3a7a' : '#b02a20';
+      ctx.fillRect(bx, byy, bw * clamp(boss.health / boss.maxHealth, 0, 1), 5 * u);
+      const pylons = Game.monsters.filter((m) => m.type === 'pylon' && m.alive).length;
+      this.text(ctx, 'ВЕСТНИК БЕЗДНЫ' + (shielded ? '  ·  щит, кристаллов: ' + pylons : ''), W / 2, byy + 8 * u, 5 * u, shielded ? '#d0a0ff' : '#f0c0a0', 'center');
+    }
     // сообщения
     let myy = 6 * u;
     for (const m of this.msgs) {

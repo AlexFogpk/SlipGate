@@ -7,6 +7,7 @@ const OBITS = {
   zombie: 'Вас закидал плотью зомби', fiend: 'Вас растерзал изверг', scrag: 'Вас оплевал скраг',
   vore: 'Вас уничтожил ворог', spawn: 'Вас сожрало порождение', shambler: 'Вас испепелил шамблер',
   chthon: 'Вас испепелил Хтон', gargoyle: 'Вас растерзала гаргулья', shub: 'Вас поглотила Шуб-Ниггурат',
+  scorpion: 'Вас изрешетил скорпион', eel: 'Вас ударил током угорь', herald: 'Вас испепелил Вестник Бездны',
 };
 const FINALES = {
   e1: [
@@ -28,14 +29,27 @@ const FINALES = {
     'и Шуб-Ниггурат рвётся изнутри, как гнилой плод.',
     '',
     'Щупальца опадают. Глаза гаснут один за другим.',
-    'Из тысячи порождений не остаётся ни одного.',
-    '',
     'Вторая руна тёплая, как живое сердце.',
-    'Слипгейты по всему миру медленно гаснут —',
-    'но вы знаете: пока руны не собраны вместе,',
+    '',
+    'Но руна раскрывает путь ещё глубже —',
+    'в Нижний мир, откуда приходят все кошмары.',
+    'Пока руны не собраны вместе,',
     'тьма лишь затаилась.',
     '',
-    'Эпизод 2 пройден. Спасибо за игру!',
+    'Эпизод 2 пройден. Впереди — Эпизод 3.',
+  ],
+  e3: [
+    'Вестник Бездны рассыпается пеплом,',
+    'и эхо его крика ещё долго гуляет по сводам.',
+    '',
+    'Трон Бездны пуст. Кристаллы погасли.',
+    'Третья руна холодна, как дно колодца,',
+    'но в ней бьётся тот же древний пульс.',
+    '',
+    'Три руны из четырёх. Где-то за последним',
+    'слипгейтом ждёт тот, кто их выковал.',
+    '',
+    'Эпизод 3 пройден. Спасибо за игру!',
   ],
 };
 
@@ -199,7 +213,7 @@ const Game = {
         const type = MONSTER_CHARS[s.ch];
         if (this.skill === 0 && type !== 'chthon' && hash2(s.tx, s.ty, 7) < 0.3) continue;
         this.monsters.push(new Monster(type, cx, bottom));
-        this.totalKills++;
+        if (!MONSTER_DEFS[type].static) this.totalKills++;
       } else if (ITEM_CHARS.includes(s.ch)) this.items.push(new Item(s.ch, cx, bottom));
     }
     if (this.attract) {
@@ -254,8 +268,18 @@ const Game = {
     else if (kind === 'drown') msg = 'Вы утонули';
     else if (kind === 'fall') msg = 'Вы разбились';
     else if (kind === 'explosion') msg = 'Вас разорвало взрывом';
+    else if (kind === 'crush') msg = 'Вас расплющило давилкой';
     this.deathMsg = msg;
     HUD.message(msg);
+  },
+
+  onPylonDestroyed() {
+    const left = this.monsters.filter((m) => m.type === 'pylon' && m.alive).length;
+    if (left > 0) HUD.center('Кристалл разбит! Осталось: ' + left, 2);
+    else if (this.monsters.some((m) => m.type === 'herald' && m.alive)) {
+      HUD.center('Щит Вестника пал!', 2.5);
+      Sound.play('roar');
+    }
   },
 
   onBossDefeated() {
@@ -437,6 +461,7 @@ const Game = {
     p.update(dt);
     if (p.alive) this.checkTriggers(p);
     for (const m of this.monsters) m.update(dt);
+    this.jumpPads();
     this.separateMonsters(dt);
     for (const pr of this.projectiles) pr.update(dt);
     this.projectiles = this.projectiles.filter((pr) => !pr.dead);
@@ -517,6 +542,28 @@ const Game = {
       }
       this.startIntermission();
       return;
+    }
+  },
+
+  // Прыжковые площадки подбрасывают всех, кто на них стоит.
+  jumpPads() {
+    const pads = this.level.jumpPads;
+    if (!pads.length) return;
+    const bodies = [this.player, ...this.monsters];
+    for (const e of bodies) {
+      if (!e || !e.alive || !e.onGround || (e.def && (e.def.fly || e.def.boss || e.def.static))) continue;
+      const feet = e.y + e.h;
+      for (const pad of pads) {
+        if (e.x + e.w > pad.x && e.x < pad.x + pad.w && Math.abs(feet - (pad.ty + 1) * TILE) < 3) {
+          e.vy = -JUMP_PAD_VEL;
+          e.onGround = false;
+          e.lift = null;
+          if (e.isPlayer) { e.jumping = false; e.coyote = 0; e.jumpBuf = 0; }
+          Sound.play('jumppad', pad.x + 7, pad.y);
+          for (let i = 0; i < 10; i++) FX.add({ kind: 'spark', x: pad.x + rand(0, 14), y: pad.y, vx: rand(-20, 20), vy: rand(-160, -60), life: 0.4, max: 0.4, size: 1, col: '#80ffe0', grav: 100, bright: true });
+          break;
+        }
+      }
     }
   },
 

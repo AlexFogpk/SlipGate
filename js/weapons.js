@@ -10,6 +10,7 @@ const WEAPONS = {
   6: { name: 'Гранатомёт', ammo: 'rockets', use: 1, rate: 0.6, len: 10 },
   7: { name: 'Ракетница', ammo: 'rockets', use: 1, rate: 0.8, len: 13 },
   8: { name: 'Громовержец', ammo: 'cells', use: 1, rate: 0.1, len: 11 },
+  9: { name: 'Лазерная пушка', ammo: 'cells', use: 1, rate: 0.13, len: 12 },
 };
 const AMMO_MAX = { shells: 100, nails: 200, rockets: 100, cells: 100 };
 const AMMO_NAMES = { shells: 'патроны', nails: 'гвозди', rockets: 'ракеты', cells: 'батареи' };
@@ -24,6 +25,7 @@ const PROJ = {
   flesh: { speed: 300, dmg: 10, grav: 650, lit: true },
   voreball: { speed: 150, dmg: 20, splash: 40, radius: 44, homing: 2.2, life: 7, light: [0.8, 0.35, 1, 64] },
   lavaball: { speed: 300, dmg: 30, splash: 50, radius: 60, grav: 420, light: [1, 0.5, 0.1, 90] },
+  bolt: { speed: 620, dmg: 18, life: 2, light: [1, 0.3, 0.2, 44] },
 };
 
 // Мгновенный выстрел (дробь, пули солдат). Урон дробинок суммируется — как в Quake.
@@ -107,6 +109,7 @@ class Projectile {
     this.dead = false;
     this.spin = rand(0, TAU);
     this.target = o.target || null;
+    this.bounces = kind === 'bolt' ? 3 : 0;
   }
 
   update(dt) {
@@ -195,6 +198,18 @@ class Projectile {
     this.dead = true;
     const lv = Game.level;
     const speed = Math.hypot(this.vx, this.vy) || 1;
+    if (this.kind === 'bolt' && this.bounces > 0 && (hit.nx || hit.ny)) {
+      // лазерный заряд рикошетит от стен
+      this.bounces--;
+      this.dead = false;
+      if (hit.nx) this.vx = -this.vx;
+      if (hit.ny) this.vy = -this.vy;
+      this.x = x + hit.nx * 1.5; this.y = y + hit.ny * 1.5;
+      FX.sparks(x, y, 3, '#ff8060', 90);
+      Sound.play('ric', x, y, { gap: 0.04 });
+      lv.shootSolid(hit.solid, this.dmg * this.mul, this.owner);
+      return;
+    }
     const bx = x - this.vx / speed * 2, by = y - this.vy / speed * 2;
     if (this.splash) { this.detonate(bx, by, null); return; }
     lv.shootSolid(hit.solid, this.dmg * this.mul, this.owner);
@@ -282,6 +297,12 @@ class Projectile {
         ctx.fillStyle = '#ffe0ff'; ctx.fillRect(x - 1, y - 1, 2, 2);
         break;
       }
+      case 'bolt':
+        ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+        ctx.fillStyle = '#ff3010'; ctx.fillRect(-6, -1, 12, 3);
+        ctx.fillStyle = '#ffb090'; ctx.fillRect(-5, 0, 10, 1);
+        ctx.restore();
+        break;
       case 'lavaball':
         ctx.save(); ctx.translate(x, y); ctx.rotate(this.spin);
         ctx.fillStyle = '#5a1a08'; ctx.fillRect(-5, -5, 10, 10);

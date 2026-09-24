@@ -16,12 +16,16 @@ const MONSTER_DEFS = {
   shambler: { name: 'Шамблер', hp: 600, w: 24, h: 36, speed: 52, pain: 0.12, painT: 0.3, gib: -60, mass: 6, voice: 0.4, headCol: '#cfc8b8', cd: [1.7, 2.8], halfExplosion: true },
   gargoyle: { name: 'Гаргулья', hp: 110, w: 16, h: 16, speed: 95, pain: 0.4, painT: 0.2, gib: -50, mass: 1.5, voice: 0.9, headCol: '#7a7a70', fly: true, cd: [1.1, 2.0] },
   shub: { name: 'Шуб-Ниггурат', hp: 1, w: 84, h: 92, speed: 0, pain: 0, painT: 0, gib: -9999, mass: 99, voice: 0.3, headCol: '#4a2a3a', boss: true, cd: [2.2, 3.2] },
+  scorpion: { name: 'Скорпион', hp: 110, w: 20, h: 12, speed: 115, pain: 0.35, painT: 0.2, gib: -60, mass: 1.5, voice: 1.6, headCol: '#7a6a3a', cd: [0.9, 1.7], keep: 80, jump: 300, squash: true },
+  eel: { name: 'Угорь', hp: 60, w: 20, h: 8, speed: 95, pain: 0.3, painT: 0.2, gib: -40, mass: 0.7, voice: 1.8, headCol: '#2a4a5a', swim: true, cd: [1.1, 1.9], squash: true },
+  pylon: { name: 'Кристалл', hp: 250, w: 14, h: 30, speed: 0, pain: 0, painT: 0, gib: -9999, mass: 99, voice: 1, headCol: '#c040ff', static: true, cd: [9, 9] },
+  herald: { name: 'Вестник Бездны', hp: 2200, w: 40, h: 56, speed: 75, pain: 0, painT: 0, gib: -9999, mass: 99, voice: 0.35, headCol: '#3a2a44', boss: true, fly: true, cd: [1.3, 2.0] },
   chthon: { name: 'Хтон', hp: 3, w: 56, h: 120, speed: 0, pain: 0, painT: 0, gib: -9999, mass: 99, voice: 0.3, headCol: '#4a2c1c', boss: true, cd: [1.6, 2.4] },
 };
 
 const SHUB_EYES = [[-18, -62], [-6, -70], [8, -66], [20, -56], [-24, -44], [26, -40], [0, -50], [-12, -34], [14, -30]];
 
-const MONSTER_CHARS = { g: 'grunt', d: 'dog', e: 'enforcer', k: 'knight', o: 'ogre', z: 'zombie', f: 'fiend', s: 'scrag', n: 'hknight', v: 'vore', t: 'spawn', m: 'shambler', c: 'chthon', a: 'gargoyle', w: 'shub' };
+const MONSTER_CHARS = { g: 'grunt', d: 'dog', e: 'enforcer', k: 'knight', o: 'ogre', z: 'zombie', f: 'fiend', s: 'scrag', n: 'hknight', v: 'vore', t: 'spawn', m: 'shambler', c: 'chthon', a: 'gargoyle', w: 'shub', r: 'scorpion', u: 'eel', y: 'pylon', h: 'herald' };
 
 class Monster {
   constructor(type, cx, bottom) {
@@ -66,6 +70,8 @@ class Monster {
     this.throwT = 0;
     if (type === 'chthon') this.y += 14; // Хтон по пояс в лаве
     if (type === 'shub') this.facing = 1;
+    if (d.static) { this.counted = false; this.facing = 1; }
+    if (type === 'herald') { this.health = Math.round(d.hp * [0.7, 1, 1.2, 1.4][Game.skill || 1]); this.maxHealth = this.health; this.homeX = this.x; this.homeY = this.y; }
     this.baseY = this.y;
   }
 
@@ -89,7 +95,7 @@ class Monster {
   }
 
   alert(target, loud = true) {
-    if (!this.alive || this.def.boss) return;
+    if (!this.alive || this.def.boss || this.def.static) return;
     const wasIdle = this.state === 'idle';
     this.target = target;
     if (wasIdle) {
@@ -125,7 +131,8 @@ class Monster {
     this.fireAnim = Math.max(0, this.fireAnim - dt);
     if (!this.alive) { this.updateCorpse(dt); return; }
     if (this.def.boss) { this.updateBoss(dt); return; }
-    this.updateLiquid(dt);
+    if (this.def.static) return;
+    if (!this.def.swim) this.updateLiquid(dt);
     if (!this.alive) return;
     this.cd -= dt;
     this.jumpCd -= dt;
@@ -149,6 +156,7 @@ class Monster {
         if (this.turnT <= 0) { this.turnT = rand(3, 7); this.facing = -this.facing; }
         this.vx = approach(this.vx, 0, 600 * dt);
         if (this.def.fly) this.vy = Math.sin(this.anim * 1.5 + this.seed) * 8;
+        if (this.def.swim) { this.vx = Math.sin(this.anim * 0.6 + this.seed) * 35; this.vy = Math.sin(this.anim * 1.1 + this.seed) * 12; this.facing = this.vx >= 0 ? 1 : -1; }
         break;
       case 'pain':
         this.stateT -= dt;
@@ -198,6 +206,11 @@ class Monster {
     // физика
     if (this.def.fly && this.state !== 'down') {
       this.blockedX = moveBody(this, dt).hitX;
+    } else if (this.def.swim) {
+      // угорь не покидает воду
+      const px = this.x, py = this.y;
+      moveBody(this, dt);
+      if (!Game.level.liquidAt(this.cx, this.cy)) { this.x = px; this.y = py; this.vy = Math.abs(this.vy) * 0.5 + 25; }
     } else {
       const g = this.waterLevel >= 2 ? 0.35 : 1;
       this.vy = Math.min(this.vy + GRAVITY * g * dt, 800);
@@ -224,6 +237,13 @@ class Monster {
     const dx = t.cx - this.cx;
     const adx = Math.abs(dx);
     const speed = this.def.speed * (this.waterLevel >= 2 ? 0.6 : 1);
+    if (this.def.swim) {
+      const ddx = t.cx - this.cx, ddy = t.cy - this.cy;
+      const d = Math.hypot(ddx, ddy) || 1;
+      this.vx = approach(this.vx, ddx / d * speed, 300 * dt);
+      this.vy = approach(this.vy, ddy / d * speed, 300 * dt);
+      return;
+    }
     if (this.def.fly) {
       const tx = t.cx + Math.sin(this.anim * 0.7 + this.seed) * 50;
       const ty = t.y - 34 + Math.sin(this.anim * 1.3 + this.seed) * 16;
@@ -297,6 +317,13 @@ class Monster {
         else if (see && this.onGround && d > 55 && d < 230 && Math.abs(t.cy - this.cy) < 70) this.leap(330, 250);
         break;
       case 'scrag': if (see && d < 380) this.startAttack('ranged'); break;
+      case 'scorpion':
+        if (gap < 8) this.startAttack('melee');
+        else if (see && d < 330) this.startAttack('ranged');
+        break;
+      case 'eel':
+        if (see && d < 95 && computeWaterLevel(t).level > 0) this.startAttack('ranged');
+        break;
       case 'gargoyle':
         if (see && d < 250) {
           const a = Math.atan2(t.cy - this.cy, t.cx - this.cx);
@@ -368,6 +395,7 @@ class Monster {
 
   takeDamage(dmg, attacker, kind, kx = 0, ky = 0) {
     if (this.gibbed) return;
+    if (this.type === 'herald') { this.heraldDamage(dmg, attacker, kind); return; }
     if (this.def.boss) {
       if (this.type === 'shub' && kind === 'telefrag' && this.alive && this.state !== 'dying') {
         this.state = 'dying'; this.stateT = 0;
@@ -396,7 +424,7 @@ class Monster {
     if (this.type === 'zombie') { this.zombieDamage(dmg, attacker); return; }
     this.health -= dmg;
     this.hurtFlash = 0.08;
-    this.retarget(attacker);
+    if (!this.def.static) this.retarget(attacker);
     if (this.health <= 0) { this.die(attacker); return; }
     if (Math.random() < this.def.pain * Game.skillPainScale() && this.state !== 'leap' && this.state !== 'pain') {
       this.state = 'pain';
@@ -442,6 +470,15 @@ class Monster {
     this.alive = false;
     this.deathT = 0;
     this.state = 'dead';
+    if (this.type === 'pylon') {
+      this.gibbed = true;
+      FX.explosion(this.cx, this.cy, 0.7);
+      Sound.play('explode', this.cx, this.cy);
+      Sound.play('zap', this.cx, this.cy);
+      for (let i = 0; i < 12; i++) FX.gib(this.cx, this.y + rand(0, this.h), rand(-220, 220), rand(-320, -80), pick(['#c040ff', '#e090ff', '#6a2a8a']), randInt(2, 4), false);
+      Game.onPylonDestroyed();
+      return;
+    }
     if (this.counted) Game.kills++;
     if (attacker && attacker.isPlayer) Game.player.lastKill = this.def.name;
     if (this.def.drop) Game.dropBackpack(this.cx, this.y + this.h / 2, this.def.drop);
@@ -478,6 +515,7 @@ class Monster {
   // --- босс ---
   updateBoss(dt) {
     if (this.type === 'shub') { this.updateShub(dt); return; }
+    if (this.type === 'herald') { this.updateHerald(dt); return; }
     const p = Game.player;
     this.throwT = Math.max(0, this.throwT - dt);
     this.stateT += dt;
@@ -604,6 +642,123 @@ class Monster {
     }
   }
 
+  // --- Вестник Бездны: летает под сводом, щит держат кристаллы ---
+  heraldShielded() { return Game.monsters.some((m) => m.type === 'pylon' && m.alive); }
+
+  heraldWake() {
+    if (this.state !== 'idle') return;
+    this.state = 'active'; this.stateT = 0; this.cd = 1.5; this.pattern = 0;
+    Sound.play('roar'); Game.shake(this.cx, this.cy, 8);
+    HUD.center('Вестник Бездны явился!', 2.5);
+  }
+
+  heraldDamage(dmg, attacker, kind) {
+    if (!this.alive || this.state === 'dying') return;
+    if (attacker && attacker.isPlayer) this.heraldWake();
+    if (this.heraldShielded()) {
+      this.shieldFlash = 0.25;
+      Sound.play('shield', this.cx, this.cy, { gap: 0.08 });
+      if (attacker && attacker.isPlayer && !Game.bossHintShown) {
+        Game.bossHintShown = true;
+        HUD.center('Щит Вестника питают кристаллы!\nРазбейте их.', 3);
+      }
+      return;
+    }
+    this.health -= dmg;
+    this.hurtFlash = 0.06;
+    if (this.health <= 0) {
+      this.state = 'dying'; this.stateT = 0;
+      HUD.center('Вестник Бездны повержен!', 3);
+      Sound.play('roar');
+      for (const m of Game.monsters) if (m.minion && m.alive) applyDamage(m, 5000, attacker, 'telefrag');
+    }
+  }
+
+  updateHerald(dt) {
+    const p = Game.player;
+    this.stateT += dt;
+    this.hurtFlash -= dt;
+    this.castT = Math.max(0, (this.castT || 0) - dt);
+    this.shieldFlash = (this.shieldFlash || 0) - dt;
+    if (this.state === 'idle') {
+      this.vy = Math.sin(this.anim * 1.2) * 10; this.vx = 0;
+      moveBody(this, dt);
+      if (p && p.alive && dist(p.cx, p.cy, this.cx, this.cy) < 480) this.heraldWake();
+      return;
+    }
+    if (this.state === 'dying') {
+      this.vx *= 0.9; this.vy = 25;
+      moveBody(this, dt);
+      this.shubBoomT = (this.shubBoomT || 0) - dt;
+      if (this.shubBoomT <= 0) {
+        this.shubBoomT = 0.15;
+        const x = this.x + rand(0, this.w), y = this.y + rand(0, this.h);
+        FX.explosion(x, y, 0.8); Sound.play('explode', x, y); Game.shake(x, y, 6);
+      }
+      if (this.stateT > 3) {
+        this.alive = false; this.gibbed = true;
+        Game.kills++;
+        for (let i = 0; i < 24; i++) FX.gib(this.x + rand(0, this.w), this.y + rand(0, this.h), rand(-300, 300), rand(-400, -100), pick(['#2a1a30', '#5a2a6a', '#7a1a10', '#c040ff']), randInt(3, 6));
+        FX.explosion(this.cx, this.cy, 2);
+        Game.onBossDefeated();
+      }
+      return;
+    }
+    // парение: держится над игроком, но в пределах своей арены
+    const shielded = this.heraldShielded();
+    const tx = clamp(p ? p.cx + Math.sin(this.anim * 0.45) * 150 : this.homeX, this.homeX - 420, this.homeX + 420);
+    const ty = this.homeY + Math.sin(this.anim * 0.8) * 30;
+    const dx = tx - this.cx, dy = ty - this.cy, d = Math.hypot(dx, dy) || 1;
+    const sp = this.def.speed * (shielded ? 1 : 1.35);
+    this.vx = approach(this.vx, dx / d * sp * Math.min(1, d / 60), 200 * dt);
+    this.vy = approach(this.vy, dy / d * sp * Math.min(1, d / 60), 200 * dt);
+    moveBody(this, dt);
+    if (p) this.facing = p.cx >= this.cx ? 1 : -1;
+    this.cd -= dt;
+    if (this.cd > 0 || !p || !p.alive) return;
+    this.cd = rand(...this.def.cd) * Game.skillCdScale() * (shielded ? 1 : 0.75);
+    const sx = this.cx + this.facing * 16, sy = this.y + 20;
+    const aim = Math.atan2(p.cy - sy, p.cx - sx);
+    this.castT = 0.4;
+    switch (this.pattern++ % 4) {
+      case 0:
+        for (let i = -2; i <= 2; i++) spawnProjectile('fireball', this, sx, sy, aim + i * 0.13, { dmg: 12 });
+        Sound.play('fireball', sx, sy);
+        break;
+      case 1:
+        for (const off of [-0.6, 0.6]) spawnProjectile('voreball', this, sx, sy, aim + off, { target: p });
+        Sound.play('voreball', sx, sy);
+        break;
+      case 2:
+        Sound.play('charge', sx, sy);
+        this.castT = 1.1;
+        for (const [k, tt] of [[0, 0.8], [1, 0.9], [2, 1.0]]) {
+          Game.later(tt, () => {
+            if (!this.alive || this.state !== 'active' || !Game.player || !Game.player.alive) return;
+            const q = Game.player;
+            const ox = this.cx + this.facing * 16, oy = this.y + 20;
+            lightningRay(this, ox, oy, Math.atan2(q.cy - oy, q.cx - ox), 520, 12);
+            if (k === 0) Sound.play('lightning', ox, oy);
+          });
+        }
+        break;
+      default:
+        if (Game.monsters.filter((m) => m.minion && m.alive).length < 4) {
+          for (const t of ['gargoyle', 'scrag']) {
+            const m = new Monster(t, this.cx + rand(-40, 40), this.y + 20);
+            m.counted = false; m.minion = true;
+            m.alert(p, false);
+            Game.monsters.push(m);
+            FX.teleport(m.cx, m.cy);
+          }
+          Sound.play('teleport', this.cx, this.cy);
+        } else {
+          for (let i = -1; i <= 1; i++) spawnProjectile('fireball', this, sx, sy, aim + i * 0.2, { dmg: 12 });
+          Sound.play('fireball', sx, sy);
+        }
+    }
+  }
+
   spawnMinion() {
     this.minionIdx = ((this.minionIdx || 0) + 1) % 4;
     const type = ['spawn', 'gargoyle', 'spawn', 'scrag'][this.minionIdx];
@@ -620,6 +775,9 @@ class Monster {
 
   lights(out) {
     if (this.type === 'chthon' && this.state !== 'idle') out.push({ x: this.cx, y: this.y + 40, r: 180, c: [1, 0.5, 0.2], i: 0.7 });
+    if (this.type === 'pylon') out.push({ x: this.cx, y: this.y + 8, r: 70, c: [0.8, 0.3, 1], i: 0.6 + Math.sin(this.anim * 3) * 0.15 });
+    if (this.type === 'herald') out.push({ x: this.cx, y: this.cy, r: 160, c: [0.9, 0.3, 0.8], i: 0.6 });
+    if (this.type === 'eel' && this.state === 'attack') out.push({ x: this.cx, y: this.cy, r: 60, c: [0.5, 0.7, 1], i: 0.7 });
     if (this.type === 'shub') out.push({ x: this.cx, y: this.cy, r: 200, c: [0.7, 0.3, 0.9], i: this.state === 'idle' ? 0.35 : 0.65 });
     if (this.type === 'shambler' && this.state === 'attack' && this.attackKind === 'ranged') {
       out.push({ x: this.cx + this.facing * 6, y: this.y - 8, r: 70, c: [0.6, 0.7, 1], i: 0.8 * Math.random() + 0.3 });
@@ -669,6 +827,41 @@ class Monster {
         ctx.fillStyle = blink ? '#3a2430' : '#ffe060';
         ctx.fillRect(x + ex - 1, y + this.h + ey - 1, 3, 2);
       }
+    }
+    if (this.type === 'pylon') {
+      const boss = Game.monsters.find((m) => m.type === 'herald' && m.alive);
+      if (boss) drawLightning(ctx, x + 7, y + 4, Math.round(boss.cx - cam.x), Math.round(boss.cy - cam.y), '#e080ff', 1, 0.35 + Math.random() * 0.3);
+      const k = Math.sin(this.anim * 3) * 0.5 + 0.5;
+      ctx.fillStyle = mix('#c040ff', '#ffd0ff', k);
+      ctx.fillRect(x + 5, y + 5, 4, 12);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(x + 6, y + 7, 1, 6);
+    }
+    if (this.type === 'herald') {
+      ctx.fillStyle = '#ff5030';
+      const ex = x + this.w / 2 + this.facing * 3;
+      ctx.fillRect(ex - 5, y + 7, 3, 2); ctx.fillRect(ex + 2, y + 7, 3, 2);
+      const orb = 2 + Math.round(Math.sin(this.anim * 6));
+      ctx.fillStyle = '#ff90ff';
+      ctx.fillRect(x + this.w / 2 - 19 - orb, y + 30 - orb, orb * 2 + 2, orb * 2 + 2);
+      ctx.fillRect(x + this.w / 2 + 17 - orb, y + 30 - orb, orb * 2 + 2, orb * 2 + 2);
+      if (this.heraldShielded()) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.25 + (this.shieldFlash > 0 ? 0.5 : 0) + Math.sin(this.anim * 4) * 0.05;
+        ctx.strokeStyle = '#e080ff'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(x + this.w / 2, y + this.h / 2, this.w * 0.85, this.h * 0.7, 0, 0, TAU); ctx.stroke();
+        ctx.fillStyle = '#6020a0'; ctx.globalAlpha *= 0.3; ctx.fill();
+        ctx.restore();
+      }
+    }
+    if (this.type === 'eel') {
+      ctx.fillStyle = '#ffe040';
+      ctx.fillRect(x + (this.facing > 0 ? this.w - 4 : 3), y + 2, 1, 1);
+      if (this.state === 'attack') for (let i = 0; i < 3; i++) { ctx.fillStyle = '#c0e0ff'; ctx.fillRect(x + rand(0, this.w), y + rand(-2, this.h), 1, 1); }
+    }
+    if (this.type === 'scorpion') {
+      ctx.fillStyle = '#ffe040';
+      ctx.fillRect(x + (this.facing > 0 ? this.w - 5 : 4), y + this.h - 9, 1, 1);
     }
     if (this.type === 'gargoyle') {
       ctx.fillStyle = '#ff4020';
@@ -811,5 +1004,34 @@ const ATTACKS = {
   },
   chthon() { /* босс атакует в updateBoss */ },
   gargoyle() { /* атака — пике, см. tryAttack */ },
+  pylon() { /* неподвижный кристалл */ },
+  herald() { /* см. updateHerald */ },
+  scorpion(m) {
+    if (m.attackKind === 'melee') {
+      if (m.fired === 0 && m.stateT > 0.2) { m.fired = 1; m.meleeHit(10, rand(10, 15), 'axehit'); }
+      if (m.stateT > 0.45) m.endAttack();
+      return;
+    }
+    for (const [i, tt] of [[0, 0.25], [1, 0.33], [2, 0.41], [3, 0.49]]) {
+      if (m.fired === i && m.stateT > tt) {
+        m.fired++;
+        const sx = m.cx + m.facing * 10, sy = m.y + 4;
+        spawnProjectile('nail', m, sx, sy, Math.atan2(m.target.cy - sy, m.target.cx - sx) + rand(-0.06, 0.06), { dmg: 6 });
+        Sound.play('nail', m.cx, m.cy, { p: 1.2, gap: 0.05 });
+      }
+    }
+    if (m.stateT > 0.8) m.endAttack();
+  },
+  eel(m) {
+    if (m.fired === 0 && m.stateT > 0.25) {
+      m.fired = 1;
+      const t = m.target;
+      if (t && dist(t.cx, t.cy, m.cx, m.cy) < 110) {
+        lightningRay(m, m.cx, m.cy, Math.atan2(t.cy - m.cy, t.cx - m.cx), 120, 14);
+        Sound.play('zapsmall', m.cx, m.cy);
+      }
+    }
+    if (m.stateT > 0.6) m.endAttack();
+  },
   shub() { /* см. updateShub */ },
 };

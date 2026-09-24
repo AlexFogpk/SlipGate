@@ -3,7 +3,7 @@
 
 const RUN_SPEED = 130;
 const JUMP_VEL = 350;
-const WEAPON_ORDER_BEST = [8, 5, 3, 4, 2, 1];
+const WEAPON_ORDER_BEST = [8, 9, 5, 3, 4, 2, 1];
 
 class Player {
   constructor(cx, bottom) {
@@ -231,7 +231,7 @@ class Player {
   updateWeapons(dt) {
     this.fireCd -= dt;
     this.attackAnim = Math.max(0, this.attackAnim - dt);
-    for (let n = 1; n <= 8; n++) if (Input.wasPressed('Digit' + n, 'Numpad' + n)) this.selectWeapon(n, true);
+    for (let n = 1; n <= 9; n++) if (Input.wasPressed('Digit' + n, 'Numpad' + n)) this.selectWeapon(n, true);
     if (Input.wheel > 0 || Input.wasPressed('KeyE') || Input.buttonPresses.has('next')) this.cycleWeapon(1);
     if (Input.wheel < 0 || Input.wasPressed('KeyQ')) this.cycleWeapon(-1);
     if (Input.fireHeld() && this.fireCd <= 0) this.fire();
@@ -254,8 +254,8 @@ class Player {
   }
 
   cycleWeapon(dir) {
-    for (let i = 1; i <= 8; i++) {
-      const n = ((this.weapon - 1 + dir * i) % 8 + 8) % 8 + 1;
+    for (let i = 1; i <= 9; i++) {
+      const n = ((this.weapon - 1 + dir * i) % 9 + 9) % 9 + 1;
       if (this.weapons[n] && this.hasAmmoFor(n)) { this.selectWeapon(n); return; }
     }
   }
@@ -325,6 +325,11 @@ class Player {
         lightningRay(this, m.x, m.y, ang, 380, 30 * mul);
         FX.light(m.x, m.y, 80, [0.6, 0.7, 1], 1, 0.1);
         Sound.play('lightning', null, null, { gap: 0.09 });
+        break;
+      case 9:
+        spawnProjectile('bolt', this, s.x, s.y, ang + rand(-0.015, 0.015), { mul });
+        Sound.play('laser', null, null, { gap: 0.05 });
+        FX.light(m.x, m.y, 70, [1, 0.35, 0.2], 0.9, 0.06);
         break;
       default: break;
     }

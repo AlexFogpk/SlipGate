@@ -84,6 +84,67 @@ class Lift {
   }
 }
 
+// Давилка: тяжёлый блок '|' падает до пола, давит всех под собой и медленно поднимается обратно.
+class Crusher {
+  constructor(x0, y0, x1, y1, level) {
+    this.kind = 'crusher';
+    this.x = x0 * TILE; this.baseY = y0 * TILE; this.y = this.baseY;
+    this.w = (x1 - x0 + 1) * TILE; this.h = (y1 - y0 + 1) * TILE;
+    let ty = y1 + 1;
+    const rowSolid = (r) => { for (let x = x0; x <= x1; x++) if (level.tileSolid(x, r)) return true; return false; };
+    while (ty < level.h && !rowSolid(ty)) ty++;
+    this.maxY = ty * TILE - this.h;
+    this.solid = true;
+    this.state = 'up';
+    this.t = 0.6 + hash2(x0, y0, 3) * 1.4;
+  }
+  rect() { return this; }
+  update(dt) {
+    switch (this.state) {
+      case 'up':
+        this.t -= dt;
+        if (this.t <= 0) this.state = 'down';
+        break;
+      case 'down': {
+        const ny = Math.min(this.maxY, this.y + 330 * dt);
+        const box = { x: this.x, y: ny, w: this.w, h: this.h };
+        const victims = [];
+        if (Game.player && Game.player.alive && overlap(box, Game.player)) victims.push(Game.player);
+        for (const m of Game.monsters) if (m.alive && !m.def.boss && overlap(box, m)) victims.push(m);
+        if (victims.length) {
+          for (const v of victims) {
+            applyDamage(v, 35, null, 'crush', 0, 60);
+            FX.blood(v.cx, v.y, 0, 1, 14, 2);
+          }
+          Sound.play('axehit', this.x + this.w / 2, ny + this.h);
+          Sound.play('splat', this.x + this.w / 2, ny + this.h);
+          this.state = 'rise';
+          break;
+        }
+        this.y = ny;
+        if (this.y >= this.maxY) {
+          this.state = 'wait'; this.t = 0.5;
+          Sound.play('crush', this.x + this.w / 2, this.y + this.h);
+          Game.shake(this.x + this.w / 2, this.y + this.h, 4);
+          for (let i = 0; i < 8; i++) FX.add({ kind: 'smoke', x: this.x + rand(0, this.w), y: this.y + this.h - 2, vx: rand(-30, 30), vy: rand(-30, -5), life: 0.6, max: 0.6, size: 3, col: '#5a5048', grav: -10 });
+        }
+        break;
+      }
+      case 'wait':
+        this.t -= dt;
+        if (this.t <= 0) this.state = 'rise';
+        break;
+      case 'rise':
+        this.y = Math.max(this.baseY, this.y - 75 * dt);
+        if (this.y <= this.baseY) { this.state = 'up'; this.t = 1.4; }
+        break;
+      default: break;
+    }
+  }
+}
+
+const JUMP_PAD_VEL = 670;
+
 class Level {
   constructor(def) {
     this.def = def;
@@ -102,6 +163,8 @@ class Level {
     this.exits = [];
     this.decor = [];
     this.lifts = [];
+    this.crushers = [];
+    this.jumpPads = [];
     this.hasSky = false;
     this.hasLiquid = false;
     this.pxW = this.w * TILE;
@@ -167,10 +230,28 @@ class Level {
         case '*': this.decor.push({ kind: 'lamp', x: px + 8, y: py + 4 }); break;
         case '@': this.decor.push({ kind: 'electrode', x: px + 8, y: py + TILE }); break;
         case '&': this.decor.push({ kind: 'checkpoint', x: px + 8, y: py + TILE, active: false }); break;
+        case '^': this.jumpPads.push({ x: px + 1, y: py + TILE - 4, w: 14, h: 4, tx: s.tx, ty: s.ty }); break;
         default: break;
       }
     }
     // лифты: горизонтальные отрезки '_' и ближайшая отметка ':' в том же столбце или ряду
+    // давилки: связные группы клеток '|'
+    const crushSet = new Set(this.spawns.filter((s) => s.ch === '|').map((s) => s.ty * this.w + s.tx));
+    for (const key of [...crushSet]) {
+      if (!crushSet.has(key)) continue;
+      let x0 = key % this.w, x1 = x0, y0 = Math.floor(key / this.w), y1 = y0;
+      const st = [key];
+      crushSet.delete(key);
+      while (st.length) {
+        const k = st.pop();
+        const cx = k % this.w, cy = Math.floor(k / this.w);
+        x0 = Math.min(x0, cx); x1 = Math.max(x1, cx); y0 = Math.min(y0, cy); y1 = Math.max(y1, cy);
+        for (const nk of [k + 1, k - 1, k + this.w, k - this.w]) if (crushSet.has(nk)) { crushSet.delete(nk); st.push(nk); }
+      }
+      const c = new Crusher(x0, y0, x1, y1, this);
+      this.crushers.push(c);
+      this.solids.push(c);
+    }
     const runs = this.spawns.filter((s) => s.ch === '_').sort((a, b) => a.ty - b.ty || a.tx - b.tx);
     const marks = this.spawns.filter((s) => s.ch === ':');
     for (let i = 0; i < runs.length;) {
@@ -179,10 +260,11 @@ class Level {
       const r = runs[i], len = j - i + 1;
       let best = null, bd = Infinity;
       for (const m of marks) {
-        if (m.tx !== r.tx && m.ty !== r.ty) continue;
+        if (m.used || (m.tx !== r.tx && m.ty !== r.ty)) continue;
         const d = Math.abs(m.tx - r.tx) + Math.abs(m.ty - r.ty);
         if (d < bd) { bd = d; best = m; }
       }
+      if (best) best.used = true;
       this.lifts.push(new Lift(r.tx, r.ty, len, best ? best.tx : r.tx, best ? best.ty : r.ty));
       i = j + 1;
     }
@@ -384,6 +466,7 @@ class Level {
   update(dt) {
     const p = Game.player;
     for (const lf of this.lifts) lf.update(dt);
+    for (const c of this.crushers) c.update(dt);
     for (const m of this.movers) {
       if (m.kind === 'door' || m.kind === 'silver' || m.kind === 'gold') {
         const nearP = p && p.alive && p.x + p.w > m.x - 18 && p.x < m.x + m.w + 18 && p.y + p.h > m.y - 2 && p.y < m.y + m.h + 2;
@@ -575,6 +658,7 @@ class Level {
 
   staticLights() {
     const L = [];
+    for (const pad of this.jumpPads) L.push({ x: pad.x + 7, y: pad.y - 6, r: 50, c: [0.3, 1, 0.8], i: 0.5 });
     for (const d of this.decor) {
       if (d.kind === 'torch') L.push({ x: d.x, y: d.y - 4, r: 140, c: [1.0, 0.68, 0.38], i: 1.1 });
       else if (d.kind === 'lamp') L.push({ x: d.x, y: d.y + 3, r: 175, c: [1.0, 0.95, 0.82], i: 1.15 });
@@ -721,7 +805,14 @@ class Level {
 
   drawMovers(ctx, cam) {
     const tex = this.tex;
+    for (const pad of this.jumpPads) {
+      const x = Math.round(pad.x - cam.x), y = Math.round(pad.y - cam.y);
+      ctx.fillStyle = '#1e1e22'; ctx.fillRect(x - 1, y, 16, 4);
+      ctx.fillStyle = '#5a5a64'; ctx.fillRect(x, y, 14, 1);
+      ctx.fillStyle = '#3a3a42'; ctx.fillRect(x, y + 1, 14, 2);
+    }
     for (const s of this.solids) {
+      if (s.kind === 'crusher') { drawCrusher(ctx, s, cam); continue; }
       if (s.isBox) {
         if (!s.solid) continue;
         drawBox(ctx, s.x - cam.x, s.y - cam.y);
@@ -819,6 +910,18 @@ class Level {
   }
 
   drawDecorBright(ctx, cam, t) {
+    for (const pad of this.jumpPads) {
+      const x = Math.round(pad.x - cam.x), y = Math.round(pad.y - cam.y);
+      if (x < -20 || x > 2000 || y < -20 || y > 2000) continue;
+      const k = Math.floor(t * 6) % 3;
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = i === k ? '#c0fff0' : '#40c8a0';
+        const yy = y - 3 - i * 4;
+        ctx.fillRect(x + 4, yy, 2, 1); ctx.fillRect(x + 8, yy, 2, 1);
+        ctx.fillRect(x + 6, yy - 1, 2, 1);
+      }
+      ctx.fillStyle = '#60ffd0'; ctx.fillRect(x + 1, y + 1, 12, 1);
+    }
     for (const d of this.decor) {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
       if (x < -20 || y < -40 || x > 2000 || y > 2000) continue;
@@ -885,6 +988,28 @@ function drawKeyIcon(ctx, cx, cy, col) {
   ctx.fillRect(cx - 1, cy - 1, 2, 6);
   ctx.fillRect(cx + 1, cy + 2, 2, 1);
   ctx.fillRect(cx + 1, cy + 4, 2, 1);
+}
+
+function drawCrusher(ctx, c, cam) {
+  const x = Math.round(c.x - cam.x), y = Math.round(c.y - cam.y);
+  const by = Math.round(c.baseY - cam.y);
+  if (x > 2000 || x + c.w < -20 || y > 2000 || y + c.h < -40) return;
+  if (y > by) {
+    const rx = x + c.w / 2 - 3;
+    ctx.fillStyle = '#2a2826'; ctx.fillRect(rx, by, 6, y - by);
+    ctx.fillStyle = '#6a6660'; ctx.fillRect(rx + 1, by, 1, y - by);
+  }
+  ctx.fillStyle = '#1c1a18'; ctx.fillRect(x, y, c.w, c.h - 4);
+  ctx.fillStyle = '#4a4640'; ctx.fillRect(x + 1, y + 1, c.w - 2, c.h - 6);
+  ctx.fillStyle = '#6e6a62'; ctx.fillRect(x + 1, y + 1, c.w - 2, 1);
+  ctx.fillStyle = '#34312c';
+  for (let yy = y + 5; yy < y + c.h - 6; yy += 6) ctx.fillRect(x + 2, yy, c.w - 4, 1);
+  ctx.fillStyle = '#b89a30';
+  for (let xx = x + 3; xx < x + c.w - 3; xx += 8) { ctx.fillRect(xx, y + c.h - 9, 4, 2); }
+  ctx.fillStyle = '#8a8680';
+  for (let xx = x; xx < x + c.w; xx += 4) {
+    ctx.fillRect(xx, y + c.h - 4, 3, 1); ctx.fillRect(xx + 1, y + c.h - 3, 1, 3);
+  }
 }
 
 function drawGate(ctx, x, y, w, h) {

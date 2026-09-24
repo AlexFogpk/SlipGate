@@ -95,6 +95,14 @@ function drawWeapon(ctx, sx, sy, ang, kind, anim, sleeve, hand, t = 0) {
       R(ctx, 9, 2, 4, 1, '#8a8a94');
       R(ctx, 12, -1, 1, 3, '#a0c0ff');
       break;
+    case 9:
+      R(ctx, 0, -2, 12, 4, '#3a3a44');
+      R(ctx, 0, -2, 12, 1, '#6a6a78');
+      R(ctx, 4, -1, 4, 2, '#e03020');
+      R(ctx, 12, -1, 3, 2, '#2a2a30');
+      R(ctx, 14, -1, 1, 2, '#ff6040');
+      R(ctx, 2, 2, 2, 2, '#2a2a30');
+      break;
     case 'laser':
       R(ctx, 0, -2, 10, 3, '#4a5058');
       R(ctx, 0, -2, 10, 1, '#6a7078');
@@ -393,6 +401,72 @@ const MONSTER_ART = {
     R(ctx, -13, -19 - Math.round(wy * 1.4), 6, 2, '#4a4a44');
     R(ctx, -15, -17 - Math.round(wy * 1.6), 3, 3, '#3e3e38');
   },
+  scorpion(ctx, m) {
+    const s = m.moving || m.air ? Math.sin(m.walkPhase * 1.6) : 0;
+    for (let i = 0; i < 3; i++) {
+      const lx = -6 + i * 5, o = Math.round((i % 2 ? s : -s) * 1.5);
+      R(ctx, lx + o, -4, 1, 4, '#4a3e24');
+      R(ctx, lx - 1 + o, -1, 2, 1, '#3a3020');
+    }
+    R(ctx, -8, -8, 14, 5, '#7a6a3a');
+    R(ctx, -8, -8, 14, 1, '#9a8a50');
+    R(ctx, -6, -4, 10, 1, '#5a4a28');
+    for (const x of [-5, -1, 3]) R(ctx, x, -8, 1, 4, '#5a4a28');
+    R(ctx, 5, -9, 5, 5, '#8a7a44');
+    R(ctx, 9, -8, 3, 1, '#5a5a60'); R(ctx, 9, -6, 3, 1, '#5a5a60');
+    R(ctx, 8, -4, 3, 2, '#6a5a30'); R(ctx, 10, -5, 2, 1, '#c8b880');
+    const sting = m.state === 'attack' && m.attackKind === 'melee' ? 2 : 0;
+    R(ctx, -10, -10, 3, 3, '#7a6a3a');
+    R(ctx, -11, -14, 3, 4, '#6a5a30');
+    R(ctx, -9, -17, 3, 3, '#7a6a3a');
+    R(ctx, -6 + sting, -18 - sting, 3, 2, '#8a7a44');
+    R(ctx, -3 + sting * 2, -18 - sting, 2, 2, '#e0d0a0');
+  },
+  eel(ctx, m) {
+    for (let i = 0; i < 10; i++) {
+      const x = -10 + i * 2;
+      const y = -4 + Math.round(Math.sin(m.anim * 8 - i * 0.7) * 1.5);
+      R(ctx, x, y - 2, 3, i < 2 ? 3 : 4, i % 3 === 0 ? '#3a6a7a' : '#2a4a5a');
+      if (i % 3 === 1) R(ctx, x + 1, y - 1, 1, 1, '#70c0ff');
+    }
+    R(ctx, 8, -6, 4, 4, '#3a5a6a');
+    R(ctx, 11, -4, 2, 1, '#1a2a30');
+  },
+  pylon(ctx, m) {
+    R(ctx, -7, -6, 14, 6, '#2a2630');
+    R(ctx, -7, -6, 14, 1, '#5a5460');
+    R(ctx, -5, -22, 10, 16, '#6a2a8a');
+    R(ctx, -4, -26, 8, 4, '#8a3aaa');
+    R(ctx, -2, -30, 4, 4, '#aa5acc');
+    R(ctx, -5, -22, 2, 16, '#4a1a6a');
+    R(ctx, 3, -22, 2, 16, '#9a4aba');
+  },
+  herald(ctx, m) {
+    const t = m.anim;
+    if (m.state === 'dying') {
+      const k = clamp(m.stateT / 3, 0, 1);
+      ctx.translate(rand(-2, 2), 0);
+      ctx.scale(1 - k * 0.3, 1 - k * 0.3);
+    }
+    for (let i = 0; i < 8; i++) {
+      const len = 8 + Math.round(Math.sin(t * 4 + i) * 3);
+      R(ctx, -18 + i * 5, -14, 4, len, '#2a1a30');
+    }
+    R(ctx, -18, -44, 36, 32, '#3a2444');
+    R(ctx, -18, -44, 36, 2, '#5a3a66');
+    R(ctx, -2, -40, 4, 28, '#2a1a30');
+    R(ctx, -18, -16, 36, 2, '#a08030');
+    R(ctx, -9, -56, 18, 14, '#2a1a30');
+    R(ctx, -6, -52, 12, 9, '#120a14');
+    R(ctx, -13, -60, 3, 8, '#c8c0a0'); R(ctx, 10, -60, 3, 8, '#c8c0a0');
+    R(ctx, -15, -62, 2, 3, '#c8c0a0'); R(ctx, 13, -62, 2, 3, '#c8c0a0');
+    const cast = m.castT > 0;
+    drawArm(ctx, -16, -38, cast ? -2.5 : 2.3, 14, '#3a2444', '#c8a0c8');
+    drawArm(ctx, 16, -38, cast ? -0.6 : 0.85, 14, '#3a2444', '#c8a0c8');
+    ctx.strokeStyle = C('#a08030');
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(0, -60, 12, 3, 0, 0, TAU); ctx.stroke();
+  },
   shub(ctx, m) {
     const t = m.anim;
     const dying = m.state === 'dying';
@@ -546,7 +620,7 @@ function drawItem(ctx, x, y, it, t) {
       R(ctx, -2, -10, 4, 1, '#4a3a20'); R(ctx, 3, -8, 1, 7, '#4a3a20');
       break;
     default:
-      if (ch >= '3' && ch <= '8') {
+      if (ch >= '3' && ch <= '9') {
         R(ctx, -9, -2, 18, 2, '#2a2420');
         drawWeapon(ctx, -6, -5, 0, +ch, 0, 'rgba(0,0,0,0)', 'rgba(0,0,0,0)', t);
       }

@@ -203,6 +203,20 @@ const SFX = {
     S.noise(o, t, 0.9, 0.35 * v, 'lowpass', 400, 150, 1, 0.05);
     S.osc(o, 'sawtooth', 55, 48, t, 0.9, 0.12 * v, 0.05);
   },
+  crush(S, o, t, v) {
+    S.noise(o, t, 0.5, 1.0 * v, 'lowpass', 900, 60, 1);
+    S.osc(o, 'sine', 70, 30, t, 0.4, 0.9 * v);
+    S.noise(o, t, 0.15, 0.4 * v, 'bandpass', 2400, 1200, 3);
+  },
+  jumppad(S, o, t, v) {
+    S.osc(o, 'sine', 180, 900, t, 0.35, 0.35 * v, 0.01);
+    S.noise(o, t, 0.35, 0.3 * v, 'bandpass', 600, 3000, 2);
+  },
+  shield(S, o, t, v) { S.osc(o, 'triangle', 900, 1400, t, 0.12, 0.12 * v); },
+  zapsmall(S, o, t, v) {
+    S.noise(o, t, 0.25, 0.5 * v, 'bandpass', 3500, 900, 2);
+    S.osc(o, 'sawtooth', 160, 80, t, 0.25, 0.2 * v);
+  },
   lift(S, o, t, v) {
     S.noise(o, t, 0.7, 0.25 * v, 'lowpass', 260, 180, 2, 0.08);
     S.osc(o, 'square', 70, 62, t, 0.5, 0.05 * v, 0.05);
