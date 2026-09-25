@@ -8,6 +8,7 @@ const OBITS = {
   vore: 'Вас уничтожил ворог', spawn: 'Вас сожрало порождение', shambler: 'Вас испепелил шамблер',
   chthon: 'Вас испепелил Хтон', gargoyle: 'Вас растерзала гаргулья', shub: 'Вас поглотила Шуб-Ниггурат',
   scorpion: 'Вас изрешетил скорпион', eel: 'Вас ударил током угорь', herald: 'Вас испепелил Вестник Бездны',
+  phantom: 'Вас настиг фантом', guardian: 'Вас сокрушил страж', elder: 'Вас стёр из бытия Древний',
 };
 const FINALES = {
   e1: [
@@ -49,7 +50,21 @@ const FINALES = {
     'Три руны из четырёх. Где-то за последним',
     'слипгейтом ждёт тот, кто их выковал.',
     '',
-    'Эпизод 3 пройден. Спасибо за игру!',
+    'Эпизод 3 пройден. Впереди — Эпизод 4.',
+  ],
+  e4: [
+    'Древний распадается на осколки звёзд,',
+    'и Кузня Рун затихает впервые за вечность.',
+    '',
+    'Четвёртая руна ложится в ладонь рядом',
+    'с тремя другими — и все четыре вспыхивают',
+    'одним холодным белым светом.',
+    '',
+    'Слипгейты гаснут один за другим.',
+    'Больше никто не придёт из-за них.',
+    'Вы возвращаетесь домой — последним.',
+    '',
+    'Сага SLIPGATE завершена. Спасибо за игру!',
   ],
 };
 
@@ -269,6 +284,7 @@ const Game = {
     else if (kind === 'fall') msg = 'Вы разбились';
     else if (kind === 'explosion') msg = 'Вас разорвало взрывом';
     else if (kind === 'crush') msg = 'Вас расплющило давилкой';
+    else if (kind === 'void') msg = 'Вас поглотила пустота';
     this.deathMsg = msg;
     HUD.message(msg);
   },
@@ -279,6 +295,21 @@ const Game = {
     else if (this.monsters.some((m) => m.type === 'herald' && m.alive)) {
       HUD.center('Щит Вестника пал!', 2.5);
       Sound.play('roar');
+    }
+  },
+
+  onAltarLit(b) {
+    const lit = this.level.buttons.filter((x) => x.lit).length;
+    const total = this.level.buttons.length;
+    FX.teleport(b.x + 6, b.y);
+    Sound.play('secret', b.x, b.y);
+    if (lit < total) HUD.center('Руна зажжена: ' + lit + '/' + total, 2);
+    else {
+      HUD.center('Барьер Древнего пал!', 2.5);
+      Sound.play('roar');
+      this.shake(b.x, b.y, 8);
+      const boss = this.monsters.find((m) => m.type === 'elder' && m.alive);
+      if (boss) boss.elderBarrierDown();
     }
   },
 
@@ -377,6 +408,12 @@ const Game = {
       const a = this.aimWorld();
       tx += clamp((a.x - p.cx) * 0.25, -this.viewW * 0.22, this.viewW * 0.22);
       ty += clamp((a.y - p.cy) * 0.25, -this.viewH * 0.2, this.viewH * 0.2);
+    }
+    // летающий босс: держим в кадре и героя, и его
+    const b = p.alive && this.monsters.find((m) => (m.type === 'elder' || m.type === 'herald') && m.alive && m.state !== 'idle');
+    if (b && Math.abs(b.cx - p.cx) < this.viewW * 0.8) {
+      const want = b.y - 20;
+      if (want < ty) ty = Math.max(want, p.cy - this.viewH * 0.84);
     }
     return this.clampCam(tx, ty);
   },
@@ -683,6 +720,9 @@ const Game = {
     for (const d of this.level.decor) {
       if (d.kind === 'checkpoint') out.push({ x: d.x, y: d.y - 12, r: d.active ? 70 : 34, c: d.active ? [0.4, 0.85, 1] : [0.9, 0.3, 0.15], i: d.active ? 0.7 : 0.35 });
     }
+    if (this.levelDef.altarButtons) {
+      for (const b of this.level.buttons) out.push({ x: b.x + 6, y: b.y, r: b.lit ? 90 : 40, c: b.lit ? [0.4, 0.9, 1] : [0.6, 0.3, 0.9], i: b.lit ? 0.8 : 0.4 });
+    }
     if (this.bossFx > 0) {
       for (const d of this.level.decor) if (d.kind === 'electrode') out.push({ x: d.x, y: d.y - 34, r: 160, c: [0.6, 0.7, 1], i: this.bossFx * 1.5 });
     }
@@ -736,6 +776,7 @@ const Game = {
 
     // самосветящееся
     lv.drawLiquids(ctx, cam, vw, vh, t, 'lava');
+    lv.drawVoid(ctx, cam, vw, vh, t);
     lv.drawPortals(ctx, cam, t, true);
     lv.drawDecorBright(ctx, cam, t);
     for (const pr of this.projectiles) pr.draw(ctx, cam, true);

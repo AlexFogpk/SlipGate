@@ -441,6 +441,84 @@ const MONSTER_ART = {
     R(ctx, -5, -22, 2, 16, '#4a1a6a');
     R(ctx, 3, -22, 2, 16, '#9a4aba');
   },
+  phantom(ctx, m) {
+    // полупрозрачная фигура в рваном плаще, парит над полом
+    const t = m.anim;
+    const bob = Math.round(Math.sin(t * 3 + m.seed) * 1);
+    for (let i = 0; i < 5; i++) {
+      const len = 5 + Math.round(Math.sin(t * 6 + i * 1.7) * 2);
+      R(ctx, -6 + i * 2.5, -8 + bob, 2, len, i % 2 ? '#3e3264' : '#54468a');
+    }
+    R(ctx, -5, -20 + bob, 10, 13, '#54468a');
+    R(ctx, -5, -20 + bob, 10, 1, '#7a6ab0');
+    R(ctx, 3, -19 + bob, 2, 12, '#3e3264');
+    R(ctx, -4, -25 + bob, 8, 6, '#3e3264');
+    R(ctx, -3, -24 + bob, 6, 4, '#0e0a18');
+    const cast = m.state === 'attack';
+    drawArm(ctx, 1, -16 + bob, cast ? m.aimLocal : 0.9, 8, '#54468a', '#d8c0f8');
+  },
+  guardian(ctx, m) {
+    // закованный в рунную сталь страж с башенным щитом и молотом
+    drawLegs(ctx, 11, m.walkPhase, m.moving, m.air, '#3a4250', '#1e222a', 5);
+    R(ctx, -8, -24, 16, 13, '#4a5264');
+    R(ctx, -8, -24, 16, 1, '#6a7488');
+    R(ctx, -6, -22, 12, 6, '#5a6478');
+    R(ctx, -1, -21, 2, 8, '#40d0ff');
+    R(ctx, -8, -12, 16, 1, '#2a303a');
+    R(ctx, -10, -25, 5, 4, '#6a7488'); R(ctx, 5, -25, 5, 4, '#6a7488');
+    R(ctx, -4, -31, 9, 7, '#5a6478');
+    R(ctx, -4, -31, 9, 1, '#8a94a8');
+    R(ctx, -5, -34, 11, 3, '#3a4250');
+    R(ctx, -1, -36, 3, 3, '#40d0ff');
+    // молот
+    let ang = -1.2;
+    if (m.state === 'attack' && m.attackKind === 'melee') ang = m.stateT < 0.45 ? lerp(-1.2, -2.8, m.stateT / 0.45) : lerp(-2.8, 0.9, clamp((m.stateT - 0.45) / 0.1, 0, 1));
+    else if (m.state === 'attack') ang = m.aimLocal;
+    ctx.save(); ctx.translate(-4, -20); ctx.rotate(ang);
+    R(ctx, 0, -1, 14, 2, '#4a3a2a');
+    R(ctx, 12, -4, 5, 8, '#6a7488'); R(ctx, 12, -4, 5, 1, '#9aa4b8');
+    ctx.restore();
+    // щит спереди
+    const up = m.state === 'attack' ? 4 : 0;
+    R(ctx, 7, -27 + up, 4, 20, '#3a4250');
+    R(ctx, 8, -26 + up, 3, 18, '#5a6478');
+    R(ctx, 9, -20 + up, 1, 6, '#40d0ff');
+  },
+  elder(ctx, m) {
+    // Древний: каменный колосс без ног, парит в пустоте, над ним кольцо рун
+    const t = m.anim;
+    if (m.state === 'dying') {
+      const k = clamp(m.stateT / 4, 0, 1);
+      ctx.translate(rand(-3, 3), 0);
+      ctx.scale(1 - k * 0.3, 1 - k * 0.3);
+    }
+    // обломки-«юбка» снизу
+    for (let i = 0; i < 7; i++) {
+      const off = Math.round(Math.sin(t * 2 + i * 1.3) * 3);
+      R(ctx, -21 + i * 6, -14 + off, 5, 6 + (i % 3) * 2, i % 2 ? '#2a3240' : '#3a4454');
+    }
+    R(ctx, -22, -52, 44, 36, '#2a3240');
+    R(ctx, -22, -52, 44, 2, '#4a5670');
+    R(ctx, 16, -50, 6, 34, '#1e2430');
+    for (const [a, b, c, d] of [[-16, -46, 2, 10], [-10, -30, 12, 2], [8, -48, 2, 14], [-18, -24, 8, 2], [12, -30, 2, 10]]) R(ctx, a, b, c, d, '#1a8ab0');
+    // плечи
+    R(ctx, -30, -54, 12, 10, '#3a4454'); R(ctx, 18, -54, 12, 10, '#3a4454');
+    R(ctx, -30, -54, 12, 2, '#5a6680'); R(ctx, 18, -54, 12, 2, '#5a6680');
+    // голова-маска
+    R(ctx, -11, -74, 22, 22, '#3a4454');
+    R(ctx, -11, -74, 22, 2, '#5a6680');
+    R(ctx, -8, -66, 16, 6, '#0a0e14');
+    R(ctx, -14, -80, 4, 10, '#2a3240'); R(ctx, 10, -80, 4, 10, '#2a3240');
+    const cast = m.castT > 0;
+    drawArm(ctx, -26, -46, cast ? -2.4 : 2.2, 20, '#3a4454', '#80e0ff');
+    drawArm(ctx, 26, -46, cast ? -0.7 : 0.95, 20, '#3a4454', '#80e0ff');
+    // кольцо вращающихся камней-рун
+    for (let i = 0; i < 6; i++) {
+      const a = t * 0.8 + i * TAU / 6;
+      const px = Math.round(Math.cos(a) * 30), py = Math.round(-86 + Math.sin(a) * 6);
+      R(ctx, px - 2, py - 2, 4, 4, Math.sin(a) > 0 ? '#4a5670' : '#2a3240');
+    }
+  },
   herald(ctx, m) {
     const t = m.anim;
     if (m.state === 'dying') {

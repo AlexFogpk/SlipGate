@@ -42,6 +42,7 @@ class Item {
       this.vy = Math.min(this.vy + GRAVITY * dt, 700);
       this.vx = approach(this.vx, 0, 200 * dt);
       moveBody(this, dt);
+      if (Game.level.liquidAt(this.cx, this.cy) === T.VOID) { this.taken = true; return; }
     }
     const p = Game.player;
     if (p && p.alive && overlap(p, { x: this.x - 2, y: this.y - 2, w: this.w + 4, h: this.h + 4 })) {

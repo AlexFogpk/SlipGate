@@ -277,6 +277,15 @@ const THEMES = {
     ambient: [0.19, 0.15, 0.22],
     sky: ['#0e0214', '#4a0a3e', '#d05090'],
   },
+  void: {
+    wall: () => genRock({ dark: '#12151e', light: '#3e4a5e', vein: '#40d0ff' }, 91),
+    wall2: () => genRuneBlocks({ base: '#2c3242', mortar: '#0c0e14', glow: '#60e0ff', runeChance: 0.4 }, 92),
+    back: () => genRuneBlocks({ base: '#1e2232', mortar: '#08090e', runeChance: 0.15 }, 93),
+    door: () => genDoor({ base: '#4a5060', band: '#262a34' }, 94),
+    plat: '#5a6478',
+    ambient: [0.18, 0.2, 0.26],
+    sky: ['#02030a', '#141038', '#6a5ac0'],
+  },
   elder: {
     wall: () => genRock({ dark: '#2e1512', light: '#6a4034', vein: '#e0601c' }, 51),
     wall2: () => genRuneBlocks({ base: '#4a3c3a', mortar: '#1a1212', glow: '#e87030', runeChance: 0.5 }, 52),
@@ -367,6 +376,24 @@ const Tex = {
 
   sky(theme) {
     if (this.skies[theme]) return this.skies[theme];
+    if (theme === 'void') {
+      // звёздное небо с туманностями
+      const rng = mulberry32(91);
+      const a = tileNoise(128, 4, rng), b = tileNoise(128, 8, rng);
+      const stars = new Map();
+      for (let i = 0; i < 90; i++) stars.set(Math.floor(rng() * 128) + 128 * Math.floor(rng() * 128), 0.4 + rng() * 0.6);
+      const back = texFromFn((x, y) => {
+        const n = a(x, y) * 0.65 + b(x, y) * 0.35;
+        let c = mixc([3, 3, 12], [34, 18, 70], clamp((n - 0.45) * 2.2, 0, 1));
+        const s = stars.get(y * 128 + x);
+        if (s) c = mixc(c, [200, 210, 255], s);
+        return c;
+      }, 128);
+      const rng2 = mulberry32(92);
+      const front = texFromFn((x, y) => (rng2() < 0.004 ? [230, 235, 255, 255] : [0, 0, 0, 0]), 128);
+      this.skies[theme] = { back, front };
+      return this.skies[theme];
+    }
     const cols = (THEMES[theme] || THEMES.base).sky.map(hexToRgb);
     const rng = mulberry32(77);
     const a = tileNoise(128, 4, rng), b = tileNoise(128, 8, rng), c = tileNoise(128, 16, rng);

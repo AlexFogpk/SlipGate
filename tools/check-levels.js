@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 // Проверка карт: ширина строк, известные символы, достижимость выхода с учётом
-// прыжков (до 3 клеток вверх, до 4 в сторону), падений, плавания, ключей, кнопок и телепортов.
+// прыжков (до 3 клеток вверх, до 4 в сторону), падений, плавания, ключей, кнопок, алтарей и телепортов.
 // Запуск: node tools/check-levels.js [--map e1m2] [--show]
 
 const path = require('path');
 const { LEVELS } = require(path.join(__dirname, '..', 'js', 'levels.js'));
 
 const SOLID = new Set(['#', '%']);
-const LIQUID = new Set(['~', '!', ';']);
-const TILE_CH = new Set([' ', '#', '%', '-', '~', '!', ';', ',']);
+const LIQUID = new Set(['~', '!', ';', '.']);
+const TILE_CH = new Set([' ', '#', '%', '-', '~', '!', ';', ',', '.']);
 const MOVER_CH = new Set(['D', '[', ']', '=', '$']);
-const ENTITY_CH = new Set('PE><L*b@x&_:^|()+HMAYRUNKCQXVW3456789gdekozfsnvtmcawruyh'.split(''));
-const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1, a: 1, w: 6, r: 1, u: 1, y: 2, h: 4 };
+const ENTITY_CH = new Set('PE><L*b@x&_:^|()+HMAYRUNKCQXVW3456789gdekozfsnvtmcawruyhpqj'.split(''));
+const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1, a: 1, w: 6, r: 1, u: 1, y: 2, h: 4, p: 2, q: 2, j: 5 };
 
 function analyze(def, show) {
   const errors = [], warnings = [];
@@ -93,7 +93,7 @@ function analyze(def, show) {
     if (c === '=') return state.gates;
     return true;
   };
-  const deadly = (x, y) => { const c = base(x, y); return c === '!' || (c === ';' && !state.suit); };
+  const deadly = (x, y) => { const c = base(x, y); return c === '!' || c === '.' || (c === ';' && !state.suit); };
   const water = (x, y) => LIQUID.has(base(x, y)) && !deadly(x, y);
   const support = (x, y) => SOLID.has(base(x, y)) || base(x, y) === '-' || liftSupport.has(y * w + x) || (!passable(x, y) && MOVER_CH.has(base(x, y)));
   const fits = (x, y) => passable(x, y) && passable(x, y - 1);
@@ -196,6 +196,12 @@ function analyze(def, show) {
   const near = (s) => reach.has(s.y * w + s.x) || reach.has((s.y + 1) * w + s.x) || reach.has((s.y - 1) * w + s.x) || reach.has(s.y * w + s.x + 1) || reach.has(s.y * w + s.x - 1);
   const reachedExits = exits.filter(near);
   if (def.exitAfterBoss && spawns.some((s) => s.c === 'w') && !srcs.some(near)) errors.push('телепорт к боссу недостижим');
+  if (def.altarButtons) {
+    const altars = spawns.filter((s) => s.c === 'b');
+    const lostAltars = altars.filter((s) => !near(s));
+    if (!altars.length) errors.push('на уровне с алтарями нет алтарей b');
+    if (lostAltars.length) errors.push('недостижимые алтари: ' + lostAltars.map((s) => `(${s.x},${s.y})`).join(' '));
+  }
   const cps = spawns.filter((s) => s.c === '&');
   const lostCp = cps.filter((s) => !near(s));
   if (lostCp.length) warnings.push('недостижимые контрольные точки: ' + lostCp.map((s) => `(${s.x},${s.y})`).join(' '));
@@ -207,7 +213,7 @@ function analyze(def, show) {
   const monsters = spawns.filter((s) => MONSTER_H[s.c]);
   const stats = `${w}x${h}, монстров ${monsters.length}, предметов ${items.length}, секретов ${countGroups(g, '$')}, лифтов ${new Set([...liftSupport]).size ? runs.length && countRuns(runs) : 0}, точек ${cps.length}`;
   if (show) {
-    const out = g.map((r, y) => r.split('').map((c, x) => (reach.has(y * w + x) && c === ' ' ? '·' : c)).join(''));
+    const out = g.map((r, y) => r.split('').map((c, x) => (reach.has(y * w + x) && (c === ' ' || c === ',') ? '·' : c)).join(''));
     console.log(out.join('\n'));
   }
   return { errors, warnings, stats };

@@ -26,6 +26,8 @@ const PROJ = {
   voreball: { speed: 150, dmg: 20, splash: 40, radius: 44, homing: 2.2, life: 7, light: [0.8, 0.35, 1, 64] },
   lavaball: { speed: 300, dmg: 30, splash: 50, radius: 60, grav: 420, light: [1, 0.5, 0.1, 90] },
   bolt: { speed: 620, dmg: 18, life: 2, light: [1, 0.3, 0.2, 44] },
+  rune: { speed: 330, dmg: 13, lit: true, light: [0.35, 0.85, 1, 44] },
+  shard: { speed: 260, dmg: 9, homing: 0.9, life: 3, lit: true, light: [0.7, 0.4, 1, 34] },
 };
 
 // Мгновенный выстрел (дробь, пули солдат). Урон дробинок суммируется — как в Quake.
@@ -229,6 +231,12 @@ class Projectile {
       case 'spike':
         FX.sparks(bx, by, 5, '#80ff50', 100);
         break;
+      case 'rune':
+        FX.sparks(bx, by, 6, '#80e0ff', 120);
+        break;
+      case 'shard':
+        FX.sparks(bx, by, 5, '#c090ff', 100);
+        break;
       default:
         FX.sparks(bx, by, 6, '#ff9030', 120);
     }
@@ -301,6 +309,19 @@ class Projectile {
         ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
         ctx.fillStyle = '#ff3010'; ctx.fillRect(-6, -1, 12, 3);
         ctx.fillStyle = '#ffb090'; ctx.fillRect(-5, 0, 10, 1);
+        ctx.restore();
+        break;
+      case 'rune':
+        ctx.save(); ctx.translate(x, y); ctx.rotate(this.spin * 0.5);
+        ctx.fillStyle = '#1a8ab0'; ctx.fillRect(-3, -3, 6, 6);
+        ctx.fillStyle = '#80f0ff'; ctx.fillRect(-2, -2, 4, 4);
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(-1, -1, 2, 2);
+        ctx.restore();
+        break;
+      case 'shard':
+        ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+        ctx.fillStyle = '#6a3aa0'; ctx.fillRect(-4, -1, 8, 3);
+        ctx.fillStyle = '#e0c0ff'; ctx.fillRect(-2, 0, 5, 1);
         ctx.restore();
         break;
       case 'lavaball':

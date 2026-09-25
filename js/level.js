@@ -1,8 +1,9 @@
 'use strict';
 // Уровень: разбор ASCII-карты, двери/решётки/тайники, коллизии, лучи, запекание текстур и света.
 
-const T = { EMPTY: 0, WALL: 1, WALL2: 2, PLAT: 3, WATER: 4, LAVA: 5, SLIME: 6, SKY: 7 };
-const TILE_CHARS = { ' ': T.EMPTY, '#': T.WALL, '%': T.WALL2, '-': T.PLAT, '~': T.WATER, '!': T.LAVA, ';': T.SLIME, ',': T.SKY };
+const T = { EMPTY: 0, WALL: 1, WALL2: 2, PLAT: 3, WATER: 4, LAVA: 5, SLIME: 6, SKY: 7, VOID: 8 };
+const TILE_CHARS = { ' ': T.EMPTY, '#': T.WALL, '%': T.WALL2, '-': T.PLAT, '~': T.WATER, '!': T.LAVA, ';': T.SLIME, ',': T.SKY, '.': T.VOID };
+const skyLike = (t) => t === T.SKY || t === T.VOID;
 const MOVER_CHARS = { D: 'door', '[': 'silver', ']': 'gold', '=': 'gate', $: 'secret' };
 const LIQUID_NAMES = { [T.WATER]: 'water', [T.LAVA]: 'lava', [T.SLIME]: 'slime' };
 
@@ -179,7 +180,8 @@ class Level {
         else if (ch in MOVER_CHARS) { t = this.inheritTile(grid, x, y, true); moverMark[y * this.w + x] = ch; }
         else { t = this.inheritTile(grid, x, y); this.spawns.push({ ch, tx: x, ty: y }); }
         this.tiles[y * this.w + x] = t;
-        if (t === T.SKY) this.hasSky = true;
+        if (skyLike(t)) this.hasSky = true;
+        if (t === T.VOID) this.hasVoid = true;
         if (isLiquidType(t)) this.hasLiquid = true;
       }
     }
@@ -341,6 +343,7 @@ class Level {
         else if (t === T.LAVA) c = [230, 90, 20];
         else if (t === T.PLAT) c = [150, 120, 80];
         else if (t === T.SKY) c = [44, 36, 78];
+        else if (t === T.VOID) c = [12, 6, 26];
         else c = [34, 24, 18];
         d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = 255;
         this.mapDirty = true;
@@ -377,7 +380,7 @@ class Level {
     for (const [nx, ny] of around) {
       if (ny < 0 || ny >= grid.length || nx < 0 || nx >= grid[ny].length) continue;
       const t = TILE_CHARS[grid[ny][nx]];
-      if (t === T.WATER || t === T.LAVA || t === T.SLIME || (t === T.SKY && !liquidsOnly)) counts[t] = (counts[t] || 0) + 1;
+      if (t === T.WATER || t === T.LAVA || t === T.SLIME || t === T.VOID || (t === T.SKY && !liquidsOnly)) counts[t] = (counts[t] || 0) + 1;
     }
     let best = T.EMPTY, bc = 1;
     for (const k in counts) if (counts[k] > bc) { bc = counts[k]; best = +k; }
@@ -387,7 +390,7 @@ class Level {
   // Платформа на фоне неба (мост на улице) не рисует заднюю стену.
   skyBack(tx, ty) {
     if (this.tile(tx, ty) !== T.PLAT) return false;
-    return this.tile(tx - 1, ty) === T.SKY || this.tile(tx + 1, ty) === T.SKY || this.tile(tx, ty - 1) === T.SKY || this.tile(tx, ty + 1) === T.SKY;
+    return skyLike(this.tile(tx - 1, ty)) || skyLike(this.tile(tx + 1, ty)) || skyLike(this.tile(tx, ty - 1)) || skyLike(this.tile(tx, ty + 1));
   }
 
   tile(tx, ty) {
@@ -409,7 +412,30 @@ class Level {
 
   liquidAt(x, y) {
     const t = this.tileAtPx(x, y);
-    return isLiquidType(t) ? t : 0;
+    return isLiquidType(t) || t === T.VOID ? t : 0;
+  }
+
+  // Бездна: над ней звёзды, по краю — фиолетовая дымка.
+  drawVoid(ctx, cam, vw, vh, t) {
+    if (!this.hasVoid) return;
+    const tx0 = Math.max(0, Math.floor(cam.x / TILE)), tx1 = Math.min(this.w - 1, Math.floor((cam.x + vw) / TILE));
+    const ty0 = Math.max(0, Math.floor(cam.y / TILE)), ty1 = Math.min(this.h - 1, Math.floor((cam.y + vh) / TILE));
+    for (let ty = ty0; ty <= ty1; ty++) {
+      for (let tx = tx0; tx <= tx1; tx++) {
+        if (this.tiles[ty * this.w + tx] !== T.VOID) continue;
+        const x = tx * TILE - cam.x, y = ty * TILE - cam.y;
+        const surface = this.tile(tx, ty - 1) !== T.VOID;
+        ctx.fillStyle = surface ? 'rgba(20,6,40,0.35)' : 'rgba(4,2,12,0.55)';
+        ctx.fillRect(x, y, TILE, TILE);
+        if (surface) {
+          for (let i = 0; i < TILE; i += 2) {
+            const h = 3 + Math.sin(t * 2 + (tx * TILE + i) * 0.21) * 2 + Math.sin(t * 3.3 + (tx * TILE + i) * 0.07) * 1.5;
+            ctx.fillStyle = 'rgba(150,90,255,0.35)';
+            ctx.fillRect(x + i, y + 6 - h, 2, h + 4);
+          }
+        }
+      }
+    }
   }
 
   boxFree(x, y, w, h) {
@@ -508,7 +534,7 @@ class Level {
         b.resetT -= dt;
         if (b.resetT <= 0) b.pressed = false;
       }
-      if (!b.pressed && p && p.alive && overlap(p, b)) this.pressButton(b);
+      if (!b.pressed && p && p.alive && overlap(p, b)) this.pressButton(b, true);
     }
   }
 
@@ -519,10 +545,17 @@ class Level {
     return false;
   }
 
-  pressButton(b) {
+  pressButton(b, touch = false) {
     if (b.pressed) return;
+    // алтарь зажигается только касанием
+    if (this.def.altarButtons && !touch) return;
     b.pressed = true;
     Sound.play('button', b.x, b.y);
+    if (this.def.altarButtons) {
+      b.lit = true;
+      Game.onAltarLit(b);
+      return;
+    }
     if (this.def.bossButtons) {
       b.resetT = 6;
       Game.bossStrike(b);
@@ -568,7 +601,7 @@ class Level {
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
         const t = this.tiles[y * this.w + x];
-        if (t === T.SKY || this.skyBack(x, y)) continue;
+        if (skyLike(t) || this.skyBack(x, y)) continue;
         const src = t === T.WALL ? tex.wall : t === T.WALL2 ? tex.wall2 : tex.back;
         ctx.drawImage(src, (x % 4) * TILE, (y % 4) * TILE, TILE, TILE, x * TILE, y * TILE, TILE, TILE);
       }
@@ -600,7 +633,7 @@ class Level {
           if (!solidOrOut(x, y + 1)) { ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(px, py + TILE - 2, TILE, 2); }
           if (!solidOrOut(x - 1, y)) { ctx.fillStyle = 'rgba(255,240,210,0.1)'; ctx.fillRect(px, py, 1, TILE); }
           if (!solidOrOut(x + 1, y)) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(px + TILE - 1, py, 1, TILE); }
-        } else if (t !== T.SKY && !this.skyBack(x, y)) {
+        } else if (!skyLike(t) && !this.skyBack(x, y)) {
           // «ambient occlusion» на задней стене рядом с твёрдыми тайлами
           const sh = (a, fn) => { for (let i = 0; i < 3; i++) { ctx.fillStyle = `rgba(0,0,0,${a * (3 - i) / 3})`; fn(i); } };
           if (solidOrOut(x, y - 1)) sh(0.35, (i) => ctx.fillRect(px, py + i * 2, TILE, 2));
@@ -730,7 +763,7 @@ class Level {
       for (let cx = 0; cx < cw; cx++) {
         const i = cy * cw + cx;
         const tx = Math.floor(cx / C), ty = Math.floor(cy / C);
-        const sky = this.tiles[ty * this.w + tx] === T.SKY || this.skyBack(tx, ty);
+        const sky = skyLike(this.tiles[ty * this.w + tx]) || this.skyBack(tx, ty);
         for (let k = 0; k < 3; k++) {
           const v = sky ? 1 : Math.pow(clamp(L[i * 3 + k], 0, 1), 0.85);
           img.data[i * 4 + k] = v * 255;
@@ -872,6 +905,15 @@ class Level {
     }
     for (const b of this.buttons) {
       const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
+      if (this.def.altarButtons) {
+        // рунический алтарь
+        ctx.fillStyle = '#1a1c24'; ctx.fillRect(x - 3, y + 6, 18, 8);
+        ctx.fillStyle = '#4a5064'; ctx.fillRect(x - 3, y + 6, 18, 1);
+        ctx.fillStyle = '#2c3040'; ctx.fillRect(x, y - 6, 12, 12);
+        ctx.fillStyle = '#50586e'; ctx.fillRect(x, y - 6, 12, 1);
+        ctx.fillStyle = b.lit ? '#1a3a4a' : '#141620'; ctx.fillRect(x + 3, y - 3, 6, 7);
+        continue;
+      }
       ctx.fillStyle = '#2a2622'; ctx.fillRect(x, y, 12, 12);
       ctx.fillStyle = '#5a544a'; ctx.fillRect(x + 1, y + 1, 10, 10);
       ctx.fillStyle = '#38342e'; ctx.fillRect(x + 2, y + 2, 8, 8);
@@ -910,6 +952,16 @@ class Level {
   }
 
   drawDecorBright(ctx, cam, t) {
+    if (this.def.altarButtons) {
+      for (const b of this.buttons) {
+        const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
+        const k = 0.6 + Math.sin(t * 3 + b.x) * 0.4;
+        ctx.fillStyle = b.lit ? '#80f0ff' : '#5a3a8a';
+        ctx.globalAlpha = b.lit ? 0.7 + k * 0.3 : 0.5 + k * 0.2;
+        ctx.fillRect(x + 5, y - 2, 2, 5); ctx.fillRect(x + 4, y, 4, 1);
+        ctx.globalAlpha = 1;
+      }
+    }
     for (const pad of this.jumpPads) {
       const x = Math.round(pad.x - cam.x), y = Math.round(pad.y - cam.y);
       if (x < -20 || x > 2000 || y < -20 || y > 2000) continue;

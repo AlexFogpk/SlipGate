@@ -106,7 +106,7 @@ function groundBelow(x, y, maxDepth) {
   const ty0 = Math.floor(y / TILE);
   for (let ty = ty0; ty <= ty0 + maxDepth; ty++) {
     const t = lv.tile(tx, ty);
-    if (t === T.LAVA || t === T.SLIME) return -1;
+    if (t === T.LAVA || t === T.SLIME || t === T.VOID) return -1;
     if (isSolidType(t) || t === T.PLAT || t === T.WATER) return ty;
   }
   for (const s of lv.solids) {

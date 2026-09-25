@@ -176,6 +176,15 @@ class Player {
   }
 
   updateLiquids(dt) {
+    if (this.waterLevel > 0 && this.waterType === T.VOID) {
+      // пустота забирает сразу и без следа — даже сквозь пентаграмму
+      if (Game.god) { this.vy = -620; return; }
+      FX.teleport(this.cx, this.cy);
+      this.health = 0;
+      this.gibbed = true;
+      this.die(null, 'void');
+      return;
+    }
     if (this.waterLevel > 0 && (this.waterType === T.LAVA || this.waterType === T.SLIME)) {
       this.liquidT -= dt;
       if (this.liquidT <= 0) {
