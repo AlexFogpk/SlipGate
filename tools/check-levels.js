@@ -9,9 +9,10 @@ const { LEVELS } = require(path.join(__dirname, '..', 'js', 'levels.js'));
 
 const SOLID = new Set(['#', '%']);
 const LIQUID = new Set(['~', '!', ';', '.']);
-const TILE_CH = new Set([' ', '#', '%', '-', '~', '!', ';', ',', '.']);
+const TILE_CH = new Set([' ', '#', '%', '-', '~', '!', ';', ',', '.', 'I']);
 const MOVER_CH = new Set(['D', '[', ']', '=', '$']);
 const ENTITY_CH = new Set('PE><L*b@x&_:^|()+HMAYRUNKCQXVW3456789gdekozfsnvtmcawruyhpqj'.split(''));
+const MONSTER_CH_FLY = new Set(['s', 'a', 'h', 'j']);
 const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1, a: 1, w: 6, r: 1, u: 1, y: 2, h: 4, p: 2, q: 2, j: 5 };
 
 function analyze(def, show) {
@@ -35,7 +36,7 @@ function analyze(def, show) {
     const counts = {};
     for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
       const n = raw(nx, ny);
-      if (LIQUID.has(n) || n === ',') counts[n] = (counts[n] || 0) + 1;
+      if (LIQUID.has(n) || n === ',' || n === 'I') counts[n] = (counts[n] || 0) + 1;
     }
     let best = ' ', bc = 1;
     for (const k in counts) if (counts[k] > bc) { bc = counts[k]; best = k; }
@@ -202,6 +203,27 @@ function analyze(def, show) {
     if (!altars.length) errors.push('на уровне с алтарями нет алтарей b');
     if (lostAltars.length) errors.push('недостижимые алтари: ' + lostAltars.map((s) => `(${s.x},${s.y})`).join(' '));
   }
+  // засады: зона должна быть достижима, монстры — помещаться
+  const traps = def.traps || [];
+  let trapMonsters = 0;
+  traps.forEach((t, i) => {
+    const [x0, y0, x1, y1] = t.at;
+    let hit = false;
+    for (let y = y0; y <= y1 && !hit; y++) for (let x = x0; x <= x1; x++) if (reach.has(y * w + x)) { hit = true; break; }
+    if (!hit) warnings.push(`засада #${i + 1}: зона (${x0},${y0})-(${x1},${y1}) недостижима`);
+    for (const [sx, sy, ch] of t.spawn) {
+      const hh = MONSTER_H[ch];
+      if (!hh) { errors.push(`засада #${i + 1}: неизвестный монстр '${ch}'`); continue; }
+      trapMonsters++;
+      if (sx >= x0 - 3 && sx <= x1 + 3 && sy >= y0 - 3 && sy <= y1 + 3) warnings.push(`засада #${i + 1}: монстр '${ch}' в (${sx},${sy}) появляется вплотную к зоне`);
+      for (let k = 0; k < hh; k++) if (SOLID.has(base(sx, sy - k)) || sx < 1 || sx >= w - 1) { warnings.push(`засада #${i + 1}: монстру '${ch}' тесно в (${sx},${sy})`); break; }
+      if (!MONSTER_CH_FLY.has(ch) && ch !== 'u' && !SOLID.has(base(sx, sy + 1)) && base(sx, sy + 1) !== '-' && !LIQUID.has(base(sx, sy))) {
+        let d = 1;
+        while (sy + d < h && !SOLID.has(base(sx, sy + d)) && base(sx, sy + d) !== '-') d++;
+        if (d > 6) warnings.push(`засада #${i + 1}: монстр '${ch}' в (${sx},${sy}) висит над пропастью`);
+      }
+    }
+  });
   const cps = spawns.filter((s) => s.c === '&');
   const lostCp = cps.filter((s) => !near(s));
   if (lostCp.length) warnings.push('недостижимые контрольные точки: ' + lostCp.map((s) => `(${s.x},${s.y})`).join(' '));
@@ -211,7 +233,7 @@ function analyze(def, show) {
   const lost = items.filter((s) => !near(s));
   if (lost.length) warnings.push('недостижимые предметы: ' + lost.map((s) => `${s.c}(${s.x},${s.y})`).join(' '));
   const monsters = spawns.filter((s) => MONSTER_H[s.c]);
-  const stats = `${w}x${h}, монстров ${monsters.length}, предметов ${items.length}, секретов ${countGroups(g, '$')}, лифтов ${new Set([...liftSupport]).size ? runs.length && countRuns(runs) : 0}, точек ${cps.length}`;
+  const stats = `${w}x${h}, монстров ${monsters.length}+${trapMonsters}, засад ${traps.length}, предметов ${items.length}, секретов ${countGroups(g, '$')}, лифтов ${new Set([...liftSupport]).size ? runs.length && countRuns(runs) : 0}, точек ${cps.length}`;
   if (show) {
     const out = g.map((r, y) => r.split('').map((c, x) => (reach.has(y * w + x) && (c === ' ' || c === ',') ? '·' : c)).join(''));
     console.log(out.join('\n'));

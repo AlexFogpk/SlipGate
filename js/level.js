@@ -1,8 +1,9 @@
 'use strict';
 // Уровень: разбор ASCII-карты, двери/решётки/тайники, коллизии, лучи, запекание текстур и света.
 
-const T = { EMPTY: 0, WALL: 1, WALL2: 2, PLAT: 3, WATER: 4, LAVA: 5, SLIME: 6, SKY: 7, VOID: 8 };
-const TILE_CHARS = { ' ': T.EMPTY, '#': T.WALL, '%': T.WALL2, '-': T.PLAT, '~': T.WATER, '!': T.LAVA, ';': T.SLIME, ',': T.SKY, '.': T.VOID };
+// DECO — фоновая архитектура (колонны, арки, контрфорсы): рисуется, но не мешает движению.
+const T = { EMPTY: 0, WALL: 1, WALL2: 2, PLAT: 3, WATER: 4, LAVA: 5, SLIME: 6, SKY: 7, VOID: 8, DECO: 9 };
+const TILE_CHARS = { ' ': T.EMPTY, '#': T.WALL, '%': T.WALL2, '-': T.PLAT, '~': T.WATER, '!': T.LAVA, ';': T.SLIME, ',': T.SKY, '.': T.VOID, I: T.DECO };
 const skyLike = (t) => t === T.SKY || t === T.VOID;
 const MOVER_CHARS = { D: 'door', '[': 'silver', ']': 'gold', '=': 'gate', $: 'secret' };
 const LIQUID_NAMES = { [T.WATER]: 'water', [T.LAVA]: 'lava', [T.SLIME]: 'slime' };
@@ -344,6 +345,7 @@ class Level {
         else if (t === T.PLAT) c = [150, 120, 80];
         else if (t === T.SKY) c = [44, 36, 78];
         else if (t === T.VOID) c = [12, 6, 26];
+        else if (t === T.DECO) c = [44, 32, 24];
         else c = [34, 24, 18];
         d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = 255;
         this.mapDirty = true;
@@ -380,7 +382,7 @@ class Level {
     for (const [nx, ny] of around) {
       if (ny < 0 || ny >= grid.length || nx < 0 || nx >= grid[ny].length) continue;
       const t = TILE_CHARS[grid[ny][nx]];
-      if (t === T.WATER || t === T.LAVA || t === T.SLIME || t === T.VOID || (t === T.SKY && !liquidsOnly)) counts[t] = (counts[t] || 0) + 1;
+      if (t === T.WATER || t === T.LAVA || t === T.SLIME || t === T.VOID || ((t === T.SKY || t === T.DECO) && !liquidsOnly)) counts[t] = (counts[t] || 0) + 1;
     }
     let best = T.EMPTY, bc = 1;
     for (const k in counts) if (counts[k] > bc) { bc = counts[k]; best = +k; }
@@ -602,8 +604,36 @@ class Level {
       for (let x = 0; x < this.w; x++) {
         const t = this.tiles[y * this.w + x];
         if (skyLike(t) || this.skyBack(x, y)) continue;
-        const src = t === T.WALL ? tex.wall : t === T.WALL2 ? tex.wall2 : tex.back;
+        const src = t === T.WALL || t === T.DECO ? tex.wall : t === T.WALL2 ? tex.wall2 : tex.back;
         ctx.drawImage(src, (x % 4) * TILE, (y % 4) * TILE, TILE, TILE, x * TILE, y * TILE, TILE, TILE);
+      }
+    }
+    // фоновая архитектура: колонны получают цилиндрическую светотень, широкие пояса — кромки
+    const isDeco = (x, y) => this.tile(x, y) === T.DECO;
+    for (let y = 0; y < this.h; y++) {
+      for (let x = 0; x < this.w; x++) {
+        if (!isDeco(x, y) || isDeco(x - 1, y)) continue;
+        let x1 = x;
+        while (isDeco(x1 + 1, y)) x1++;
+        const px = x * TILE, py = y * TILE, pw = (x1 - x + 1) * TILE;
+        ctx.drawImage(tex.wall2, 0, (y % 4) * TILE, Math.min(pw, TILE * 4), TILE, px, py, Math.min(pw, TILE * 4), TILE);
+        if (pw > TILE * 4) for (let xx = px + TILE * 4; xx < px + pw; xx += TILE * 4) ctx.drawImage(tex.wall2, 0, (y % 4) * TILE, Math.min(TILE * 4, px + pw - xx), TILE, xx, py, Math.min(TILE * 4, px + pw - xx), TILE);
+        if (pw <= TILE * 4) {
+          const g = ctx.createLinearGradient(px, 0, px + pw, 0);
+          g.addColorStop(0, 'rgba(0,0,0,0.35)');
+          g.addColorStop(0.3, 'rgba(255,235,200,0.10)');
+          g.addColorStop(0.55, 'rgba(0,0,0,0.1)');
+          g.addColorStop(1, 'rgba(0,0,0,0.6)');
+          ctx.fillStyle = g;
+        } else ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(px, py, pw, TILE);
+        for (let xx = x; xx <= x1; xx++) {
+          const qx = xx * TILE;
+          if (!isDeco(xx, y - 1) && !this.tileSolid(xx, y - 1)) { ctx.fillStyle = 'rgba(255,235,200,0.25)'; ctx.fillRect(qx, py, TILE, 2); }
+          if (!isDeco(xx, y + 1) && !this.tileSolid(xx, y + 1)) { ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(qx, py + TILE - 3, TILE, 3); }
+        }
+        ctx.fillStyle = 'rgba(255,235,200,0.18)'; ctx.fillRect(px, py, 1, TILE);
+        ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(px + pw - 2, py, 2, TILE);
       }
     }
     // крупные пятна, чтобы повторение текстур не бросалось в глаза
@@ -875,9 +905,12 @@ class Level {
           }
         }
         if (m.kind === 'secret') {
-          // едва заметная подсказка для внимательных
-          ctx.fillStyle = 'rgba(0,0,0,0.07)';
+          // подсказка для внимательных: чуть темнее и с трещиной
+          ctx.fillStyle = 'rgba(0,0,0,0.12)';
           ctx.fillRect(baseX, baseY, m.w, m.h);
+          ctx.fillStyle = 'rgba(0,0,0,0.35)';
+          const cx = baseX + Math.floor(m.w / 2) - 2;
+          for (let i = 0; i < m.h; i += 3) ctx.fillRect(cx + ((i * 7) % 5) - 2, baseY + i, 1, 3);
         } else {
           ctx.fillStyle = 'rgba(0,0,0,0.5)';
           ctx.fillRect(baseX, baseY, 1, m.h); ctx.fillRect(baseX + m.w - 1, baseY, 1, m.h);

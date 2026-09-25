@@ -217,6 +217,8 @@ const Game = {
     this.levelTime = 0;
     this.damageFlash = 0; this.bonusFlash = 0; this.bossFx = 0; this.bossHintShown = false;
     this.checkpoint = null;
+    this.traps = (def.traps || []).map((t) => ({ at: t.at, spawn: t.spawn, msg: t.msg, fired: false }));
+    for (const t of this.traps) t.spawn.forEach(([,, ch], i) => { if (this.trapSpawns(ch, i)) this.totalKills++; });
     this.mapOpen = false;
     this.revealT = 0;
     this.attract = !!opts.attract;
@@ -295,6 +297,34 @@ const Game = {
     else if (this.monsters.some((m) => m.type === 'herald' && m.alive)) {
       HUD.center('Щит Вестника пал!', 2.5);
       Sound.play('roar');
+    }
+  },
+
+  // Засады: монстры телепортируются, когда герой входит в зону.
+  // на лёгком каждый третий монстр засады не появляется
+  trapSpawns(ch, i) { return !!MONSTER_CHARS[ch] && !(this.skill === 0 && i % 3 === 2); },
+
+  updateTraps() {
+    const p = this.player;
+    if (!p || !p.alive) return;
+    const tx = Math.floor(p.cx / TILE), ty = Math.floor((p.y + p.h - 1) / TILE);
+    for (const t of this.traps) {
+      if (t.fired) continue;
+      const [x0, y0, x1, y1] = t.at;
+      if (tx < x0 || tx > x1 || ty < y0 || ty > y1) continue;
+      t.fired = true;
+      t.spawn.forEach(([sx, sy, ch], i) => {
+        if (!this.trapSpawns(ch, i)) return;
+        this.later(i * 0.12, () => {
+          const m = new Monster(MONSTER_CHARS[ch], sx * TILE + 8, (sy + 1) * TILE);
+          this.monsters.push(m);
+          m.alert(p, false);
+          m.cd = Math.max(m.cd, 0.6);
+          FX.teleport(m.cx, m.cy);
+          Sound.play('teleport', m.cx, m.cy);
+        });
+      });
+      if (t.msg) HUD.center(t.msg, 2);
     }
   },
 
@@ -499,6 +529,7 @@ const Game = {
     if (p.alive) this.checkTriggers(p);
     for (const m of this.monsters) m.update(dt);
     this.jumpPads();
+    this.updateTraps();
     this.separateMonsters(dt);
     for (const pr of this.projectiles) pr.update(dt);
     this.projectiles = this.projectiles.filter((pr) => !pr.dead);
