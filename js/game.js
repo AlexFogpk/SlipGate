@@ -720,7 +720,21 @@ const Game = {
     for (const tp of lv.teleports) if (seen(tp.cx, tp.bottom - 8)) mark(tp.cx, tp.bottom - 16, '#8060d0', r);
     for (const d of lv.decor) if (d.kind === 'checkpoint' && seen(d.x, d.y - 8)) mark(d.x, d.y - 8, d.active ? '#60e0ff' : '#6a8a90', r);
     for (const lf of lv.lifts) if (seen(lf.x + 4, lf.y)) { ctx.fillStyle = '#d0a040'; ctx.fillRect(mx + (lf.x / TILE) * scale, my + (lf.y / TILE) * scale, (lf.w / TILE) * scale, Math.max(1, scale * 0.4)); }
+    // ключи видны на карте всегда (даже в неисследованных местах), запертые двери — цветной рамкой
+    for (const m of lv.movers) {
+      if ((m.kind !== 'silver' && m.kind !== 'gold') || !m.locked) continue;
+      ctx.strokeStyle = m.kind === 'gold' ? '#f0c040' : '#c8d0dc';
+      ctx.lineWidth = Math.max(1, scale * 0.5);
+      ctx.strokeRect(mx + (m.x / TILE) * scale - 1, my + (m.y / TILE) * scale - 1, (m.w / TILE) * scale + 2, (m.h / TILE) * scale + 2);
+    }
+    const pulse = 1 + Math.sin(this.time * 6) * 0.3;
+    for (const it of this.items) {
+      if (it.taken || (it.ch !== '(' && it.ch !== ')')) continue;
+      mark(it.cx, it.cy, '#000000', r * 2 * pulse + 1);
+      mark(it.cx, it.cy, it.ch === ')' ? '#f0c040' : '#c8d0dc', r * 2 * pulse);
+    }
     if (p && Math.floor(this.time * 3) % 2 === 0) mark(p.cx, p.cy, '#ff4030', r * 1.2);
+    HUD.text(ctx, 'Мигают ключи, цветной рамкой — запертые двери', W / 2, H - 22 * u, 5 * u, '#a08050', 'center');
     HUD.text(ctx, Input.touchMode ? 'Кнопка «карта» — закрыть' : 'Tab — карта (N — закрепить)', W / 2, H - 30 * u, 5 * u, '#806040', 'center');
   },
 

@@ -505,7 +505,8 @@ class Level {
               m.locked = false; m.target = 1;
               HUD.message(need === 'silver' ? 'Серебряный ключ открыл дверь' : 'Золотой ключ открыл дверь');
             } else if (p.x + p.w > m.x - 3 && p.x < m.x + m.w + 3) {
-              HUD.center(need === 'silver' ? 'Нужен серебряный ключ' : 'Нужен золотой ключ', 1.2);
+              const where = Input.touchMode ? 'Он отмечен на карте' : 'Он отмечен на карте (Tab)';
+              HUD.center((need === 'silver' ? 'Нужен серебряный ключ' : 'Нужен золотой ключ') + '\n' + where, 2);
             }
           }
         } else if (m.kind === 'door') {
