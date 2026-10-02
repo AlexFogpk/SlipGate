@@ -1096,24 +1096,9 @@ class Monster {
         ctx.restore();
       }
     }
-    if (this.type === 'eel') {
-      ctx.fillStyle = '#ffe040';
-      ctx.fillRect(x + (this.facing > 0 ? this.w - 4 : 3), y + 2, 1, 1);
-      if (this.state === 'attack') for (let i = 0; i < 3; i++) { ctx.fillStyle = '#c0e0ff'; ctx.fillRect(x + rand(0, this.w), y + rand(-2, this.h), 1, 1); }
-    }
-    if (this.type === 'scorpion') {
-      ctx.fillStyle = '#ffe040';
-      ctx.fillRect(x + (this.facing > 0 ? this.w - 5 : 4), y + this.h - 9, 1, 1);
-    }
-    if (this.type === 'gargoyle') {
-      ctx.fillStyle = '#ff4020';
-      ctx.fillRect(x + this.facing * 4 - 1, y + this.h - 15, 2, 1);
-    }
-    if (this.type === 'dog' || this.type === 'scrag') {
-      ctx.fillStyle = '#ff3010';
-      const bob = this.type === 'scrag' ? Math.round(Math.sin(this.anim * 4) * 1.5) : 0;
-      const ey = this.type === 'dog' ? y + this.h - 11 : y + this.h - 14 + bob;
-      ctx.fillRect(x + this.facing * (this.type === 'dog' ? 7 : 1) - (this.facing < 0 ? 1 : 0), ey, this.type === 'scrag' ? 2 * this.facing : 1, 1);
+    if (this.type === 'eel' && this.state === 'attack') {
+      ctx.fillStyle = '#c0e0ff';
+      for (let i = 0; i < 3; i++) ctx.fillRect(x + rand(-this.w / 2, this.w / 2), y + rand(-2, this.h), 1, 1);
     }
   }
 }
