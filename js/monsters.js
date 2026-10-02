@@ -124,7 +124,9 @@ class Monster {
     const d = this.distTo(p);
     const range = p.ring > 0 ? 70 : 380;
     if (d > range) return;
-    const inFront = sign(p.cx - this.cx) === this.facing || d < 110;
+    // угорь чует всплеск: замечает героя в воде с любой стороны
+    const splash = this.def.swim && p.waterLevel > 0 && d < 300;
+    const inFront = splash || sign(p.cx - this.cx) === this.facing || d < 110;
     if (!inFront) return;
     if (this.canSeeEntity(p)) this.alert(p);
   }
