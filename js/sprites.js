@@ -1,6 +1,8 @@
 'use strict';
 // Пиксельные спрайты, нарисованные кодом: герой, монстры, предметы, оружие.
-// Все фигуры рисуются в локальных координатах: (0,0) — середина низа, взгляд вправо.
+// Фигуры рисуются в локальных координатах: (0,0) — середина низа, взгляд вправо.
+// Герой и монстры собираются на черновом холсте из шарнирных конечностей,
+// пиксельных деталей и затенённых объёмов, а в мир переносятся с тёмным контуром.
 
 let SPR_FLASH = false;
 const flashCache = {};
@@ -13,129 +15,543 @@ function R(ctx, x, y, w, h, hex) {
   ctx.fillRect(x, y, w, h);
 }
 
-function drawLegs(ctx, L, phase, moving, air, legCol, bootCol, thick = 3) {
-  if (air) {
-    R(ctx, -3, -L, thick, L - 3, shade(legCol, 0.75));
-    R(ctx, -4, -4, thick + 1, 2, shade(bootCol, 0.75));
-    R(ctx, 0, -L, thick, L - 4, legCol);
-    R(ctx, 0, -5, thick + 1, 2, bootCol);
-    return;
-  }
-  const s = moving ? Math.sin(phase) : 0;
-  const legs = [[Math.round(-s * 3), shade(legCol, 0.75), shade(bootCol, 0.75)], [Math.round(s * 3), legCol, bootCol]];
-  for (const [off, col, boot] of legs) {
-    const half = Math.floor(L / 2);
-    R(ctx, -1 + Math.round(off / 2), -L, thick, half + 1, col);
-    R(ctx, -1 + off, -L + half, thick, L - half - 2, col);
-    R(ctx, -1 + off, -2, thick + 1, 2, boot);
-  }
+// ---------------- палитры ----------------
+function hexToHsl(hex) {
+  const [r, g, b] = hexToRgb(hex).map((v) => v / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+  if (mx === mn) return [0, 0, l];
+  const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+function hslToHex(h, s, l) {
+  h = ((h % 360) + 360) % 360; s = clamp(s, 0, 1); l = clamp(l, 0, 1);
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+  return rgbToHex(f(0) * 255, f(8) * 255, f(4) * 255);
+}
+// Пять тонов из базового цвета: [глубокая тень, тень, основа, свет, блик].
+// Тени уходят в холод, блики — в тепло, как у художников-пиксельщиков.
+const rampCache = {};
+function ramp(hex) {
+  let r = rampCache[hex];
+  if (r) return r;
+  const [h, s, l] = hexToHsl(hex);
+  const tw = (t, k) => h + ((((t - h) % 360) + 540) % 360 - 180) * k;
+  const grey = s < 0.08;
+  r = rampCache[hex] = [
+    hslToHex(tw(250, 0.16), grey ? s : s * 1.05 + 0.04, l * 0.46),
+    hslToHex(tw(250, 0.08), grey ? s : s * 1.02 + 0.02, l * 0.72),
+    hex,
+    hslToHex(tw(55, 0.07), s * 0.95, l + (1 - l) * 0.2),
+    hslToHex(tw(55, 0.14), s * 0.85, l + (1 - l) * 0.42),
+  ];
+  return r;
 }
 
-// Рука с оружием; ang — локальный угол (уже зеркальный для взгляда влево).
-function drawWeapon(ctx, sx, sy, ang, kind, anim, sleeve, hand, t = 0) {
-  ctx.save();
-  ctx.translate(sx, sy);
-  let a = ang;
-  if (kind === 1 && anim > 0) a += lerp(0.9, -1.8, anim / 0.3);
-  ctx.rotate(a);
-  if (kind !== 1 && anim > 0) ctx.translate(-2 * anim / 0.12, 0);
-  R(ctx, 0, -1, 5, 3, sleeve);
-  R(ctx, 4, -1, 2, 2, hand);
-  switch (kind) {
-    case 1:
-      R(ctx, 3, 0, 11, 1, '#6a4a2a');
-      R(ctx, 11, -4, 3, 5, '#8a8a92');
-      R(ctx, 13, -4, 1, 5, '#d0d0d8');
-      break;
-    case 2:
-      R(ctx, 1, -1, 5, 3, '#6a4424');
-      R(ctx, 6, -1, 7, 1, '#707078');
-      R(ctx, 6, 0, 5, 1, '#4a4a50');
-      break;
-    case 3:
-      R(ctx, 0, -1, 6, 3, '#6a4424');
-      R(ctx, 6, -2, 8, 1, '#80808a');
-      R(ctx, 6, -1, 8, 1, '#5a5a62');
-      R(ctx, 6, 0, 3, 1, '#6a4424');
-      break;
-    case 4:
-      R(ctx, 1, -2, 8, 4, '#4a4a52');
-      R(ctx, 2, -2, 6, 1, '#6a6a74');
-      R(ctx, 9, -1, 4, 2, '#8a8a94');
-      R(ctx, 3, 2, 2, 2, '#3a3a40');
-      break;
-    case 5: {
-      R(ctx, 0, -3, 8, 5, '#50505a');
-      R(ctx, 1, -3, 6, 1, '#74747e');
-      R(ctx, 8, -2, 6, 4, '#34343c');
-      const k = Math.floor(t * 30) % 2;
-      R(ctx, 8, -2 + k, 6, 1, '#9a9aa4');
-      R(ctx, 8, k + 0, 6, 1, '#9a9aa4');
-      R(ctx, 2, 2, 2, 2, '#3a3a40');
-      break;
+// ---------------- пиксельные детали из строк ----------------
+// rows — массив строк, символ = ключ палитры, '.' — прозрачно.
+const partCache = new Map();
+function part(id, rows, pal) {
+  let c = partCache.get(id);
+  if (c) return c;
+  const h = rows.length, w = Math.max(...rows.map((r) => r.length));
+  c = makeCanvas(w, h);
+  const x = c.getContext('2d');
+  for (let j = 0; j < h; j++) {
+    const row = rows[j];
+    for (let i = 0; i < row.length; i++) {
+      const ch = row[i];
+      if (ch === '.' || ch === ' ') continue;
+      const col = pal[ch];
+      if (!col) throw new Error('part ' + id + ': нет цвета для «' + ch + '»');
+      x.fillStyle = col;
+      x.fillRect(i, j, 1, 1);
     }
-    case 6:
-      R(ctx, 0, -1, 6, 3, '#4a4034');
-      R(ctx, 5, -2, 6, 5, '#3a4a2a');
-      R(ctx, 5, -2, 6, 1, '#56683e');
-      R(ctx, 10, -2, 1, 5, '#222a18');
-      break;
-    case 7:
-      R(ctx, -3, -2, 17, 4, '#4a4a44');
-      R(ctx, -3, -2, 17, 1, '#6e6e66');
-      R(ctx, 12, -3, 2, 6, '#2a2a28');
-      R(ctx, -4, -2, 1, 4, '#8a1a10');
-      R(ctx, 3, 2, 2, 2, '#3a3a36');
-      break;
-    case 8:
-      R(ctx, 0, -2, 9, 5, '#5a5040');
-      R(ctx, 2, -2, 2, 5, '#c0a030');
-      R(ctx, 5, -2, 2, 5, '#c0a030');
-      R(ctx, 9, -2, 4, 1, '#8a8a94');
-      R(ctx, 9, 2, 4, 1, '#8a8a94');
-      R(ctx, 12, -1, 1, 3, '#a0c0ff');
-      break;
-    case 9:
-      R(ctx, 0, -2, 12, 4, '#3a3a44');
-      R(ctx, 0, -2, 12, 1, '#6a6a78');
-      R(ctx, 4, -1, 4, 2, '#e03020');
-      R(ctx, 12, -1, 3, 2, '#2a2a30');
-      R(ctx, 14, -1, 1, 2, '#ff6040');
-      R(ctx, 2, 2, 2, 2, '#2a2a30');
-      break;
-    case 'laser':
-      R(ctx, 0, -2, 10, 3, '#4a5058');
-      R(ctx, 0, -2, 10, 1, '#6a7078');
-      R(ctx, 10, -1, 2, 1, '#ff8030');
-      break;
-    default: break;
+  }
+  partCache.set(id, c);
+  return c;
+}
+
+// Материал для деталей: пять символов строки получают пять тонов цвета,
+// pal5('abcde', '#hex') — a самый тёмный, e — блик; '-' пропускает тон.
+function pal5(chars, hex, into = {}) {
+  const r = ramp(hex);
+  for (let i = 0; i < chars.length && i < 5; i++) if (chars[i] !== '-') into[chars[i]] = r[i];
+  return into;
+}
+
+// ---------------- объёмы ----------------
+// Затенённый эллипсоид со светом сверху-слева (кэшируется по размеру и цвету).
+const ballCache = new Map();
+function ballCanvas(w, h, hex, dither = true) {
+  const key = w + 'x' + h + hex + (dither ? 'd' : '');
+  let c = ballCache.get(key);
+  if (c) return c;
+  const rp = ramp(hex);
+  c = makeCanvas(w, h);
+  const x = c.getContext('2d');
+  const lx = -0.48, ly = -0.62, lz = Math.sqrt(1 - lx * lx - ly * ly);
+  for (let j = 0; j < h; j++) {
+    const v = ((j + 0.5) / h) * 2 - 1;
+    let run = -1, start = 0;
+    for (let i = 0; i <= w; i++) {
+      let idx = -1;
+      if (i < w) {
+        const u = ((i + 0.5) / w) * 2 - 1, d = u * u + v * v;
+        if (d <= 1) {
+          const I = u * lx + v * ly + Math.sqrt(1 - d) * lz + (dither ? ((i + j) & 1 ? 0.06 : -0.06) : 0);
+          idx = I > 0.84 ? 4 : I > 0.52 ? 3 : I > 0.08 ? 2 : I > -0.32 ? 1 : 0;
+        }
+      }
+      if (idx !== run) {
+        if (run >= 0) { x.fillStyle = rp[run]; x.fillRect(start, j, i - start, 1); }
+        run = idx; start = i;
+      }
+    }
+  }
+  ballCache.set(key, c);
+  return c;
+}
+function ball(ctx, x, y, w, h, hex, dither) {
+  ctx.drawImage(ballCanvas(Math.max(1, Math.round(w)), Math.max(1, Math.round(h)), hex, dither), Math.round(x), Math.round(y));
+}
+// Плоский эллипс без сглаживания (вписан в прямоугольник).
+function ell(ctx, x, y, w, h, col) {
+  ctx.fillStyle = col;
+  for (let j = 0; j < h; j++) {
+    const v = ((j + 0.5) / h) * 2 - 1, k = Math.sqrt(Math.max(0, 1 - v * v));
+    const half = Math.round((w / 2) * k);
+    if (half > 0) ctx.fillRect(Math.round(x + w / 2 - half), y + j, half * 2, 1);
+  }
+}
+
+// Выпуклый многоугольник без сглаживания: pts — плоский массив [x0,y0,x1,y1,...].
+function poly(ctx, pts, col) {
+  ctx.fillStyle = col;
+  let y0 = Infinity, y1 = -Infinity;
+  for (let i = 1; i < pts.length; i += 2) { y0 = Math.min(y0, pts[i]); y1 = Math.max(y1, pts[i]); }
+  const n = pts.length;
+  for (let y = Math.floor(y0); y <= Math.ceil(y1); y++) {
+    const yc = y + 0.5;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < n; i += 2) {
+      const ax = pts[i], ay = pts[i + 1], bx = pts[(i + 2) % n], by = pts[(i + 3) % n];
+      if ((ay <= yc && by > yc) || (by <= yc && ay > yc)) {
+        const x = ax + (yc - ay) * (bx - ax) / (by - ay);
+        if (x < lo) lo = x;
+        if (x > hi) hi = x;
+      }
+    }
+    if (hi > lo) ctx.fillRect(Math.round(lo), y, Math.max(1, Math.round(hi) - Math.round(lo)), 1);
+  }
+}
+
+// Каменная глыба: многоугольник в тени, внутри — смещённые к свету грань и блик.
+function rock(ctx, pts, hex) {
+  const rp = ramp(hex), n = pts.length / 2;
+  let cx = 0, cy = 0, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < pts.length; i += 2) {
+    cx += pts[i] / n; cy += pts[i + 1] / n;
+    x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1]);
+  }
+  const w = x1 - x0, h = y1 - y0;
+  const layer = (k, dx, dy) => pts.map((v, i) => (i % 2 ? cy + (v - cy) * k + dy : cx + (v - cx) * k + dx));
+  poly(ctx, pts, rp[1]);
+  poly(ctx, layer(0.84, -Math.min(3, w * 0.06), -Math.min(3, h * 0.06)), rp[2]);
+  poly(ctx, layer(0.5, -w * 0.14, -h * 0.16), rp[3]);
+}
+// Каменная плита-конечность от (x0,y0) до (x1,y1) шириной w0→w1.
+function slab(ctx, x0, y0, x1, y1, w0, w1, hex) {
+  const d = Math.hypot(x1 - x0, y1 - y0) || 1, nx = -(y1 - y0) / d, ny = (x1 - x0) / d;
+  rock(ctx, [x0 + nx * w0 / 2, y0 + ny * w0 / 2, x1 + nx * w1 / 2, y1 + ny * w1 / 2, x1 - nx * w1 / 2, y1 - ny * w1 / 2, x0 - nx * w0 / 2, y0 - ny * w0 / 2], hex);
+}
+
+// ---------------- конечности ----------------
+// Толстый отрезок из квадратиков: тень, основа и блик со стороны света.
+// t0/t1 — толщина у начала и конца, rp — палитра ramp().
+function limb(ctx, x0, y0, x1, y1, t0, t1, rp, ol) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const ad = Math.max(Math.abs(dx), Math.abs(dy)), len = Math.hypot(dx, dy);
+  const n = Math.max(1, Math.ceil(ad));
+  const k = len > 0 ? 0.35 + 0.65 * ad / len : 1; // на диагоналях квадратики толще
+  if (ol) {
+    // собственный тёмный контур — чтобы рука читалась поверх корпуса
+    ctx.fillStyle = ol;
+    for (let i = 0; i <= n; i++) {
+      const f = i / n, t = Math.max(1, Math.round(lerp(t0, t1, f) * k));
+      ctx.fillRect(Math.round(x0 + dx * f - t / 2) - 1, Math.round(y0 + dy * f - t / 2) - 1, t + 2, t + 2);
+    }
+  }
+  for (let pass = 0; pass < 3; pass++) {
+    ctx.fillStyle = rp[pass + 1];
+    for (let i = 0; i <= n; i++) {
+      const f = i / n, t = Math.max(1, Math.round(lerp(t0, t1, f) * k));
+      const s = t === 1 ? (pass === 1 ? 1 : 0) : pass === 0 ? t : pass === 1 ? t - 1 : t >= 3 ? 1 : 0;
+      if (s <= 0) continue;
+      ctx.fillRect(Math.round(x0 + dx * f - t / 2), Math.round(y0 + dy * f - t / 2), s, s);
+    }
+  }
+}
+// Двухзвенная рука/нога: локоть ищется так, чтобы кисть попала в цель.
+function ik(sx, sy, hx, hy, l1, l2, bend) {
+  const dx = hx - sx, dy = hy - sy;
+  const d = clamp(Math.hypot(dx, dy), 0.01, l1 + l2 - 0.01);
+  const a = Math.acos(clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1));
+  const base = Math.atan2(dy, dx) + bend * a;
+  return [sx + Math.cos(base) * l1, sy + Math.sin(base) * l1];
+}
+function arm(ctx, sx, sy, hx, hy, l1, l2, bend, t, rp, hand, handSize = 2, ol) {
+  const [ex, ey] = ik(sx, sy, hx, hy, l1, l2, bend);
+  const d = Math.hypot(hx - sx, hy - sy);
+  if (d > l1 + l2) { const k = (l1 + l2) / d; hx = sx + (hx - sx) * k; hy = sy + (hy - sy) * k; }
+  if (ol) {
+    limb(ctx, sx, sy, ex, ey, t, t, rp, ol);
+    limb(ctx, ex, ey, hx, hy, t, Math.max(1, t - 1), rp, ol);
+    if (hand) { ctx.fillStyle = ol; ctx.fillRect(Math.round(hx - handSize / 2) - 1, Math.round(hy - handSize / 2) - 1, handSize + 2, handSize + 2); }
+  }
+  limb(ctx, sx, sy, ex, ey, t, t, rp);
+  limb(ctx, ex, ey, hx, hy, t, Math.max(1, t - 1), rp);
+  if (hand) { ctx.fillStyle = hand; ctx.fillRect(Math.round(hx - handSize / 2), Math.round(hy - handSize / 2), handSize, handSize); }
+  return [hx, hy];
+}
+
+// Поза ног: бедро-голень с шарнирами. Возвращает высоту таза над полом и точки.
+// mode: 'stand' | 'walk' | 'air' | 'swim'. stride — размах шага в радианах.
+function legPose(len, phase, mode, stride = 0.55, lift = 1) {
+  const th = len * 0.52, sh = len - th, out = [];
+  let low = 0;
+  for (let k = 0; k < 2; k++) {
+    const ph = phase + k * Math.PI;
+    let a1, a2;
+    if (mode === 'walk') { a1 = Math.sin(ph) * stride; a2 = Math.max(0, Math.cos(ph)) * 1.1 * lift + 0.08; }
+    else if (mode === 'air') { a1 = k ? 0.65 : -0.15; a2 = k ? 1.3 : 0.45; }
+    else if (mode === 'swim') { a1 = Math.sin(ph) * 0.35 - 0.5; a2 = 0.3 + Math.cos(ph) * 0.2; }
+    else { a1 = k ? 0.24 : -0.16; a2 = k ? 0.2 : 0.1; }
+    const kx = Math.sin(a1) * th, ky = Math.cos(a1) * th;
+    const fx = kx + Math.sin(a1 - a2) * sh, fy = ky + Math.cos(a1 - a2) * sh;
+    out.push({ kx, ky, fx, fy });
+    low = Math.max(low, fy);
+  }
+  return { hip: mode === 'air' || mode === 'swim' ? len : Math.round(low), legs: out };
+}
+// Рисует обе ноги по позе: дальняя темнее. pal: {leg, boot} — цвета ramp-базы.
+function drawLegPose(ctx, hx, hy, pose, legHex, bootHex, t = 3, bootLen = 4, bootFrom = 0.62) {
+  for (let k = 0; k < 2; k++) {
+    const L = pose.legs[k], far = k === 1;
+    const rl = ramp(far ? shade(legHex, 0.72) : legHex), rb = ramp(far ? shade(bootHex, 0.72) : bootHex);
+    const kx = hx + L.kx, ky = hy + L.ky, fx = hx + L.fx, fy = hy + L.fy;
+    limb(ctx, hx, hy, kx, ky, t, t, rl);
+    const bx = lerp(kx, fx, bootFrom), by = lerp(ky, fy, bootFrom);
+    limb(ctx, kx, ky, bx, by, t, t, rl);
+    limb(ctx, bx, by, fx, fy, t, t, rb);
+    // стопа носком вперёд
+    ctx.fillStyle = rb[2];
+    ctx.fillRect(Math.round(fx - t / 2), Math.round(fy) - 2, bootLen, 2);
+    ctx.fillStyle = rb[1];
+    ctx.fillRect(Math.round(fx - t / 2), Math.round(fy) - 1, bootLen, 1);
+  }
+}
+
+// ---------------- черновой холст и контур ----------------
+// У каждого героя и монстра свой черновик: общий холст пришлось бы браузеру
+// копировать при каждом повторном использовании внутри кадра.
+const SPR = { cur: null, glows: [] };
+function sprCanvas(ent, b) {
+  const W = b.l * 2, H = b.u + b.d;
+  let k = ent._spr;
+  if (!k || k.W !== W || k.H !== H) {
+    k = ent._spr = { W, H, OX: b.l, OY: b.u, c: makeCanvas(W, H), s: makeCanvas(W, H), still: false };
+    k.x = k.c.getContext('2d'); k.sx = k.s.getContext('2d');
+    k.x.imageSmoothingEnabled = false; k.sx.imageSmoothingEnabled = false;
+  }
+  return k;
+}
+// box: { l: полуширина, u: высота вверх, d: вниз } — размер черновика вокруг точки спрайта.
+function sprBegin(b, ent) {
+  const k = SPR.cur = sprCanvas(ent, b), s = k.x;
+  s.setTransform(1, 0, 0, 1, 0, 0);
+  s.globalAlpha = 1;
+  s.globalCompositeOperation = 'source-over';
+  s.clearRect(0, 0, k.W, k.H);
+  SPR.glows.length = 0;
+  s.translate(k.OX, k.OY);
+  return s;
+}
+// Готовит контур (силуэт) и вспышку ранения на черновике.
+function sprFinish(flash, outline = '#0a0705') {
+  const k = SPR.cur, s = k.x;
+  s.setTransform(1, 0, 0, 1, 0, 0);
+  if (flash) {
+    s.globalCompositeOperation = 'source-atop';
+    s.globalAlpha = 0.6;
+    s.fillStyle = '#ffffff';
+    s.fillRect(0, 0, k.W, k.H);
+    s.globalAlpha = 1;
+    s.globalCompositeOperation = 'source-over';
+  }
+  k.outline = !!outline;
+  if (outline) {
+    const o = k.sx;
+    o.globalCompositeOperation = 'copy';
+    o.drawImage(k.c, 0, 0);
+    o.globalCompositeOperation = 'source-in';
+    o.fillStyle = outline;
+    o.fillRect(0, 0, k.W, k.H);
+    o.globalCompositeOperation = 'source-over';
+  }
+}
+// Переносит готовый черновик в мир (ctx уже сдвинут в точку спрайта).
+function sprBlit(ctx, k, alpha = 1) {
+  const a0 = ctx.globalAlpha, X = -k.OX, Y = -k.OY;
+  if (k.outline) {
+    ctx.globalAlpha = a0 * alpha * 0.85;
+    ctx.drawImage(k.s, X - 1, Y);
+    ctx.drawImage(k.s, X + 1, Y);
+    ctx.drawImage(k.s, X, Y - 1);
+    ctx.drawImage(k.s, X, Y + 1);
+  }
+  ctx.globalAlpha = a0 * alpha;
+  ctx.drawImage(k.c, X, Y);
+  ctx.globalAlpha = a0;
+}
+function sprEnd(ctx, b, flash, alpha = 1, outline) {
+  sprFinish(flash, outline);
+  sprBlit(ctx, SPR.cur, alpha);
+}
+// Светящаяся деталь: рисуется в спрайт и запоминается для яркого прохода (поверх освещения).
+function glow(ctx, x, y, w, h, col) {
+  ctx.fillStyle = col;
+  ctx.fillRect(x, y, w, h);
+  const m = ctx.getTransform(), cx = x + w / 2, cy = y + h / 2;
+  SPR.glows.push(m.a * cx + m.c * cy + m.e - SPR.cur.OX, m.b * cx + m.d * cy + m.f - SPR.cur.OY, w, h, col);
+}
+function keepGlows(ent) {
+  const g = ent.glows || (ent.glows = []);
+  g.length = SPR.glows.length;
+  for (let i = 0; i < g.length; i++) g[i] = SPR.glows[i];
+}
+function drawGlows(ctx, x, y, facing, g, alpha = 1) {
+  if (!g || !g.length) return;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(facing, 1);
+  for (let i = 0; i < g.length; i += 5) {
+    const w = g[i + 2], h = g[i + 3], gx = Math.round(g[i] - w / 2), gy = Math.round(g[i + 1] - h / 2);
+    ctx.fillStyle = g[i + 4];
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.28 * alpha;
+    ctx.fillRect(gx - 1, gy - 1, w + 2, h + 2);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = alpha;
+    ctx.fillRect(gx, gy, w, h);
   }
   ctx.restore();
 }
 
-function drawSword(ctx, sx, sy, ang, len, blade, edge, hilt) {
+// ---------------- оружие ----------------
+// Картинки оружия стволом вправо. g — точка хвата (задняя рука), f — передняя рука.
+const GUN_PAL = {
+  k: '#1c1c22', m: '#383842', n: '#565662', M: '#7c7c8a', w: '#b4b4c2',
+  d: '#341e10', b: '#5a3a1c', B: '#82542a',
+  y: '#8a6420', Y: '#d8b048', r: '#7a1a10', R: '#d84028', o: '#ffa040',
+  c: '#2a5aa0', C: '#a0d8ff', g: '#34401f', G: '#55673a', h: '#7c9050',
+};
+const GUN_ART = {
+  1: { g: [1, 2], one: true, rows: [
+    '.........mn...',
+    '........mnMw..',
+    'dbbbbBbbmnMMw.',
+    '........mnMMMw',
+    '.........mnMMw',
+    '..........mmn.',
+  ] },
+  2: { g: [3, 1], f: [10, 2], rows: [
+    '....nMMMMMMMMMMw',
+    'BBbbmnnnmBBBBBnm',
+    'bbd.k.k..dbbbd..',
+    'bd..............',
+  ] },
+  3: { g: [3, 2], f: [8, 2], rows: [
+    '...mMMMMMMMMMw',
+    '...mnnnnnnnnnM',
+    'BBbbmmdBBBBdmm',
+    'bbd.k.........',
+    'bd............',
+  ] },
+  4: { g: [3, 2], f: [7, 3], rows: [
+    '..mnnnnnnm....',
+    '.mnMMMMMMnmMMw',
+    'mnnnnnnnnnmnnm',
+    'm.k..mnnm.....',
+    '.....mnm......',
+  ] },
+  5: { g: [3, 2], f: [7, 3], anim: true, rows: [
+    '..mnnnnnnnm......',
+    '.mnMMMMMMMnmMMMMw',
+    'mnnnnnnnnnnkmmmmn',
+    'mnnnnnnnnnnmMMMMw',
+    'm.k..mnnm.mmmmm..',
+    '.....mnm.........',
+  ] },
+  6: { g: [3, 2], f: [7, 3], rows: [
+    '....gGGGGg....',
+    'Bbmgghhhhgg.mMw',
+    'bbmgGGGGGgmnnnm',
+    'bd.k.gggggk....',
+    'b.....k........',
+  ] },
+  7: { g: [6, 3], f: [10, 3], back: true, rows: [
+    'rRmnMMMMMMMMMMMMMnw',
+    'rRmnnnnnnnnnnnnnnmM',
+    'rrmmmmmmmmmmmmmmmmn',
+    '......mnm..mm......',
+    '.......m...........',
+  ] },
+  8: { g: [3, 2], f: [7, 3], rows: [
+    '..mnnnnnm......',
+    '.mnyYyYyYnmMMMC',
+    'mnnYyYyYynmnnnc',
+    'm.k.mnnm.......',
+    '....mnm........',
+  ] },
+  9: { g: [3, 2], f: [8, 3], rows: [
+    '..mnnnnnnnnm....',
+    '.mnMMMMMMMMMnmMk',
+    'mnnRRRRRnnnnnmMo',
+    'mnnrrrrrnnnnnmmo',
+    'm.k..mnnm.......',
+    '.....mnm........',
+  ] },
+  laser: { g: [2, 1], f: [6, 2], rows: [
+    '.mnMMMMMMnk.',
+    'mnnnnnnnnmMo',
+    'm.k.mnm.....',
+    '....mm......',
+  ] },
+};
+function gunImg(kind, t = 0) {
+  const a = GUN_ART[kind];
+  if (!a) return null;
+  if (a.anim) {
+    // крутящийся блок стволов: светлая полоса бегает вверх-вниз
+    const f = Math.floor(t * 30) % 2;
+    const rows = a.rows.map((r, j) => (f && j >= 1 && j <= 3 ? r.slice(0, 12) + (j === 2 ? 'MMMMw' : 'mnnnn') : r));
+    return part('gun' + kind + f, rows, GUN_PAL);
+  }
+  return part('gun' + kind, a.rows, GUN_PAL);
+}
+// Рисует оружие, повёрнутое вокруг (px,py) на угол ang; reach — вынос хвата от оси.
+// Возвращает мировые точки задней и передней руки.
+function drawGun(ctx, kind, px, py, ang, reach, t) {
+  const a = GUN_ART[kind], img = gunImg(kind, t);
+  if (!img) return null;
   ctx.save();
-  ctx.translate(sx, sy);
+  ctx.translate(px, py);
   ctx.rotate(ang);
-  R(ctx, 0, -1, 4, 3, hilt);
-  R(ctx, 4, -3, 1, 6, '#8a7a50');
-  R(ctx, 5, -1, len, 2, blade);
-  R(ctx, 5, -1, len, 1, edge);
-  R(ctx, 5 + len, 0, 1, 1, blade);
+  const ox = Math.round(reach - a.g[0]), oy = -a.g[1];
+  ctx.drawImage(img, ox, oy);
   ctx.restore();
+  const cs = Math.cos(ang), sn = Math.sin(ang);
+  const at = (lx, ly) => [px + lx * cs - ly * sn, py + lx * sn + ly * cs];
+  const rear = at(reach, 0);
+  const front = a.f ? at(reach + a.f[0] - a.g[0], a.f[1] - a.g[1]) : null;
+  return { rear, front };
+}
+// Оружие на полу (подбираемое): по центру, без рук.
+function drawWeapon(ctx, sx, sy, ang, kind, anim, sleeve, hand, t = 0) {
+  const img = gunImg(kind, t);
+  if (!img) return;
+  ctx.drawImage(img, Math.round(sx - 1), Math.round(sy - img.height / 2 + 1));
 }
 
-function drawArm(ctx, sx, sy, ang, len, col, claw) {
-  ctx.save();
-  ctx.translate(sx, sy);
-  ctx.rotate(ang);
-  R(ctx, 0, -1, len, 3, col);
-  if (claw) { R(ctx, len, -2, 3, 1, claw); R(ctx, len, 1, 3, 1, claw); R(ctx, len, 0, 2, 1, claw); }
-  ctx.restore();
+// ---------------- герой ----------------
+const ARMOR_HEX = ['#5c4a30', '#3f7a38', '#b08a28', '#a02c22'];
+function playerParts(armorType) {
+  const pal = {};
+  pal5('qrstu', '#4c5a34', pal);   // комбинезон
+  pal5('ABCDE', ARMOR_HEX[armorType] || ARMOR_HEX[0], pal); // нагрудник
+  pal5('vwxyz', '#5e4a2e', pal);   // ранец
+  pal5('ijklm', '#4e3420', pal);   // ремни
+  pal5('FGHIJ', '#5c6844', pal);   // шлем
+  pal5('-abc-', '#c49070', pal);   // кожа
+  pal.V = '#16242a'; pal.W = '#8cd0d0'; pal.Y = '#d8b040';
+  const torso = part('pl-torso' + armorType, [
+    '.xy.rsttu',
+    'wxyrsCDDt',
+    'wxyrBCDDs',
+    'wxyrBCCDs',
+    'wwxrBBCCr',
+    '.wwkkkkYk',
+    '...rssr..',
+  ], pal);
+  const head = part('pl-head', [
+    '..HIIJ.',
+    '.GHIIIH',
+    'GHHFFFF',
+    'GHHVVVV',
+    'GGHVVWV',
+    '.Gbcbb.',
+    '..ab...',
+  ], pal);
+  const pad = part('pl-pad' + armorType, [
+    '.CDD.',
+    'BCCDE',
+    'ABCCD',
+    '.ABB.',
+  ], pal);
+  return { torso, head, pad };
 }
-
-// ---------------- игрок ----------------
+const PLAYER_BOX = { l: 26, u: 40, d: 6 };
+function playerArt(s, p) {
+  const t = Game.time;
+  const moving = p.onGround && Math.abs(p.vx) > 10;
+  const swim = p.alive && !p.onGround && p.waterLevel >= 2;
+  const air = p.alive && !p.onGround && p.waterLevel < 2;
+  const mode = !p.alive ? 'stand' : swim ? 'swim' : air ? 'air' : moving ? 'walk' : 'stand';
+  const pose = legPose(10, p.walkPhase + (swim ? t * 6 : 0), mode, 0.6);
+  const hy = -pose.hip;
+  const parts = playerParts(p.armorType || 0);
+  const suit = ramp('#4c5a34'), suitFar = ramp('#3c4729');
+  const glove = '#3a2c1e';
+  const la = p.facing > 0 ? p.aim : Math.PI - p.aim;
+  const kind = p.weapon;
+  const ga = GUN_ART[kind] || GUN_ART[2];
+  const top = hy - 7;
+  // ось оружия — на уровне груди; ракетомёт лежит на плече
+  const px = 1, py = ga.back ? top + 1 : top + 3;
+  let ang = la, reach = ga.back ? 0 : 3;
+  if (kind === 1 && p.attackAnim > 0) ang += lerp(0.9, -1.8, p.attackAnim / 0.3);
+  else if (p.attackAnim > 0) reach -= 2 * p.attackAnim / 0.12;
+  if (!p.alive) ang = 1.2;
+  // 1. дальняя рука (к цевью) — за телом; пока оружия не видно, считаем точки без рисования
+  let hands = null;
+  if (p.alive) {
+    const cs = Math.cos(ang), sn = Math.sin(ang);
+    const at = (lx, ly) => [px + lx * cs - ly * sn, py + lx * sn + ly * cs];
+    hands = { rear: at(reach, 0), front: ga.f ? at(reach + ga.f[0] - ga.g[0], ga.f[1] - ga.g[1]) : null };
+  }
+  const shFar = [1, top + 1], shNear = [-1, top + 2];
+  if (hands && hands.front) arm(s, shFar[0], shFar[1], hands.front[0], hands.front[1], 4, 5, 1, 2, suitFar, glove);
+  else arm(s, shFar[0], shFar[1], shFar[0] + 1 + Math.sin(p.walkPhase) * (moving ? 2 : 0), shFar[1] + 7, 4, 4, -1, 2, suitFar, glove);
+  // 2. ноги
+  drawLegPose(s, 0, hy, pose, '#4a4430', '#2a2018', 3, 4);
+  // 3. корпус и голова
+  s.drawImage(parts.torso, -5, top);
+  if (p.alive && ga.back) drawGun(s, kind, px, py, ang, reach, t); // труба на дальнем плече, за головой
+  s.drawImage(parts.head, -3, top - 6);
+  // 4. оружие и ближняя рука
+  if (p.alive) {
+    if (!ga.back) drawGun(s, kind, px, py, ang, reach, t);
+    arm(s, shNear[0], shNear[1], hands.rear[0], hands.rear[1], 4, 5, 1, 2, suit, glove, 2, '#1a1c10');
+    s.drawImage(parts.pad, -3, top);
+  } else {
+    arm(s, shNear[0], shNear[1], shNear[0] - 1, shNear[1] + 7, 4, 4, -1, 2, suit, glove);
+  }
+}
 function drawPlayerSprite(ctx, x, y, p) {
+  const s = sprBegin(PLAYER_BOX, p);
+  playerArt(s, p);
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(p.facing, 1);
@@ -144,469 +560,1087 @@ function drawPlayerSprite(ctx, x, y, p) {
     ctx.translate(0, -k * 3);
     ctx.rotate(-k * Math.PI / 2);
   }
-  SPR_FLASH = p.hurtFlash > 0;
   const invis = p.ring > 0;
-  if (invis) ctx.globalAlpha = 0.16;
-  const moving = p.onGround && Math.abs(p.vx) > 10;
-  const air = !p.onGround && p.waterLevel < 2 && p.alive;
-  R(ctx, -6, -17, 3, 7, '#5a4a30');
-  R(ctx, -6, -17, 3, 1, '#6e5c3c');
-  drawLegs(ctx, 9, p.walkPhase, moving, air, '#5a4a36', '#2a2018');
-  R(ctx, -4, -17, 8, 8, '#4a5836');
-  R(ctx, -4, -17, 8, 1, '#5e6e46');
-  R(ctx, 2, -16, 2, 7, '#3a4628');
-  R(ctx, -1, -16, 1, 6, '#6a5028');
-  R(ctx, -4, -10, 8, 1, '#6a5028');
-  R(ctx, -3, -22, 6, 5, '#c09070');
-  R(ctx, -3, -22, 6, 2, '#3a3020');
-  R(ctx, -3, -21, 2, 3, '#3a3020');
-  R(ctx, 1, -20, 1, 1, '#1a1010');
-  R(ctx, 2, -18, 1, 1, '#9a6a50');
-  if (p.alive) {
-    const la = p.facing > 0 ? p.aim : Math.PI - p.aim;
-    drawWeapon(ctx, 0, -13, la, p.weapon, p.attackAnim, '#4a5836', '#c09070', Game.time);
-  }
+  sprEnd(ctx, PLAYER_BOX, p.hurtFlash > 0, invis ? 0.16 : 1, invis ? null : undefined);
   if (invis) {
+    // при невидимости видны только глаза
     ctx.globalAlpha = 0.9;
-    R(ctx, 1, -20, 1, 1, '#ffe080');
-    R(ctx, -1, -20, 1, 1, '#ffe080');
+    R(ctx, 1, -19, 1, 1, '#ffe080');
+    R(ctx, 3, -19, 1, 1, '#ffe080');
+    ctx.globalAlpha = 1;
   }
-  ctx.globalAlpha = 1;
-  SPR_FLASH = false;
   ctx.restore();
 }
 
 // ---------------- монстры ----------------
+function moveMode(m) { return m.air ? 'air' : m.moving ? 'walk' : 'stand'; }
+const MPAL = {};
+function mpal(id, build) { return MPAL[id] || (MPAL[id] = build({})); }
+// Точки рук на оружии без рисования (рука за оружием рисуется раньше него).
+function gunHands(kind, px, py, ang, reach) {
+  const a = GUN_ART[kind], cs = Math.cos(ang), sn = Math.sin(ang);
+  const at = (lx, ly) => [px + lx * cs - ly * sn, py + lx * sn + ly * cs];
+  return { rear: at(reach, 0), front: a.f ? at(reach + a.f[0] - a.g[0], a.f[1] - a.g[1]) : null };
+}
+// Клинок или иное оружие из картинки, повёрнутое вокруг хвата (gx, gy).
+function drawHeld(ctx, img, gx, gy, hx, hy, ang) {
+  ctx.save();
+  ctx.translate(Math.round(hx), Math.round(hy));
+  ctx.rotate(ang);
+  ctx.drawImage(img, -gx, -gy);
+  ctx.restore();
+}
+const BLADE_PAL = Object.assign({}, GUN_PAL, { s: '#c8ccd8', S: '#eef0f8', e: '#8a8e9a', f: '#ff7a30', F: '#ffd060' });
+const BLADES = {
+  sword: { g: [1, 2], rows: [
+    '..y...........',
+    '..y.......... ',
+    'dbySSSSSSSSSSs',
+    '..yeeeeeeeeee.',
+    '..y...........',
+  ] },
+  flame: { g: [2, 2], rows: [
+    '...y..............',
+    '...y..............',
+    'ddbymmmmmmmmmmmmmn',
+    '...yfFfFfFfFfFfFf.',
+    '...y..............',
+  ] },
+  hammer: { g: [1, 3], rows: [
+    '.............nMMw',
+    '.............nMMw',
+    '.............nMMM',
+    'dbbbbbbbbbbbbnMMM',
+    '.............nnMM',
+    '.............mnnM',
+    '.............mnnn',
+  ] },
+};
+function blade(id) { const b = BLADES[id]; return part('blade-' + id, b.rows, BLADE_PAL); }
+function chainsaw(t, fast) {
+  const f = Math.floor(t * (fast ? 30 : 5)) % 2;
+  return part('saw' + f, [
+    f ? '.mnnnm..M.M.M.M.M.' : '.mnnnm.M.M.M.M.M.M',
+    'mnMMMnmwwwwwwwwwwM',
+    'mnnRnnmMMMMMMMMMMw',
+    'mnnnnnmwwwwwwwwwwM',
+    f ? '.mmmmm..M.M.M.M.M.' : '.mmmmm.M.M.M.M.M.M',
+  ], GUN_PAL);
+}
+
+// Стрелок: ноги, дальняя рука к цевью, корпус, голова, оружие и ближняя рука к хвату.
+function gunner(s, m, o) {
+  const pose = legPose(o.leg, m.walkPhase, moveMode(m), o.stride || 0.5);
+  const hy = -pose.hip, top = hy - o.torso.height + (o.sink || 0);
+  const ang = m.aimLocal || 0;
+  const reach = 3 - (m.fireAnim > 0 ? 2 * m.fireAnim / 0.12 : 0);
+  const px = 1, py = top + (o.gunY || 3);
+  const h = gunHands(o.gun, px, py, ang, reach);
+  const sl = ramp(o.sleeve), slFar = ramp(shade(o.sleeve, 0.75));
+  if (h.front) arm(s, 1, top + 1, h.front[0], h.front[1], o.arm || 4, (o.arm || 4) + 1, 1, o.armT || 2, slFar, o.glove);
+  drawLegPose(s, 0, hy, pose, o.legHex, o.boot, o.legT || 3, o.bootLen || 4);
+  s.drawImage(o.torso, o.tx, top);
+  s.drawImage(o.head, o.hx, top - o.head.height + (o.neck || 1));
+  if (o.headGlow) o.headGlow(s, o.hx, top - o.head.height + (o.neck || 1));
+  drawGun(s, o.gun, px, py, ang, reach, Game.time);
+  arm(s, -1, top + 2, h.rear[0], h.rear[1], o.arm || 4, (o.arm || 4) + 1, 1, o.armT || 2, sl, o.glove, 2, '#140e0a');
+  if (o.pad) s.drawImage(o.pad, -2, top - 1);
+  return top;
+}
+// Мечник: клинок в ближней руке; ang — угол клинка, рука следует за ним.
+function swordArm(s, sx, sy, ang, len, sleeveHex, glove, img, g, ol = '#140e0a', armT = 2) {
+  const d = ang * 0.8 + 0.5;
+  const hx = sx + Math.cos(d) * len, hy = sy + Math.sin(d) * len;
+  drawHeld(s, img, g[0], g[1], hx, hy, ang);
+  arm(s, sx, sy, hx, hy, len * 0.55, len * 0.6, -1, armT, ramp(sleeveHex), glove, 2, ol);
+}
+
 const MONSTER_ART = {
-  grunt(ctx, m) {
-    drawLegs(ctx, 9, m.walkPhase, m.moving, m.air, '#4a4030', '#2a2018');
-    R(ctx, -4, -17, 8, 8, '#7a5a30');
-    R(ctx, -4, -17, 8, 1, '#94703e');
-    R(ctx, 2, -16, 2, 7, '#5e4424');
-    R(ctx, -4, -10, 8, 1, '#3a2a18');
-    R(ctx, -5, -17, 3, 3, '#5a5040');
-    R(ctx, -3, -22, 6, 5, '#b08868');
-    R(ctx, -4, -23, 8, 3, '#5a5040');
-    R(ctx, -4, -23, 8, 1, '#6e6450');
-    R(ctx, 1, -20, 1, 1, '#200000');
-    drawWeapon(ctx, 0, -13, m.aimLocal, 2, m.fireAnim, '#7a5a30', '#b08868');
+  grunt(s, m) {
+    const pal = mpal('grunt', (p) => {
+      pal5('qrstu', '#7a5a32', p); pal5('FGHIJ', '#555b3a', p); pal5('-abc-', '#b88a68', p);
+      p.e = '#2a1410'; p.m = '#5a2a1a'; p.k = '#3a2a18'; p.Y = '#b09040'; p.j = '#4a3420';
+      return p;
+    });
+    gunner(s, m, {
+      leg: 10, legHex: '#5a4a30', boot: '#2a2018', gun: 2, sleeve: '#7a5a32', glove: '#8a6448',
+      tx: -4, torso: part('gr-torso', [
+        '..rsstt.',
+        '.rrjstuu',
+        'qrrsjsst',
+        'qrrssjst',
+        '.qrrsssj',
+        '.kkkkkYk',
+        '..rssr..',
+      ], pal),
+      hx: -4, head: part('gr-head', [
+        '..HHIJ..',
+        '.GHHHIH.',
+        'FGGGGGGG',
+        '.Fabbec.',
+        '.Fabbbcc',
+        '..aabmb.',
+        '...aa...',
+      ], pal),
+    });
   },
-  enforcer(ctx, m) {
-    drawLegs(ctx, 10, m.walkPhase, m.moving, m.air, '#3a4046', '#1e2226', 4);
-    R(ctx, -5, -19, 10, 9, '#5a646a');
-    R(ctx, -5, -19, 10, 1, '#76828a');
-    R(ctx, -3, -18, 6, 5, '#6e7a80');
-    R(ctx, 3, -18, 2, 8, '#465056');
-    R(ctx, -5, -11, 10, 1, '#2a3034');
-    R(ctx, -6, -19, 3, 3, '#4a545a');
-    R(ctx, -3, -24, 7, 5, '#6a7078');
-    R(ctx, -3, -24, 7, 1, '#8a9098');
-    R(ctx, 0, -22, 4, 2, '#e0c040');
-    drawWeapon(ctx, 0, -15, m.aimLocal, 'laser', m.fireAnim, '#5a646a', '#3a4046');
+
+  enforcer(s, m) {
+    const pal = mpal('enforcer', (p) => {
+      pal5('ABCDE', '#64727e', p); pal5('qrstu', '#363e46', p);
+      p.V = '#e8c040'; p.k = '#22282c'; return p;
+    });
+    gunner(s, m, {
+      leg: 11, legT: 4, legHex: '#3c444c', boot: '#20242a', gun: 'laser', sleeve: '#4a545e', glove: '#2a3036', armT: 3,
+      tx: -4, torso: part('en-torso', [
+        '..qrsstt.',
+        '.qrBCCDt.',
+        'qrBBCCDDs',
+        'qrBCCCDDs',
+        'qrBBCCCDr',
+        '.qrBBBCr.',
+        '.kkkkkkkk',
+        '..rssr...',
+      ], pal),
+      hx: -3, head: part('en-head', [
+        '..BCCD.',
+        '.BCCDDD',
+        'BBCCDDE',
+        'BBCkkkk',
+        'BBBCCCD',
+        '.ABBCC.',
+        '..qq...',
+      ], pal),
+      headGlow: (c, x, y) => glow(c, x + 4, y + 3, 3, 1, '#ffd848'),
+      pad: part('en-pad', [
+        '.CDD.',
+        'BCCDE',
+        'BBCCD',
+        '.BBC.',
+      ], pal),
+    });
   },
-  knight(ctx, m) {
-    drawLegs(ctx, 10, m.walkPhase, m.moving, m.air, '#4a3a2a', '#2a2018');
-    R(ctx, -7, -19, 3, 8, '#5a4a2a');
-    R(ctx, -7, -19, 3, 1, '#7a6a3a');
-    R(ctx, -4, -19, 8, 9, '#7a6a44');
-    for (let i = 0; i < 4; i++) R(ctx, -4 + (i % 2), -18 + i * 2, 8, 1, '#6a5a3a');
-    R(ctx, -2, -18, 4, 8, '#6a2a1a');
-    R(ctx, -3, -24, 6, 5, '#8a7a50');
-    R(ctx, -3, -24, 6, 1, '#a89868');
-    R(ctx, 0, -22, 3, 1, '#1a1410');
-    R(ctx, -2, -26, 3, 2, '#a02020');
+
+  knight(s, m) {
+    const pal = mpal('knight', (p) => {
+      pal5('ABCDE', '#8e7848', p); pal5('qrstu', '#6e6e66', p); pal5('vwxyz', '#842c1c', p);
+      pal5('-pP--', '#c42a18', p); p.V = '#120c08'; p.k = '#3a2a18'; return p;
+    });
+    const pose = legPose(10, m.walkPhase, moveMode(m), 0.6);
+    const hy = -pose.hip, top = hy - 8;
     let ang = -0.9;
     if (m.state === 'attack') ang = lerp(-2.4, 0.7, clamp(m.stateT / 0.3, 0, 1));
-    drawSword(ctx, 1, -14, ang, 11, '#b8b8c0', '#e8e8f0', '#4a3a2a');
+    const sw = m.moving ? Math.sin(m.walkPhase) * 2 : 0;
+    arm(s, 1, top + 2, 2 - sw, top + 9, 4, 4, -1, 2, ramp('#5e5e56'), '#4a3a2a');
+    drawLegPose(s, 0, hy, pose, '#5e5446', '#2a2018', 3, 4);
+    s.drawImage(part('kn-torso', [
+      '..rCCDD..',
+      '.rBCCDDE.',
+      'qrBCxyyD.',
+      'qrBBxyyC.',
+      '.qrBxyyC.',
+      '.kkkxyykk',
+      '...wxyw..',
+      '...wxw...',
+    ], pal), -4, top);
+    s.drawImage(part('kn-head', [
+      '.ppP...',
+      'pPPpp..',
+      '.pBCCD.',
+      'BCCDDDE',
+      'BCCVVVV',
+      'BBCCDDD',
+      '.BBCCC.',
+      '..qr...',
+    ], pal), -3, top - 7);
+    swordArm(s, -1, top + 2, ang, 6, '#6e6e66', '#4a3a2a', blade('sword'), BLADES.sword.g);
   },
-  hknight(ctx, m) {
-    drawLegs(ctx, 11, m.walkPhase, m.moving, m.air, '#3a1610', '#1a0a08', 4);
-    R(ctx, -5, -21, 10, 10, '#4a1c14');
-    R(ctx, -5, -21, 10, 1, '#6a2c20');
-    R(ctx, 3, -20, 2, 9, '#341410');
-    R(ctx, -2, -19, 4, 6, '#5a241a');
-    R(ctx, -6, -22, 2, 2, '#9a9488');
-    R(ctx, 4, -22, 2, 2, '#9a9488');
-    R(ctx, -5, -12, 10, 1, '#2a0e0a');
-    R(ctx, -3, -28, 7, 7, '#5a2018');
-    R(ctx, -3, -28, 7, 1, '#7a3024');
-    R(ctx, -4, -31, 1, 4, '#c8c0a0');
-    R(ctx, 4, -31, 1, 4, '#c8c0a0');
-    R(ctx, 1, -25, 3, 1, '#ff5020');
+
+  hknight(s, m) {
+    const pal = mpal('hknight', (p) => {
+      pal5('ABCDE', '#621f16', p); pal5('qrstu', '#2e100c', p); pal5('-hH--', '#d0c6a4', p);
+      p.V = '#ff6020'; p.k = '#1a0806'; p.Y = '#c8c0a0'; return p;
+    });
+    const pose = legPose(12, m.walkPhase, moveMode(m), 0.55);
+    const hy = -pose.hip, top = hy - 9;
     let ang = -0.8;
     if (m.state === 'attack' && m.attackKind === 'melee') ang = lerp(-2.4, 0.7, clamp(m.stateT / 0.35, 0, 1));
-    else if (m.state === 'attack') ang = lerp(-0.8, -1.6, clamp(m.stateT / 0.4, 0, 1));
-    drawSword(ctx, 1, -16, ang, 13, '#8a8a94', '#ff6030', '#2a0e0a');
+    else if (m.state === 'attack') ang = lerp(-0.8, -1.7, clamp(m.stateT / 0.4, 0, 1));
+    const sw = m.moving ? Math.sin(m.walkPhase) * 2 : 0;
+    arm(s, 1, top + 2, 2 - sw, top + 10, 5, 5, -1, 3, ramp('#3a1410'), '#1a0806');
+    drawLegPose(s, 0, hy, pose, '#4a1812', '#1a0806', 4, 5);
+    s.drawImage(part('hk-torso', [
+      '..qBCCDD..',
+      '.qBBCCDDE.',
+      'qrBCCCDDD.',
+      'qrBBCCCDD.',
+      'qrBBCCCCD.',
+      '.qrBBCCCr.',
+      '.kkkkkYkkk',
+      '..qrBCr...',
+      '..qrBr....',
+    ], pal), -5, top);
+    const hx = -4, hyy = top - 8;
+    s.drawImage(part('hk-head', [
+      'H......H',
+      'hH....Hh',
+      '.hBCCDh.',
+      '.BCCDDE.',
+      '.BCkkkk.',
+      '.BBCCDD.',
+      '..BBCC..',
+      '...qr...',
+    ], pal), hx, hyy);
+    glow(s, hx + 4, hyy + 4, 3, 1, '#ff6a20');
+    swordArm(s, -1, top + 2, ang, 7, '#4a1812', '#1a0806', blade('flame'), BLADES.flame.g, '#0a0404', 3);
   },
-  zombie(ctx, m) {
-    drawLegs(ctx, 9, m.walkPhase * 0.7, m.moving, m.air, '#4a5040', '#2a2a22');
-    R(ctx, -4, -17, 8, 8, '#6a7a60');
-    R(ctx, -4, -17, 8, 1, '#7e8e72');
-    R(ctx, -2, -15, 2, 2, '#7a2a1a');
-    R(ctx, 1, -12, 3, 1, '#5a1a10');
-    R(ctx, 2, -16, 2, 5, '#56644c');
-    R(ctx, -2, -22, 6, 5, '#8a9a78');
-    R(ctx, -2, -22, 6, 1, '#6a7a58');
-    R(ctx, 2, -20, 1, 1, '#3a0000');
-    R(ctx, 1, -18, 3, 1, '#5a2a20');
-    let ang = 0.15;
-    if (m.state === 'attack') ang = lerp(-2.6, 0.2, clamp((m.stateT - 0.2) / 0.3, 0, 1));
-    drawArm(ctx, 0, -15, ang + 0.1, 7, '#6a7a60', null);
-    if (m.state === 'attack' && m.stateT < 0.5) {
-      ctx.save(); ctx.translate(0, -15); ctx.rotate(ang);
-      R(ctx, 7, -2, 3, 3, '#7a2010'); ctx.restore();
+
+  zombie(s, m) {
+    const pal = mpal('zombie', (p) => {
+      pal5('ABCDE', '#7c8c6a', p); pal5('qrstu', '#4e4a3a', p);
+      p.W = '#6a1a10'; p.w = '#a83020'; p.i = '#c8c0a8'; p.e = '#1a0000'; return p;
+    });
+    const down = m.state === 'down';
+    const pose = legPose(9, m.walkPhase * 0.7, moveMode(m), 0.35, 0.6);
+    const hy = -pose.hip, top = hy - 7;
+    let ang = 0.25 + Math.sin(m.anim * 2) * 0.08;
+    const throwing = m.state === 'attack';
+    if (throwing) ang = lerp(-2.6, 0.2, clamp((m.stateT - 0.2) / 0.3, 0, 1));
+    const flesh = ramp('#7c8c6a'), fleshFar = ramp('#5e6c52');
+    const reach = (a, l) => [Math.cos(a) * l, Math.sin(a) * l];
+    const [fx, fy] = reach(ang + 0.15, 8);
+    arm(s, 1, top + 2, 1 + fx, top + 2 + fy, 4, 4, -1, 2, fleshFar, '#6a7a58');
+    drawLegPose(s, 0, hy, pose, '#4a4838', '#2a2a22', 3, 4);
+    s.drawImage(part('zb-torso', [
+      '..rssB..',
+      '.rrsBCC.',
+      'qrrBiCi.',
+      'qrsBWiC.',
+      '.qrrBBC.',
+      '.rr.rr..',
+      '..rssr..',
+    ], pal), -3, top);
+    s.drawImage(part('zb-head', [
+      '.BCCD.',
+      'ABCCCD',
+      'ABCeCC',
+      'AABCCC',
+      '.AWww.',
+      '..AB..',
+    ], pal), 0, top - 5);
+    const [nx, ny] = reach(ang, 8);
+    const hx = 0 + nx, hyy = top + 2 + ny;
+    arm(s, 0, top + 2, hx, hyy, 4, 4, -1, 2, flesh, '#8a9a78', 2, '#141a0e');
+    if (throwing && m.stateT < 0.5) { s.fillStyle = '#7a2010'; s.fillRect(Math.round(hx) - 1, Math.round(hyy) - 2, 3, 3); s.fillStyle = '#a83a20'; s.fillRect(Math.round(hx) - 1, Math.round(hyy) - 2, 2, 1); }
+    if (down) { /* лежит — поза рисуется так же, поворот делает обёртка */ }
+  },
+
+  ogre(s, m) {
+    const pal = mpal('ogre', (p) => {
+      pal5('ABCDE', '#9e7c58', p); pal5('qrstu', '#4e3a26', p);
+      p.V = '#ff4020'; p.i = '#e8e0c8'; p.k = '#2a1c10'; p.Y = '#b09040'; return p;
+    });
+    const pose = legPose(10, m.walkPhase, moveMode(m), 0.45);
+    const hy = -pose.hip, top = hy - 13;
+    const sawing = m.state === 'attack' && m.attackKind === 'melee';
+    const lobbing = m.state === 'attack' && m.attackKind === 'ranged';
+    const j = sawing ? randInt(-1, 1) : 0;
+    const skin = ramp('#9e7c58'), skinFar = ramp('#7e6044');
+    // гранатомёт за спиной
+    s.drawImage(part('og-gl', [
+      '.gGGg..',
+      'mgGhGgm',
+      'mgGGGgn',
+      '.ggggk.',
+    ], GUN_PAL), -10, top + 1);
+    const sawAng = lobbing ? -0.5 : sawing ? 0.05 : 0.15;
+    const sx = 3, sy = top + 9 + j;
+    arm(s, 2, top + 3, sx + 6, sy + 1, 5, 5, 1, 4, skinFar, '#6a4e34');
+    drawLegPose(s, 0, hy, pose, '#5a4630', '#2a1e14', 5, 6);
+    ball(s, -8, top, 16, 14, '#9e7c58');
+    s.drawImage(part('og-harness', [
+      'rs..........',
+      'qrs.........',
+      '.qrs........',
+      '..qrs.......',
+      '...qrsY.....',
+      '....qrs.....',
+      'kkkkkkkkkkkk',
+      'qrrsrrsYsrrq',
+      '.qrrsrrsrrq.',
+    ], pal), -8, top + 3);
+    s.drawImage(part('og-head', [
+      '...BCCD..',
+      '..ABCCDD.',
+      '.AAAAAAAD',
+      '.ABBCkCC.',
+      'qABBCCCCD',
+      'qAABiAiA.',
+      '.qAABBBA.',
+      '..qqqqq..',
+    ], pal), 1, top - 5);
+    glow(s, 6, top - 2, 1, 1, '#ff5020');
+    drawHeld(s, chainsaw(Game.time, sawing), 1, 2, sx, sy, sawAng);
+    arm(s, -1, top + 3, sx + 1, sy, 5, 5, 1, 4, skin, '#6a4e34', 3, '#140c06');
+  },
+
+  phantom(s, m) {
+    const pal = mpal('phantom', (p) => { pal5('ABCDE', '#52468c', p); p.V = '#0c0814'; p.v = '#1c1428'; return p; });
+    const t = m.anim, bob = Math.round(Math.sin(t * 3 + m.seed));
+    const cl = ramp('#52468c');
+    // рваный подол — колышущиеся лоскуты
+    for (let i = 0; i < 6; i++) {
+      const len = 6 + Math.round(Math.sin(t * 6 + i * 1.7) * 2) + (i % 2) * 2;
+      const x = -5 + i * 2;
+      s.fillStyle = cl[i % 2 ? 1 : 2];
+      s.fillRect(x, -10 + bob, 2, len);
+      s.fillStyle = cl[0];
+      s.fillRect(x + 1, -10 + bob + len - 2, 1, 2);
     }
-    drawArm(ctx, 1, -16, ang - 0.1, 7, '#7e8e72', null);
-  },
-  ogre(ctx, m) {
-    drawLegs(ctx, 10, m.walkPhase, m.moving, m.air, '#4a3a2a', '#2a1e14', 4);
-    R(ctx, -9, -24, 3, 11, '#3a4a2a');
-    R(ctx, -9, -24, 3, 1, '#56683e');
-    R(ctx, -7, -21, 14, 11, '#9a7a5a');
-    R(ctx, -5, -17, 11, 6, '#a88868');
-    R(ctx, 4, -20, 3, 10, '#7a5e42');
-    R(ctx, -7, -21, 14, 1, '#b09070');
-    R(ctx, -7, -11, 14, 2, '#3a2a1a');
-    R(ctx, -5, -21, 2, 10, '#4a3a22');
-    R(ctx, -3, -27, 7, 6, '#9a7a5a');
-    R(ctx, -3, -27, 7, 1, '#b09070');
-    R(ctx, 0, -25, 4, 1, '#5a4230');
-    R(ctx, 2, -24, 1, 1, '#200000');
-    R(ctx, 1, -22, 3, 1, '#4a2010');
-    R(ctx, -3, -25, 1, 2, '#8a6a4a');
-    // бензопила
-    const saw = m.state === 'attack' && m.attackKind === 'melee';
-    const j = saw ? randInt(-1, 1) : 0;
-    R(ctx, 2, -17 + j, 7, 5, '#5a5a60');
-    R(ctx, 2, -17 + j, 7, 1, '#7a7a80');
-    R(ctx, 9, -16 + j, 11, 3, '#9a9aa0');
-    const ph = Math.floor(Game.time * (saw ? 30 : 4)) % 2;
-    for (let i = 0; i < 11; i += 2) {
-      R(ctx, 9 + i + ph, -17 + j, 1, 1, '#5a5a60');
-      R(ctx, 9 + i + (1 - ph), -13 + j, 1, 1, '#5a5a60');
-    }
-    R(ctx, 3, -18, 3, 3, '#9a7a5a');
-  },
-  shambler(ctx, m) {
-    const charging = m.state === 'attack' && m.attackKind === 'ranged';
-    const clawing = m.state === 'attack' && m.attackKind === 'melee';
-    drawLegs(ctx, 12, m.walkPhase * 0.8, m.moving, m.air, '#b8b0a0', '#8a8478', 5);
-    R(ctx, -11, -34, 22, 22, '#cfc8b8');
-    R(ctx, -7, -37, 13, 3, '#cfc8b8');
-    R(ctx, -11, -34, 22, 1, '#e0dace');
-    for (const [a, b, c] of [[-9, -30, 6], [3, -32, 8], [-4, -22, 6], [7, -24, 7], [-1, -34, 4]]) R(ctx, a, b, 2, c, '#aaa294');
-    R(ctx, 8, -33, 3, 20, '#b0a898');
-    R(ctx, -2, -27, 10, 6, '#5a1010');
-    for (let i = 0; i < 5; i++) { R(ctx, -1 + i * 2, -27, 1, 1, '#f0f0e0'); R(ctx, i * 2, -22, 1, 1, '#f0f0e0'); }
-    if (charging) {
-      drawArm(ctx, 6, -32, -1.9, 14, '#c0b8a8', '#e8e0d0');
-      drawArm(ctx, -8, -32, -1.3, 14, '#aaa294', '#d0c8b8');
-    } else {
-      const sw = clawing ? lerp(-2.2, 0.9, clamp(m.stateT / 0.4, 0, 1)) : 1.35 + Math.sin(m.walkPhase) * 0.1;
-      drawArm(ctx, -8, -31, 1.7, 17, '#aaa294', '#d0c8b8');
-      drawArm(ctx, 8, -31, sw, 18, '#c0b8a8', '#e8e0d0');
-    }
-  },
-  fiend(ctx, m) {
-    const leap = m.state === 'leap';
-    R(ctx, -9, -11, 4, 11, '#8a6a40');
-    R(ctx, -5, -8, 3, 8, '#a88858');
-    R(ctx, -6, -2, 5, 2, '#6a4a2a');
-    R(ctx, -9, -21, 15, 11, '#a88858');
-    R(ctx, -9, -21, 15, 1, '#c0a070');
-    for (const x of [-7, -3, 1]) R(ctx, x, -21, 1, 9, '#8a6a40');
-    R(ctx, 5, -20, 7, 7, '#b89868');
-    R(ctx, 6, -14, 7, 2, '#8a6a40');
-    R(ctx, 7, -15, 5, 1, '#f0e8d0');
-    R(ctx, 8, -18, 2, 1, '#2a1008');
-    const a = leap ? -0.3 : m.state === 'attack' ? lerp(-1.8, 0.8, clamp(m.stateT / 0.25, 0, 1)) : 1.1 + Math.sin(m.walkPhase) * 0.2;
-    drawArm(ctx, 3, -17, a, 11, '#a88858', '#e8e0c8');
-    drawArm(ctx, 1, -18, a + 0.25, 10, '#967648', '#d8d0b8');
-    const s = m.moving ? Math.sin(m.walkPhase) * 2 : 0;
-    R(ctx, 0 + Math.round(s), -10, 3, 10, '#967648');
-    R(ctx, 0 + Math.round(s), -2, 5, 2, '#6a4a2a');
-  },
-  dog(ctx, m) {
-    const s = m.moving || m.state === 'leap' ? Math.sin(m.walkPhase * 1.5) * 2 : 0;
-    for (const [x, o] of [[-6, -s], [-4, s], [3, s], [5, -s]]) R(ctx, x + Math.round(o), -5, 2, 5, '#2e2014');
-    R(ctx, -7, -10, 13, 5, '#4a3220');
-    R(ctx, -7, -10, 13, 1, '#5e4430');
-    R(ctx, -6, -6, 11, 1, '#3a2618');
-    R(ctx, -9, -11, 2, 2, '#4a3220');
-    R(ctx, 4, -12, 5, 5, '#4a3220');
-    R(ctx, 5, -13, 2, 2, '#2a1a10');
-    const bite = m.state === 'attack' && m.stateT < 0.25;
-    R(ctx, 8, -10, 4, 2, '#3a2618');
-    R(ctx, 8, bite ? -7 : -8, 4, 1, '#8a5a30');
-    R(ctx, 11, -10, 1, 1, '#100000');
-    R(ctx, 7, -11, 1, 1, '#ff3010');
-  },
-  scrag(ctx, m) {
-    ctx.translate(0, Math.round(Math.sin(m.anim * 4) * 1.5));
-    const tw = Math.sin(m.anim * 6) * 1.5;
-    R(ctx, -1, -5, 3, 4, '#5a6030');
-    R(ctx, -2 + Math.round(tw), -2, 3, 2, '#4a5028');
-    R(ctx, -4 + Math.round(tw), 0, 3, 1, '#4a5028');
-    R(ctx, -4, -12, 8, 8, '#6a7040');
-    R(ctx, -4, -12, 8, 1, '#80884e');
-    R(ctx, -2, -9, 4, 5, '#4a5030');
-    R(ctx, -3, -16, 7, 5, '#7a8048');
-    R(ctx, 1, -14, 2, 1, '#ff3020');
-    R(ctx, 2, -12, 3, 1, '#2a0a0a');
-    const a = m.state === 'attack' ? -0.4 : 0.5 + Math.sin(m.anim * 3) * 0.3;
-    drawArm(ctx, 2, -10, a, 5, '#6a7040', '#b0b080');
-    drawArm(ctx, -2, -10, a + 0.8, 4, '#5a6034', '#a0a070');
-  },
-  vore(ctx, m) {
-    const s = m.moving ? Math.sin(m.walkPhase) : 0;
-    for (const [x, o] of [[-9, s], [-1, -s], [7, s]]) {
-      R(ctx, x + Math.round(o * 2), -10, 2, 6, '#7a5a50');
-      R(ctx, x + Math.round(o * 3) - 1, -4, 2, 4, '#6a4a40');
-    }
-    R(ctx, -9, -24, 18, 13, '#b08080');
-    R(ctx, -10, -22, 20, 9, '#b08080');
-    R(ctx, -8, -25, 15, 1, '#c89898');
-    for (const [a, b, c] of [[-6, -23, 5], [0, -21, 6], [-3, -17, 4], [4, -19, 3]]) R(ctx, a, b, c, 1, '#8a5a5a');
-    const open = m.state === 'attack' && m.stateT > 0.3 && m.stateT < 0.8;
-    R(ctx, 4, -14, 6, open ? 3 : 2, '#3a1010');
-    if (open) R(ctx, 5, -13, 4, 1, '#d070ff');
-  },
-  spawn(ctx, m) {
-    const p = Math.round(Math.sin(m.anim * 8));
-    ctx.globalAlpha *= 0.9;
-    R(ctx, -6, -8 - p, 12, 8 + p, '#2a4490');
-    R(ctx, -5, -9 - p, 10, 1, '#4a6ac0');
-    R(ctx, -7, -6, 14, 5, '#2a4490');
-    R(ctx, -3, -7 - p, 3, 2, '#90b0ff');
-    R(ctx, 2, -4, 2, 1, '#1a2a60');
-    ctx.globalAlpha = 1;
-  },
-  gargoyle(ctx, m) {
-    const dive = m.state === 'leap';
-    const flap = Math.sin(m.anim * (dive ? 22 : 11));
-    const wy = Math.round(flap * 4);
-    R(ctx, -12, -15 + wy, 9, 2, '#44443e');
-    R(ctx, -15, -13 + Math.round(wy * 1.4), 5, 2, '#3a3a34');
-    R(ctx, -6, -8, 4, 1, '#56564e');
-    R(ctx, -4, -13, 8, 9, '#6a6a62');
-    R(ctx, -4, -13, 8, 1, '#8a8a80');
-    R(ctx, -2, -10, 4, 5, '#56564e');
-    R(ctx, 1, -17, 6, 5, '#727268');
-    R(ctx, 1, -17, 6, 1, '#8e8e84');
-    R(ctx, 1, -19, 1, 2, '#c8c0a8'); R(ctx, 5, -19, 1, 2, '#c8c0a8');
-    R(ctx, 4, -13, 3, 1, '#2a1a14');
-    R(ctx, -3, -4, 2, 3, '#56564e'); R(ctx, 2, -4, 2, 3, '#56564e');
-    R(ctx, -4, -1, 3, 1, '#c8c0a8'); R(ctx, 2, -1, 3, 1, '#c8c0a8');
-    R(ctx, -9, -17 - wy, 10, 2, '#5a5a54');
-    R(ctx, -13, -19 - Math.round(wy * 1.4), 6, 2, '#4a4a44');
-    R(ctx, -15, -17 - Math.round(wy * 1.6), 3, 3, '#3e3e38');
-  },
-  scorpion(ctx, m) {
-    const s = m.moving || m.air ? Math.sin(m.walkPhase * 1.6) : 0;
-    for (let i = 0; i < 3; i++) {
-      const lx = -6 + i * 5, o = Math.round((i % 2 ? s : -s) * 1.5);
-      R(ctx, lx + o, -4, 1, 4, '#4a3e24');
-      R(ctx, lx - 1 + o, -1, 2, 1, '#3a3020');
-    }
-    R(ctx, -8, -8, 14, 5, '#7a6a3a');
-    R(ctx, -8, -8, 14, 1, '#9a8a50');
-    R(ctx, -6, -4, 10, 1, '#5a4a28');
-    for (const x of [-5, -1, 3]) R(ctx, x, -8, 1, 4, '#5a4a28');
-    R(ctx, 5, -9, 5, 5, '#8a7a44');
-    R(ctx, 9, -8, 3, 1, '#5a5a60'); R(ctx, 9, -6, 3, 1, '#5a5a60');
-    R(ctx, 8, -4, 3, 2, '#6a5a30'); R(ctx, 10, -5, 2, 1, '#c8b880');
-    const sting = m.state === 'attack' && m.attackKind === 'melee' ? 2 : 0;
-    R(ctx, -10, -10, 3, 3, '#7a6a3a');
-    R(ctx, -11, -14, 3, 4, '#6a5a30');
-    R(ctx, -9, -17, 3, 3, '#7a6a3a');
-    R(ctx, -6 + sting, -18 - sting, 3, 2, '#8a7a44');
-    R(ctx, -3 + sting * 2, -18 - sting, 2, 2, '#e0d0a0');
-  },
-  eel(ctx, m) {
-    for (let i = 0; i < 10; i++) {
-      const x = -10 + i * 2;
-      const y = -4 + Math.round(Math.sin(m.anim * 8 - i * 0.7) * 1.5);
-      R(ctx, x, y - 2, 3, i < 2 ? 3 : 4, i % 3 === 0 ? '#3a6a7a' : '#2a4a5a');
-      if (i % 3 === 1) R(ctx, x + 1, y - 1, 1, 1, '#70c0ff');
-    }
-    R(ctx, 8, -6, 4, 4, '#3a5a6a');
-    R(ctx, 11, -4, 2, 1, '#1a2a30');
-  },
-  pylon(ctx, m) {
-    R(ctx, -7, -6, 14, 6, '#2a2630');
-    R(ctx, -7, -6, 14, 1, '#5a5460');
-    R(ctx, -5, -22, 10, 16, '#6a2a8a');
-    R(ctx, -4, -26, 8, 4, '#8a3aaa');
-    R(ctx, -2, -30, 4, 4, '#aa5acc');
-    R(ctx, -5, -22, 2, 16, '#4a1a6a');
-    R(ctx, 3, -22, 2, 16, '#9a4aba');
-  },
-  phantom(ctx, m) {
-    // полупрозрачная фигура в рваном плаще, парит над полом
-    const t = m.anim;
-    const bob = Math.round(Math.sin(t * 3 + m.seed) * 1);
-    for (let i = 0; i < 5; i++) {
-      const len = 5 + Math.round(Math.sin(t * 6 + i * 1.7) * 2);
-      R(ctx, -6 + i * 2.5, -8 + bob, 2, len, i % 2 ? '#3e3264' : '#54468a');
-    }
-    R(ctx, -5, -20 + bob, 10, 13, '#54468a');
-    R(ctx, -5, -20 + bob, 10, 1, '#7a6ab0');
-    R(ctx, 3, -19 + bob, 2, 12, '#3e3264');
-    R(ctx, -4, -25 + bob, 8, 6, '#3e3264');
-    R(ctx, -3, -24 + bob, 6, 4, '#0e0a18');
+    s.drawImage(part('ph-body', [
+      '..BCCDD..',
+      '.ABCCCDD.',
+      '.ABBCCCD.',
+      'AABBCCCDD',
+      'AABBCCCCD',
+      'AABBBCCCD',
+      'AAABBCCCC',
+      'AAABBBCCC',
+      '.AABBBCC.',
+      '.AAABBBC.',
+      '..AABBC..',
+    ], pal), -5, -21 + bob);
+    s.drawImage(part('ph-hood', [
+      '..BCCD..',
+      '.ABCCDD.',
+      'ABBCCVVD',
+      'ABBCVVVv',
+      'ABBCVVV.',
+      'AABBCVv.',
+      '.AABBC..',
+    ], pal), -4, -27 + bob);
+    glow(s, 1, -23 + bob, 1, 1, '#f0c8ff');
+    glow(s, 3, -23 + bob, 1, 1, '#f0c8ff');
     const cast = m.state === 'attack';
-    drawArm(ctx, 1, -16 + bob, cast ? m.aimLocal : 0.9, 8, '#54468a', '#d8c0f8');
+    const a = cast ? m.aimLocal : 0.9 + Math.sin(t * 2) * 0.15;
+    const hx = 1 + Math.cos(a) * 8, hyy = -16 + bob + Math.sin(a) * 8;
+    arm(s, 1, -17 + bob, hx, hyy, 4, 5, -1, 2, cl, '#d8c0f8', 2, '#120c20');
   },
-  guardian(ctx, m) {
-    // закованный в рунную сталь страж с башенным щитом и молотом
-    drawLegs(ctx, 11, m.walkPhase, m.moving, m.air, '#3a4250', '#1e222a', 5);
-    R(ctx, -8, -24, 16, 13, '#4a5264');
-    R(ctx, -8, -24, 16, 1, '#6a7488');
-    R(ctx, -6, -22, 12, 6, '#5a6478');
-    R(ctx, -1, -21, 2, 8, '#40d0ff');
-    R(ctx, -8, -12, 16, 1, '#2a303a');
-    R(ctx, -10, -25, 5, 4, '#6a7488'); R(ctx, 5, -25, 5, 4, '#6a7488');
-    R(ctx, -4, -31, 9, 7, '#5a6478');
-    R(ctx, -4, -31, 9, 1, '#8a94a8');
-    R(ctx, -5, -34, 11, 3, '#3a4250');
-    R(ctx, -1, -36, 3, 3, '#40d0ff');
-    // молот
+
+  guardian(s, m) {
+    const pal = mpal('guardian', (p) => {
+      pal5('ABCDE', '#56637a', p); pal5('qrstu', '#2c3442', p); p.Q = '#40d0ff'; p.k = '#1a2028'; return p;
+    });
+    const pose = legPose(12, m.walkPhase, moveMode(m), 0.4);
+    const hy = -pose.hip, top = hy - 12;
     let ang = -1.2;
     if (m.state === 'attack' && m.attackKind === 'melee') ang = m.stateT < 0.45 ? lerp(-1.2, -2.8, m.stateT / 0.45) : lerp(-2.8, 0.9, clamp((m.stateT - 0.45) / 0.1, 0, 1));
     else if (m.state === 'attack') ang = m.aimLocal;
-    ctx.save(); ctx.translate(-4, -20); ctx.rotate(ang);
-    R(ctx, 0, -1, 14, 2, '#4a3a2a');
-    R(ctx, 12, -4, 5, 8, '#6a7488'); R(ctx, 12, -4, 5, 1, '#9aa4b8');
-    ctx.restore();
-    // щит спереди
-    const up = m.state === 'attack' ? 4 : 0;
-    R(ctx, 7, -27 + up, 4, 20, '#3a4250');
-    R(ctx, 8, -26 + up, 3, 18, '#5a6478');
-    R(ctx, 9, -20 + up, 1, 6, '#40d0ff');
-  },
-  elder(ctx, m) {
-    // Древний: каменный колосс без ног, парит в пустоте, над ним кольцо рун
-    const t = m.anim;
-    if (m.state === 'dying') {
-      const k = clamp(m.stateT / 4, 0, 1);
-      ctx.translate(rand(-3, 3), 0);
-      ctx.scale(1 - k * 0.3, 1 - k * 0.3);
-    }
-    // обломки-«юбка» снизу
-    for (let i = 0; i < 7; i++) {
-      const off = Math.round(Math.sin(t * 2 + i * 1.3) * 3);
-      R(ctx, -21 + i * 6, -14 + off, 5, 6 + (i % 3) * 2, i % 2 ? '#2a3240' : '#3a4454');
-    }
-    R(ctx, -22, -52, 44, 36, '#2a3240');
-    R(ctx, -22, -52, 44, 2, '#4a5670');
-    R(ctx, 16, -50, 6, 34, '#1e2430');
-    for (const [a, b, c, d] of [[-16, -46, 2, 10], [-10, -30, 12, 2], [8, -48, 2, 14], [-18, -24, 8, 2], [12, -30, 2, 10]]) R(ctx, a, b, c, d, '#1a8ab0');
-    // плечи
-    R(ctx, -30, -54, 12, 10, '#3a4454'); R(ctx, 18, -54, 12, 10, '#3a4454');
-    R(ctx, -30, -54, 12, 2, '#5a6680'); R(ctx, 18, -54, 12, 2, '#5a6680');
-    // голова-маска
-    R(ctx, -11, -74, 22, 22, '#3a4454');
-    R(ctx, -11, -74, 22, 2, '#5a6680');
-    R(ctx, -8, -66, 16, 6, '#0a0e14');
-    R(ctx, -14, -80, 4, 10, '#2a3240'); R(ctx, 10, -80, 4, 10, '#2a3240');
-    const cast = m.castT > 0;
-    drawArm(ctx, -26, -46, cast ? -2.4 : 2.2, 20, '#3a4454', '#80e0ff');
-    drawArm(ctx, 26, -46, cast ? -0.7 : 0.95, 20, '#3a4454', '#80e0ff');
-    // кольцо вращающихся камней-рун
-    for (let i = 0; i < 6; i++) {
-      const a = t * 0.8 + i * TAU / 6;
-      const px = Math.round(Math.cos(a) * 30), py = Math.round(-86 + Math.sin(a) * 6);
-      R(ctx, px - 2, py - 2, 4, 4, Math.sin(a) > 0 ? '#4a5670' : '#2a3240');
-    }
-  },
-  herald(ctx, m) {
-    const t = m.anim;
-    if (m.state === 'dying') {
-      const k = clamp(m.stateT / 3, 0, 1);
-      ctx.translate(rand(-2, 2), 0);
-      ctx.scale(1 - k * 0.3, 1 - k * 0.3);
-    }
-    for (let i = 0; i < 8; i++) {
-      const len = 8 + Math.round(Math.sin(t * 4 + i) * 3);
-      R(ctx, -18 + i * 5, -14, 4, len, '#2a1a30');
-    }
-    R(ctx, -18, -44, 36, 32, '#3a2444');
-    R(ctx, -18, -44, 36, 2, '#5a3a66');
-    R(ctx, -2, -40, 4, 28, '#2a1a30');
-    R(ctx, -18, -16, 36, 2, '#a08030');
-    R(ctx, -9, -56, 18, 14, '#2a1a30');
-    R(ctx, -6, -52, 12, 9, '#120a14');
-    R(ctx, -13, -60, 3, 8, '#c8c0a0'); R(ctx, 10, -60, 3, 8, '#c8c0a0');
-    R(ctx, -15, -62, 2, 3, '#c8c0a0'); R(ctx, 13, -62, 2, 3, '#c8c0a0');
-    const cast = m.castT > 0;
-    drawArm(ctx, -16, -38, cast ? -2.5 : 2.3, 14, '#3a2444', '#c8a0c8');
-    drawArm(ctx, 16, -38, cast ? -0.6 : 0.85, 14, '#3a2444', '#c8a0c8');
-    ctx.strokeStyle = C('#a08030');
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.ellipse(0, -60, 12, 3, 0, 0, TAU); ctx.stroke();
-  },
-  shub(ctx, m) {
-    const t = m.anim;
-    const dying = m.state === 'dying';
-    if (dying) {
-      const k = clamp(m.stateT / 3, 0, 1);
-      ctx.translate(rand(-2, 2), 0);
-      ctx.scale(1 - k * 0.35, 1 - k * 0.45);
-    }
-    // щупальца
-    for (let i = 0; i < 9; i++) {
-      let a = -Math.PI + 0.35 + i * (Math.PI - 0.7) / 8;
-      let px = Math.cos(a) * 30, py = -44 + Math.sin(a) * 26;
-      for (let k = 0; k < 8; k++) {
-        a += Math.sin(t * 1.6 + i * 1.3 + k * 0.6) * 0.22;
-        px += Math.cos(a) * 5; py += Math.sin(a) * 5;
-        const r = 5 - k * 0.5;
-        R(ctx, Math.round(px - r), Math.round(py - r), Math.ceil(r * 2), Math.ceil(r * 2), k % 2 ? '#4a2a3c' : '#5a3448');
-      }
-    }
-    const pulse = Math.sin(t * 2.2) * 2;
-    ctx.fillStyle = C('#2a1822');
-    ctx.beginPath(); ctx.ellipse(0, -42, 44 + pulse, 42 - pulse * 0.5, 0, 0, TAU); ctx.fill();
-    ctx.fillStyle = C('#3e2432');
-    ctx.beginPath(); ctx.ellipse(-2, -46, 40 + pulse, 36 - pulse * 0.5, 0, 0, TAU); ctx.fill();
-    ctx.fillStyle = C('#5a3448');
-    for (const [fx, fy, fw] of [[-20, -70, 14], [6, -74, 18], [-28, -50, 10], [18, -52, 16], [-8, -30, 20]]) R(ctx, fx, fy, fw, 2, '#5a3448');
-    // глазницы (сами глаза светятся в ярком проходе)
-    for (const [ex, ey] of SHUB_EYES) R(ctx, ex - 2, ey - 2, 5, 4, '#1a0e14');
-    // пасть
-    const open = 3 + Math.round((Math.sin(t * 3) + 1) * 2);
-    R(ctx, -12, -18, 24, open, '#4a0a10');
-    for (let i = 0; i < 6; i++) { R(ctx, -11 + i * 4, -18, 2, 2, '#e8e0c8'); R(ctx, -9 + i * 4, -18 + open - 2, 2, 2, '#e8e0c8'); }
-    // корни на полу
-    for (const sx of [-1, 1]) {
-      for (let k = 0; k < 6; k++) R(ctx, sx * (30 + k * 5) - 3, -6 + Math.round(Math.sin(t * 2 + k) * 1), 6, 5 - (k >> 1), '#3a2230');
-    }
-  },
-  chthon(ctx, m) {
-    ctx.scale(1.25, 1.25);
-    const throwing = m.throwT > 0;
-    R(ctx, -22, -70, 44, 60, '#3a2418');
-    R(ctx, -22, -70, 44, 2, '#5a3a24');
-    R(ctx, 14, -68, 8, 58, '#2a1810');
-    for (const [a, b, c, d] of [[-14, -60, 2, 18], [-4, -52, 14, 2], [8, -64, 2, 22], [-18, -40, 12, 2], [2, -34, 2, 16]]) R(ctx, a, b, c, d, '#ff7020');
-    R(ctx, -12, -92, 24, 22, '#4a2c1c');
-    R(ctx, -12, -92, 24, 2, '#6a4028');
-    R(ctx, -17, -102, 5, 14, '#2a1810');
-    R(ctx, 12, -102, 5, 14, '#2a1810');
-    R(ctx, -8, -84, 6, 3, '#ffd040');
-    R(ctx, 3, -84, 6, 3, '#ffd040');
-    R(ctx, -7, -76, 14, 3, '#ff6020');
-    for (let i = 0; i < 4; i++) R(ctx, -6 + i * 4, -76, 1, 1, '#ffffff');
-    drawArm(ctx, -20, -64, 1.9, 34, '#3a2418', '#c0a080');
-    const a = throwing ? lerp(-2.6, 0.2, 1 - m.throwT / 0.6) : 1.2 + Math.sin(m.anim * 2) * 0.2;
-    ctx.save(); ctx.translate(20, -64); ctx.rotate(a);
-    R(ctx, 0, -5, 34, 11, '#3a2418');
-    R(ctx, 0, -5, 34, 2, '#5a3a24');
-    R(ctx, 12, -1, 10, 2, '#ff7020');
-    if (throwing && m.throwT > 0.3) R(ctx, 30, -6, 10, 10, '#ff8020');
-    ctx.restore();
+    // молот в дальней руке — за телом
+    const d = ang * 0.8 + 0.4, hx = -3 + Math.cos(d) * 7, hyy = top + 3 + Math.sin(d) * 7;
+    drawHeld(s, blade('hammer'), 1, 3, hx, hyy, ang);
+    arm(s, -3, top + 3, hx, hyy, 4, 5, -1, 3, ramp('#3e4858'), '#2a3240');
+    drawLegPose(s, 0, hy, pose, '#3c4656', '#1e232c', 5, 6);
+    s.drawImage(part('gd-torso', [
+      '...qrCCDDD...',
+      '..qrBCCDDDE..',
+      '.qrBBCCDDDDD.',
+      'qrBBCCQCCDDDD',
+      'qrBBCCQCCDDDD',
+      'qrBBCQQQCCDDD',
+      'qrBBCCQCCCDDC',
+      '.qrBBCQCCCDC.',
+      '.qrBBCCCCCC..',
+      '.kkkkkkkkkkk.',
+      '..qrBCCD.....',
+      '..qrBCD......',
+    ], pal), -6, top);
+    glow(s, 0, top + 3, 1, 5, '#40d0ff');
+    s.drawImage(part('gd-head', [
+      '...QQ...',
+      '..BCCD..',
+      '.BCCDDE.',
+      'BBCCDDDE',
+      'BBCkkkkk',
+      'BBCCCDDD',
+      '.BBCCCD.',
+      '..qrr...',
+    ], pal), -3, top - 8);
+    glow(s, 0, top - 8, 2, 1, '#40d0ff');
+    glow(s, 1, top - 4, 4, 1, '#80f0ff');
+    // башенный щит спереди
+    const up = m.state === 'attack' ? 3 : 0;
+    s.drawImage(part('gd-shield', [
+      '.CDD.',
+      'BCCDD',
+      'BCCDD',
+      'BCQDD',
+      'BCQDD',
+      'BQQQD',
+      'BCQDD',
+      'BCQDD',
+      'BCCDD',
+      'BCCDD',
+      'BCCDD',
+      'BCCDD',
+      'BCCDD',
+      'BBCCD',
+      'BBCCD',
+      'BBCCD',
+      '.BBC.',
+    ], pal), 6, top - 1 + up);
+    glow(s, 8, top + 5 + up, 1, 4, '#40d0ff');
   },
 };
+
+// Когти: три светлых пикселя веером в точке (x,y) по направлению a.
+function claws(ctx, x, y, a, col, len = 3) {
+  ctx.fillStyle = col;
+  for (const da of [-0.5, 0, 0.5]) {
+    for (let i = 1; i <= len; i++) {
+      ctx.fillRect(Math.round(x + Math.cos(a + da) * i), Math.round(y + Math.sin(a + da) * i), 1, 1);
+    }
+  }
+}
+// Хвост/щупальце: цепочка сужающихся отрезков, bend(i) — изгиб i-го звена.
+function chain(ctx, x, y, a, seg, n, t0, t1, rp, bend) {
+  let px = x, py = y;
+  for (let i = 0; i < n; i++) {
+    a += bend(i);
+    const nx = px + Math.cos(a) * seg, ny = py + Math.sin(a) * seg;
+    limb(ctx, px, py, nx, ny, lerp(t0, t1, i / n), lerp(t0, t1, (i + 1) / n), rp);
+    px = nx; py = ny;
+  }
+  return [px, py, a];
+}
+
+Object.assign(MONSTER_ART, {
+  fiend(s, m) {
+    const pal = mpal('fiend', (p) => {
+      pal5('ABCDE', '#a88858', p); p.k = '#3a2410'; p.i = '#f0e8d0'; p.r = '#5a1408'; p.h = '#d8d0b0'; return p;
+    });
+    const leap = m.state === 'leap';
+    const skin = ramp('#a88858'), far = ramp('#86683e');
+    const ph = m.walkPhase, mv = m.moving;
+    // задние ноги — «собачьи» колени
+    for (let k = 1; k >= 0; k--) {
+      const sw = mv ? Math.sin(ph + k * Math.PI) * 0.5 : leap ? 0.6 : 0;
+      const rp = k ? far : skin, hx = -5 + k, hy = -10;
+      const kx = hx - 3 - sw * 3, ky = hy + 4;
+      const ax = kx + 2 + sw * 2, ay = leap ? -2 : -1;
+      limb(s, hx, hy, kx, ky, 4, 3, rp);
+      limb(s, kx, ky, ax, ay, 3, 2, rp);
+      s.fillStyle = rp[1]; s.fillRect(Math.round(ax) - 1, Math.round(ay) - 1, 4, 2);
+    }
+    // дальняя лапа
+    let a = leap ? -0.35 : m.state === 'attack' ? lerp(-1.8, 0.8, clamp(m.stateT / 0.25, 0, 1)) : 1.1 + Math.sin(ph) * 0.25;
+    const fa = a + 0.3;
+    const fx = 3 + Math.cos(fa) * 11, fy = -16 + Math.sin(fa) * 11;
+    arm(s, 3, -16, fx, fy, 6, 6, -1, 3, far);
+    claws(s, fx, fy, fa, '#c8c0a8');
+    // туловище и гребень
+    ball(s, -11, -22, 17, 13, '#a88858');
+    for (let i = 0; i < 5; i++) { s.fillStyle = i % 2 ? '#6a4a28' : '#86683e'; s.fillRect(-9 + i * 3, -23 - (i % 2), 2, 2); }
+    s.fillStyle = skin[1];
+    for (const x of [-7, -3, 1]) s.fillRect(x, -19, 1, 6);
+    // голова с пастью
+    const open = m.state === 'attack' || leap;
+    s.drawImage(part(open ? 'fd-head1' : 'fd-head0', open ? [
+      '.h......',
+      'hBCCD...',
+      'ABCCDDD.',
+      'ABCkCCDD',
+      'AABBCCC.',
+      '.Arrrrr.',
+      '.Airirii',
+      '..AAAA..',
+    ] : [
+      '.h......',
+      'hBCCD...',
+      'ABCCDDD.',
+      'ABCkCCDD',
+      'AABBCCCC',
+      '.AiAiAi.',
+      '..AAAA..',
+      '........',
+    ], pal), 4, -22);
+    glow(s, 7, -19, 1, 1, '#ffd040');
+    // ближняя лапа
+    const nx = 4 + Math.cos(a) * 12, ny = -15 + Math.sin(a) * 12;
+    arm(s, 4, -15, nx, ny, 6, 6, -1, 3, skin, null, 2, '#1a0e04');
+    claws(s, nx, ny, a, '#f0e8d0');
+  },
+
+  dog(s, m) {
+    const pal = mpal('dog', (p) => {
+      pal5('ABCDE', '#3e2a1c', p); pal5('-tuv-', '#8a5a30', p); p.k = '#100604'; p.i = '#e8e0d0'; p.r = '#6a1010'; return p;
+    });
+    const run = m.moving || m.state === 'leap';
+    const ph = m.walkPhase * 1.5;
+    const legs = [[-5, ph + 0.6, 1], [5, ph + Math.PI, 1], [-4, ph + 0.6 + Math.PI, 0], [6, ph, 0]];
+    for (const [x, p, far] of legs) {
+      const rp = ramp(far ? '#2a1c12' : '#3e2a1c');
+      const sw = run ? Math.sin(p) : 0;
+      const kx = x + sw * 2, ky = -4;
+      const fx = x + sw * 3 + (run ? Math.max(0, Math.cos(p)) * 1.5 : 0), fy = run ? -Math.max(0, Math.cos(p)) * 2 : 0;
+      limb(s, x, -7, kx, ky, 3, 2, rp);
+      limb(s, kx, ky, fx, fy - 1, 2, 2, rp);
+    }
+    const bob = run ? Math.round(Math.sin(ph * 2) * 0.6) : 0;
+    // хвост
+    limb(s, -8, -9 + bob, -10, -12 + bob + (run ? Math.round(Math.sin(ph)) : 0), 2, 1, ramp('#3e2a1c'));
+    ball(s, -9, -12 + bob, 15, 7, '#3e2a1c');
+    s.fillStyle = '#7a4e28'; s.fillRect(-5, -7 + bob, 8, 1);
+    const bite = m.state === 'attack' && m.stateT < 0.25;
+    s.drawImage(part(bite ? 'dg-head1' : 'dg-head0', bite ? [
+      '.B.....',
+      'ABCC...',
+      'ABCkCCD',
+      'AABBCCt',
+      '.Arrrr.',
+      '.Aiii..',
+      '..tu...',
+    ] : [
+      '.B.....',
+      'ABCC...',
+      'ABCkCCD',
+      'AABBCCt',
+      '.AAtuuk',
+      '..tu...',
+      '.......',
+    ], pal), 3, -14 + bob);
+    glow(s, 6, -12 + bob, 1, 1, '#ff3010');
+  },
+
+  scrag(s, m) {
+    const pal = mpal('scrag', (p) => { pal5('ABCDE', '#7a8048', p); p.k = '#200806'; p.r = '#4a1008'; p.i = '#e0e0b8'; return p; });
+    const t = m.anim, bob = Math.round(Math.sin(t * 4) * 1.5);
+    const rp = ramp('#7a8048');
+    s.translate(0, bob);
+    // хвост-жгут вместо ног
+    chain(s, -1, -6, 2.15, 2.2, 4, 3, 1, rp, (i) => 0.12 + Math.sin(t * 6 - i * 0.9) * 0.35);
+    const attack = m.state === 'attack';
+    const a = attack ? -0.3 : 0.5 + Math.sin(t * 3) * 0.3;
+    // дальняя рука
+    const fx = 2 + Math.cos(a + 0.7) * 6, fy = -10 + Math.sin(a + 0.7) * 6;
+    arm(s, 1, -10, fx, fy, 3, 4, -1, 2, ramp('#5e6434'));
+    claws(s, fx, fy, a + 0.7, '#a0a070', 2);
+    s.drawImage(part('sc-body', [
+      '..BCD..',
+      '.ABCCD.',
+      'AABCCDD',
+      'AABCCCD',
+      '.AABCC.',
+      '.AABC..',
+      '..AB...',
+    ], pal), -4, -12);
+    s.drawImage(part(attack ? 'sc-head1' : 'sc-head0', attack ? [
+      '..BCD..',
+      '.ABCCDD',
+      'AABkCCD',
+      'AABCCCD',
+      '.ABrrrr',
+      '..Aiir.',
+    ] : [
+      '..BCD..',
+      '.ABCCDD',
+      'AABkCCD',
+      'AABCCCD',
+      '.AABrri',
+      '..AAB..',
+    ], pal), -2, -18);
+    glow(s, 1, -16, 1, 1, '#ff4020');
+    const nx = 2 + Math.cos(a) * 7, ny = -9 + Math.sin(a) * 7;
+    arm(s, 1, -9, nx, ny, 3, 4, -1, 2, rp, null, 2, '#1a1c08');
+    claws(s, nx, ny, a, '#d0d0a0', 2);
+  },
+
+  vore(s, m) {
+    const pal = mpal('vore', (p) => { p.r = '#7a4050'; p.R = '#5a2834'; p.k = '#1a0810'; p.i = '#e8d8c8'; p.v = '#d070ff'; return p; });
+    const mv = m.moving, ph = m.walkPhase;
+    const legRp = ramp('#6a4a50'), farRp = ramp('#4e343a');
+    // три тонкие ноги-ходули
+    const legs = [[-7, 0, 1], [7, 1, 1], [-1, 2, 0], [8, 3, 0]];
+    for (const [x, i, far] of legs) {
+      const p = ph + i * 2.1, sw = mv ? Math.sin(p) * 3 : 0;
+      const hx = x * 0.6, hy = -12;
+      const kx = x + sw * 0.5 + (x < 0 ? -3 : 3), ky = -16 + (mv ? Math.max(0, Math.cos(p)) * -2 : 0);
+      const fx = x + sw + (x < 0 ? -2 : 2), fy = mv ? -Math.max(0, Math.cos(p)) * 2 : 0;
+      const rp = far ? farRp : legRp;
+      limb(s, hx, hy, kx, ky, 2, 2, rp);
+      limb(s, kx, ky, fx, fy, 2, 1, rp);
+    }
+    ball(s, -11, -27, 22, 17, '#a87884');
+    // извилины
+    s.fillStyle = '#7a4a58';
+    for (const [x, y, w] of [[-7, -24, 4], [-2, -25, 5], [-8, -20, 3], [-3, -21, 4], [3, -22, 3], [-6, -16, 4], [0, -17, 3]]) s.fillRect(x, y, w, 1);
+    s.fillStyle = '#c8a0a8';
+    for (const [x, y, w] of [[-6, -25, 2], [-1, -26, 2], [-7, -21, 2]]) s.fillRect(x, y, w, 1);
+    const open = m.state === 'attack' && m.stateT > 0.3 && m.stateT < 0.8;
+    s.drawImage(part(open ? 'vo-mouth1' : 'vo-mouth0', open ? [
+      '.kkkkk.',
+      'kiikiik',
+      'kvvvvvk',
+      'kiikiik',
+      '.kkkkk.',
+    ] : [
+      '.......',
+      '.RRRRR.',
+      'RkkkkkR',
+      '.RiRiR.',
+      '.......',
+    ], pal), 3, -16);
+    if (open) glow(s, 4, -14, 5, 1, '#e090ff');
+  },
+
+  spawn(s, m) {
+    const p = Math.round(Math.sin(m.anim * 8));
+    const h = 9 + p, w = 13 - p;
+    ball(s, -Math.round(w / 2), -h, w, h, '#2c4cb4');
+    // внутри просвечивают тёмные сгустки, сверху — влажный блик
+    s.fillStyle = '#1c3488';
+    s.fillRect(-3, -Math.round(h / 2) + 1, 2, 1); s.fillRect(1, -Math.round(h / 2) - 1, 2, 1); s.fillRect(-1, -2, 2, 1);
+    s.fillStyle = '#d8e8ff'; s.fillRect(-3, -h + 2, 2, 1); s.fillRect(-4, -h + 3, 1, 1);
+    glow(s, 2, -Math.round(h / 2) + 1, 1, 1, '#90c0ff');
+  },
+
+  shambler(s, m) {
+    const pal = mpal('shambler', (p) => { p.r = '#5a1010'; p.R = '#3a0808'; p.i = '#f4f0e0'; p.k = '#8a8070'; return p; });
+    const charging = m.state === 'attack' && m.attackKind === 'ranged';
+    const clawing = m.state === 'attack' && m.attackKind === 'melee';
+    const fur = ramp('#d6cebe'), furFar = ramp('#aaa294');
+    const pose = legPose(12, m.walkPhase * 0.8, moveMode(m), 0.4);
+    const hy = -pose.hip;
+    // дальняя рука
+    let fx, fy, nx, ny;
+    if (charging) { fx = -2; fy = -46; nx = 10; ny = -46; }
+    else {
+      const sw = clawing ? lerp(-2.2, 0.9, clamp(m.stateT / 0.4, 0, 1)) : 1.35 + Math.sin(m.walkPhase) * 0.12;
+      fx = -6 + Math.cos(1.75) * 17; fy = -30 + Math.sin(1.75) * 17;
+      nx = 6 + Math.cos(sw) * 18; ny = -30 + Math.sin(sw) * 18;
+    }
+    arm(s, -6, hy - 20, fx, fy, 9, 10, charging ? 1 : -1, 5, furFar);
+    claws(s, fx, fy, Math.atan2(fy - (hy - 20), fx + 6), '#d0c8b8', 3);
+    drawLegPose(s, 0, hy, pose, '#ccc4b4', '#a89e8c', 6, 7, 0.88);
+    ball(s, -13, hy - 26, 26, 24, '#d6cebe');
+    // клочья шерсти
+    s.fillStyle = fur[1];
+    for (const [x, y, h] of [[-10, -32, 5], [-6, -36, 6], [-1, -30, 7], [4, -34, 5], [8, -28, 6], [-8, -24, 5], [2, -22, 4]]) s.fillRect(x, hy - 36 + 36 + y + 12, 1, h);
+    s.fillStyle = fur[4];
+    for (const [x, y] of [[-8, -34], [-3, -37], [1, -33]]) s.fillRect(x, hy + y + 12, 2, 1);
+    // голова-горб с огромной пастью
+    ball(s, -1, hy - 32, 13, 11, '#e0d8c8');
+    const gape = charging ? 4 : clawing ? 3 : 2 + Math.round(Math.sin(m.anim * 3) * 0.5 + 0.5);
+    s.fillStyle = '#3a0808'; s.fillRect(3, hy - 27, 9, gape + 1);
+    s.fillStyle = '#7a1414'; s.fillRect(4, hy - 26, 7, gape - 1 > 0 ? gape - 1 : 1);
+    s.fillStyle = '#f4f0e0';
+    for (let i = 0; i < 4; i++) { s.fillRect(3 + i * 2, hy - 27, 1, 1); s.fillRect(4 + i * 2, hy - 27 + gape, 1, 1); }
+    // ближняя рука
+    arm(s, 6, hy - 20, nx, ny, 9, 10, charging ? 1 : -1, 5, fur, null, 2, '#6a6458');
+    claws(s, nx, ny, Math.atan2(ny - (hy - 20), nx - 6), '#f0ead8', 3);
+  },
+
+  gargoyle(s, m) {
+    const pal = mpal('gargoyle', (p) => { pal5('ABCDE', '#727268', p); p.h = '#cfc8b0'; p.k = '#1a1410'; p.r = '#3a1410'; return p; });
+    const dive = m.state === 'leap';
+    const flap = Math.sin(m.anim * (dive ? 22 : 11));
+    const stone = ramp('#727268');
+    // перепончатое крыло: плечо, локоть и три пальца, между пальцами — фестоны
+    const wing = (rx, ry, k, mem, memDark, bone) => {
+      const up = dive ? -0.3 : flap * k;
+      const ex = rx - 5, ey = ry - 6 - up * 4;
+      const tips = [[rx - 15, ry - 8 - up * 7], [rx - 15, ry - 1 - up * 4], [rx - 9, ry + 4 - up * 1.5]];
+      const pull = (a, b) => [lerp((a[0] + b[0]) / 2, ex, 0.3), lerp((a[1] + b[1]) / 2, ey, 0.3)];
+      const n1 = pull(tips[0], tips[1]), n2 = pull(tips[1], tips[2]);
+      poly(s, [rx, ry, ex, ey, tips[2][0], tips[2][1]], memDark);
+      poly(s, [ex, ey, tips[0][0], tips[0][1], n1[0], n1[1]], mem);
+      poly(s, [ex, ey, n1[0], n1[1], tips[1][0], tips[1][1]], mem);
+      poly(s, [ex, ey, tips[1][0], tips[1][1], n2[0], n2[1]], memDark);
+      poly(s, [ex, ey, n2[0], n2[1], tips[2][0], tips[2][1]], memDark);
+      limb(s, rx, ry, ex, ey, 2, 2, bone);
+      for (const tp of tips) limb(s, ex, ey, tp[0], tp[1], 1, 1, bone);
+      s.fillStyle = '#cfc8b0'; s.fillRect(Math.round(ex), Math.round(ey) - 1, 1, 1);
+    };
+    wing(1, -12, 1.2, '#4a3e3a', '#3a302c', ramp('#5a5a52'));
+    // хвост
+    chain(s, -3, -6, 2.6, 2.5, 3, 2, 1, stone, (i) => 0.25 + Math.sin(m.anim * 5 + i) * 0.2);
+    // лапы с когтями
+    limb(s, -2, -5, -2, -1, 2, 2, stone); limb(s, 2, -5, 2, -1, 2, 2, stone);
+    s.fillStyle = '#cfc8b0'; s.fillRect(-3, 0, 3, 1); s.fillRect(1, 0, 3, 1);
+    s.drawImage(part('gg-body', [
+      '..BCCD.',
+      '.ABCCDD',
+      'AABCCCD',
+      'AABBCCD',
+      'AABBCC.',
+      '.AABBC.',
+      '..AAB..',
+      '...A...',
+    ], pal), -3, -13);
+    s.drawImage(part('gg-head', [
+      'h...h.',
+      '.hBCh.',
+      'ABCCDD',
+      'ABkCCD',
+      'AABCrr',
+      '.AAB..',
+    ], pal), 1, -18);
+    glow(s, 3, -15, 1, 1, '#ff5a20');
+    wing(0, -11, 1.4, '#625650', '#4e4440', stone);
+  },
+
+  scorpion(s, m) {
+    const sh = ramp('#8a7a44'), dark = ramp('#5a4a28');
+    const run = m.moving || m.air;
+    const ph = m.walkPhase * 1.6;
+    // ноги: по три с каждой стороны
+    for (let i = 0; i < 3; i++) {
+      for (const far of [1, 0]) {
+        const p = ph + i * 2.1 + far * Math.PI, sw = run ? Math.sin(p) * 1.5 : 0;
+        const x = -5 + i * 4, rp = far ? dark : sh;
+        const kx = x - 2 + sw, ky = -8 - (run ? Math.max(0, Math.cos(p)) * 1.5 : 0);
+        limb(s, x, -5, kx, ky, 2, 2, rp);
+        limb(s, kx, ky, kx - 1 + sw, 0, 2, 1, rp);
+      }
+    }
+    // хвост дугой над спиной
+    const sting = m.state === 'attack' && m.attackKind === 'melee' ? clamp(m.stateT / 0.2, 0, 1) : 0;
+    const [tx, ty, ta] = chain(s, -8, -7, -2.3, 3.4, 5, 4, 2, sh, (i) => 0.45 + sting * 0.25 + Math.sin(m.anim * 3 + i) * 0.04);
+    s.fillStyle = '#e0d0a0';
+    s.fillRect(Math.round(tx + Math.cos(ta) * 2), Math.round(ty + Math.sin(ta) * 2), 2, 2);
+    s.fillStyle = '#5a2010';
+    s.fillRect(Math.round(tx + Math.cos(ta) * 3.5), Math.round(ty + Math.sin(ta) * 3.5), 1, 1);
+    // брюшко из сегментов и головогрудь
+    ball(s, -10, -9, 7, 5, '#7a6a3a');
+    ball(s, -5, -10, 8, 6, '#8a7a44');
+    ball(s, 1, -11, 9, 7, '#9a8a50');
+    s.fillStyle = dark[1];
+    for (const x of [-6, -1, 4]) s.fillRect(x, -10, 1, 5);
+    glow(s, 7, -9, 1, 1, '#ffb040');
+    // клешни
+    const cl = run ? Math.sin(ph) * 0.15 : 0;
+    for (const [dy, rp] of [[-1, dark], [0, sh]]) {
+      const bx = 8, by = -6 + dy, ex = 11, ey = -5 + dy + cl * 4;
+      limb(s, bx, by, ex, ey, 2, 2, rp);
+      s.fillStyle = rp[2]; s.fillRect(Math.round(ex), Math.round(ey) - 2, 3, 2);
+      s.fillStyle = rp[1]; s.fillRect(Math.round(ex), Math.round(ey) + 1, 3, 1);
+    }
+  },
+
+  eel(s, m) {
+    const body = ramp('#2e5a6a');
+    const segs = 9;
+    let px = -11, py = -4;
+    const pts = [];
+    for (let i = 0; i <= segs; i++) {
+      const x = -11 + i * 2.3, y = -4 + Math.sin(m.anim * 8 - i * 0.75) * 1.6 * (1 - i / (segs * 1.4));
+      pts.push([x, y]);
+    }
+    // плавник
+    for (let i = 1; i < segs - 1; i++) { s.fillStyle = body[1]; s.fillRect(Math.round(pts[i][0]), Math.round(pts[i][1]) - 3, 2, 1); }
+    for (let i = 0; i < segs; i++) {
+      const t = 1 + (i / segs) * 2.6;
+      limb(s, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], t, t, body);
+    }
+    // брюхо светлее
+    s.fillStyle = '#5a8a8a';
+    for (let i = 3; i < segs; i++) s.fillRect(Math.round(pts[i][0]), Math.round(pts[i][1]) + 1, 2, 1);
+    // голова
+    const [hx, hy] = pts[segs];
+    const bite = m.state === 'attack';
+    ball(s, hx - 1, hy - 3, 6, 5, '#3a6a7a');
+    s.fillStyle = '#0e1e24'; s.fillRect(Math.round(hx) + 2, Math.round(hy) + (bite ? 0 : 1), 3, 1);
+    if (bite) { s.fillStyle = '#e0f0f0'; s.fillRect(Math.round(hx) + 2, Math.round(hy) - 1, 1, 1); s.fillRect(Math.round(hx) + 4, Math.round(hy) + 1, 1, 1); }
+    glow(s, Math.round(hx) + 2, Math.round(hy) - 2, 1, 1, '#a0ffe0');
+    for (let i = 2; i < segs; i += 2) glow(s, Math.round(pts[i][0]), Math.round(pts[i][1]), 1, 1, '#60d0ff');
+  },
+
+  pylon(s, m) {
+    const pal = mpal('pylon', (p) => {
+      pal5('ABCDE', '#7a34a0', p); pal5('qrstu', '#3a3440', p); return p;
+    });
+    s.drawImage(part('py-base', [
+      '..rssstt..',
+      '.qrrsssttu',
+      'qqrrrsssst',
+      'qqqrrrsssr',
+      '.qqqrrrrq.',
+    ], pal), -5, -5);
+    s.drawImage(part('py-crystal', [
+      '....D....',
+      '...CDE...',
+      '...CDE...',
+      '..BCDDE..',
+      '..BCDDE..',
+      '..BCCDD..',
+      '.ABCCDDE.',
+      '.ABCCDDE.',
+      '.ABCCDDD.',
+      '.ABBCDDD.',
+      'AABBCCDDE',
+      'AABBCCDDE',
+      'AABBCCDDD',
+      'AABBCCDDD',
+      'AABBCCCDD',
+      'AABBCCCDD',
+      '.AABBCCD.',
+      '.AABBCCD.',
+      '.AABBCCC.',
+      '..AABCC..',
+      '..AABCC..',
+      '...ABC...',
+      '...ABC...',
+      '....B....',
+    ], pal), -4, -28);
+    const k = Math.sin(m.anim * 3) * 0.5 + 0.5;
+    glow(s, 0, -22, 1, 12, mix('#c040ff', '#ffd0ff', k));
+    glow(s, 0, -26, 1, 2, '#ffe0ff');
+  },
+});
+
+// Светящаяся трещина по ломаной: каждая точка — отдельный пиксель яркого прохода.
+function crack(ctx, pts, col) {
+  for (let i = 0; i + 3 < pts.length; i += 2) {
+    const x0 = pts[i], y0 = pts[i + 1], x1 = pts[i + 2], y1 = pts[i + 3];
+    const n = Math.max(1, Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)));
+    for (let k = 0; k < n; k++) glow(ctx, Math.round(x0 + (x1 - x0) * k / n), Math.round(y0 + (y1 - y0) * k / n), 1, 1, col);
+  }
+}
+// Контур эллипса по пикселям (для нимба и колец).
+function ring(ctx, cx, cy, rx, ry, col, from = 0, to = TAU) {
+  ctx.fillStyle = col;
+  const n = Math.ceil((rx + ry) * 3);
+  for (let i = 0; i <= n; i++) {
+    const a = from + (to - from) * i / n;
+    ctx.fillRect(Math.round(cx + Math.cos(a) * rx), Math.round(cy + Math.sin(a) * ry), 1, 1);
+  }
+}
+function bossDying(s, m, dur, k1, k2 = k1) {
+  if (m.state !== 'dying') return;
+  const k = clamp(m.stateT / dur, 0, 1);
+  s.translate(Math.round(rand(-2, 2)), 0);
+  s.scale(1 - k * k1, 1 - k * k2);
+}
+
+Object.assign(MONSTER_ART, {
+  chthon(s, m) {
+    bossDying(s, m, 3, 0.25);
+    const t = m.anim;
+    const lava = '#ff7a20', hot = '#ffd050';
+    const throwing = m.throwT > 0;
+    // дальняя рука висит вдоль тела
+    slab(s, -32, -100, -42, -74, 16, 13, '#3a2014');
+    slab(s, -42, -74, -40, -48, 13, 11, '#3a2014');
+    rock(s, [-48, -52, -34, -54, -32, -40, -46, -38], '#3a2014');
+    // низ (по пояс в лаве) и торс
+    rock(s, [-22, -66, 22, -66, 18, -8, -18, -8], '#4a2a1a');
+    rock(s, [-30, -112, 30, -114, 38, -96, 28, -60, -28, -60, -38, -94], '#56301c');
+    // плиты пресса
+    rock(s, [-16, -58, -2, -58, -3, -44, -15, -44], '#4e2c1a');
+    rock(s, [2, -58, 16, -58, 15, -44, 3, -44], '#4e2c1a');
+    crack(s, [-20, -100, -14, -90, -16, -80, -10, -68], lava);
+    crack(s, [-2, -104, 2, -92, -1, -80, 1, -64], lava);
+    crack(s, [14, -98, 20, -88, 15, -76, 20, -66], lava);
+    crack(s, [-15, -42, -6, -38, 4, -42, 15, -38], hot);
+    crack(s, [-4, -32, -9, -22, -5, -12], lava);
+    // голова с рогами
+    chain(s, -10, -132, -2.1, 5, 4, 6, 2, ramp('#2e1a10'), () => 0.24);
+    chain(s, 10, -132, -1.05, 5, 4, 6, 2, ramp('#2e1a10'), () => -0.24);
+    rock(s, [-13, -140, 13, -140, 17, -124, 11, -110, -11, -110, -17, -124], '#4e2c1a');
+    s.fillStyle = '#1e0e06'; s.fillRect(-13, -128, 27, 4);
+    glow(s, -9, -127, 7, 2, '#ffd848');
+    glow(s, 3, -127, 7, 2, '#ffd848');
+    glow(s, -7, -118, 15, 3, '#ff6020');
+    s.fillStyle = '#fff4d8';
+    for (let i = 0; i < 4; i++) s.fillRect(-6 + i * 4, -118, 1, 1);
+    // наплечники
+    rock(s, [-46, -104, -32, -118, -16, -110, -20, -94, -42, -92], '#5e3822');
+    // ближняя рука: замах и бросок
+    const a = throwing ? lerp(-2.6, 0.2, 1 - m.throwT / 0.6) : 1.2 + Math.sin(t * 2) * 0.2;
+    const ex = 32 + Math.cos(a - 0.35) * 24, ey = -100 + Math.sin(a - 0.35) * 24;
+    const hx = ex + Math.cos(a + 0.25) * 22, hy = ey + Math.sin(a + 0.25) * 22;
+    slab(s, 32, -100, ex, ey, 17, 14, '#5a3420');
+    slab(s, ex, ey, hx, hy, 14, 12, '#5a3420');
+    rock(s, [hx - 8, hy - 7, hx + 7, hy - 8, hx + 9, hy + 6, hx - 6, hy + 8], '#5e3822');
+    crack(s, [Math.round(ex) - 3, Math.round(ey) + 2, Math.round(hx), Math.round(hy) - 2], lava);
+    rock(s, [46, -104, 32, -118, 16, -110, 20, -94, 42, -92], '#66402a');
+    if (throwing && m.throwT > 0.3) {
+      ball(s, hx - 7, hy - 18, 14, 14, '#ff8a28', false);
+      glow(s, Math.round(hx) - 3, Math.round(hy) - 14, 6, 6, '#ffd060');
+    }
+  },
+
+  elder(s, m) {
+    bossDying(s, m, 4, 0.3);
+    const t = m.anim;
+    const rune = '#40c8f0';
+    const stones = (front) => {
+      for (let i = 0; i < 6; i++) {
+        const a = t * 0.8 + i * TAU / 6, sn = Math.sin(a);
+        if ((sn > 0) !== front) continue;
+        const px = Math.round(Math.cos(a) * 32), py = Math.round(-92 + sn * 6);
+        rock(s, [px - 3, py - 4, px + 3, py - 3, px + 4, py + 3, px - 3, py + 4], sn > 0 ? '#5a6880' : '#36404e');
+        if (front) glow(s, px, py, 1, 1, '#80f0ff');
+      }
+    };
+    stones(false);
+    // обломки-«юбка»
+    for (let i = 0; i < 7; i++) {
+      const off = Math.round(Math.sin(t * 2 + i * 1.3) * 3), x = -21 + i * 6, h = 6 + (i % 3) * 2;
+      rock(s, [x - 3, -18 + off, x + 3, -19 + off, x + 2, -18 + off + h, x - 2, -17 + off + h], i % 2 ? '#2e3846' : '#3c4858');
+    }
+    const cast = m.castT > 0;
+    const a1 = cast ? -2.4 : 2.1, a2 = cast ? -0.7 : 1.0;
+    const fx = -30 + Math.cos(a1) * 22, fy = -56 + Math.sin(a1) * 22;
+    slab(s, -30, -56, fx, fy, 10, 8, '#323c4a');
+    glow(s, Math.round(fx) - 1, Math.round(fy) - 1, 3, 3, '#80e0ff');
+    rock(s, [-27, -66, 27, -66, 24, -42, 13, -20, -13, -20, -24, -42], '#3c4858');
+    crack(s, [-18, -60, -14, -52, -18, -46], rune);
+    crack(s, [16, -60, 12, -52, 16, -46, 12, -34], rune);
+    crack(s, [-12, -30, -6, -26, -8, -22], rune);
+    // гнёзда для рун на груди (сами руны зажигает яркий проход)
+    s.fillStyle = '#141c26';
+    for (let i = 0; i < 4; i++) s.fillRect(-12 + i * 6, -43, 6, 7);
+    rock(s, [-40, -64, -30, -72, -18, -66, -20, -54, -36, -52], '#465468');
+    // голова-маска с рогами-обелисками
+    rock(s, [-16, -88, -12, -98, -10, -80], '#3a4656');
+    rock(s, [16, -88, 12, -98, 10, -80], '#3a4656');
+    rock(s, [-12, -84, 12, -84, 15, -72, 9, -58, -9, -58, -15, -72], '#4a586e');
+    s.fillStyle = '#0a0e14'; s.fillRect(-11, -67, 23, 4); s.fillRect(2, -72, 3, 5);
+    glow(s, -3, -66, 4, 2, '#80f0ff');
+    glow(s, 7, -66, 4, 2, '#80f0ff');
+    glow(s, 3, -71, 2, 3, '#c0ffff');
+    rock(s, [40, -64, 30, -72, 18, -66, 20, -54, 36, -52], '#56647a');
+    const nx = 30 + Math.cos(a2) * 22, ny = -56 + Math.sin(a2) * 22;
+    slab(s, 30, -56, nx, ny, 10, 8, '#4a586e');
+    glow(s, Math.round(nx) - 1, Math.round(ny) - 1, 3, 3, '#80e0ff');
+    stones(true);
+  },
+
+  herald(s, m) {
+    bossDying(s, m, 3, 0.3);
+    const t = m.anim;
+    const robe = ramp('#3a2444');
+    // рваный подол
+    for (let i = 0; i < 9; i++) {
+      const len = 8 + Math.round(Math.sin(t * 4 + i) * 3) + (i % 2) * 2;
+      s.fillStyle = robe[i % 2 ? 0 : 1];
+      s.fillRect(-19 + i * 4, -14, 4, len);
+    }
+    const cast = m.castT > 0;
+    const a1 = cast ? -2.5 : 2.2, a2 = cast ? -0.6 : 0.9;
+    const fx = -14 + Math.cos(a1) * 15, fy = -42 + Math.sin(a1) * 15;
+    arm(s, -14, -42, fx, fy, 8, 8, 1, 5, ramp('#2a1832'));
+    // мантия с золотой каймой
+    poly(s, [-15, -47, 15, -47, 21, -12, -21, -12], robe[1]);
+    poly(s, [-13, -46, 9, -46, 13, -13, -18, -13], robe[2]);
+    poly(s, [-11, -45, -3, -45, -6, -14, -15, -14], robe[3]);
+    s.fillStyle = '#a08030';
+    s.fillRect(-21, -14, 42, 2);
+    s.fillRect(-1, -44, 2, 30);
+    s.fillStyle = '#e0c060'; s.fillRect(-21, -14, 42, 1);
+    for (let i = 0; i < 5; i++) glow(s, -16 + i * 8, -13, 1, 1, '#ffd070');
+    // капюшон, рога и пустота вместо лица
+    chain(s, -8, -56, -2.4, 4, 3, 3, 1, ramp('#c8c0a0'), () => 0.45);
+    chain(s, 7, -57, -0.9, 4, 3, 3, 1, ramp('#c8c0a0'), () => -0.45);
+    ball(s, -11, -62, 22, 20, '#2e1c36');
+    ell(s, -3, -56, 12, 11, '#0a050c');
+    glow(s, 0, -52, 2, 1, '#ff5030');
+    glow(s, 5, -52, 2, 1, '#ff5030');
+    ring(s, 0, -64, 13, 3, '#c8a040', Math.PI, TAU);
+    // правая рука и сферы в ладонях
+    const nx = 14 + Math.cos(a2) * 15, ny = -42 + Math.sin(a2) * 15;
+    arm(s, 14, -42, nx, ny, 8, 8, -1, 5, robe, null, 2, '#120a16');
+    const orb = 5 + Math.round(Math.sin(t * 6));
+    for (const [ox, oy] of [[fx, fy], [nx, ny]]) {
+      ball(s, ox - orb / 2, oy - orb / 2, orb, orb, '#e070f0', false);
+      glow(s, Math.round(ox) - 1, Math.round(oy) - 1, 2, 2, '#ffd0ff');
+    }
+    ring(s, 0, -64, 13, 3, '#f0d070', 0, Math.PI);
+  },
+
+  shub(s, m) {
+    bossDying(s, m, 3, 0.35, 0.45);
+    const t = m.anim;
+    const flesh = ramp('#5a3448');
+    // щупальца за телом
+    for (let i = 0; i < 9; i++) {
+      const a0 = -Math.PI + 0.35 + i * (Math.PI - 0.7) / 8;
+      chain(s, Math.cos(a0) * 32, -44 + Math.sin(a0) * 28, a0, 5, 8, 9, 2, i % 2 ? flesh : ramp('#4a2a3c'),
+        (k) => Math.sin(t * 1.6 + i * 1.3 + k * 0.6) * 0.22);
+    }
+    // корни по полу
+    for (const sx of [-1, 1]) chain(s, sx * 30, -6, sx > 0 ? 0.1 : Math.PI - 0.1, 6, 6, 6, 2, ramp('#3a2230'), (k) => Math.sin(t * 2 + k) * 0.08 * sx);
+    const pulse = Math.round(Math.sin(t * 2.2) * 2);
+    ball(s, -45 - pulse, -88 + pulse, 90 + pulse * 2, 86 - pulse, '#4a2a3e');
+    // складки плоти
+    for (const [fx, fy, fw] of [[-24, -74, 14], [4, -78, 18], [-32, -54, 10], [18, -56, 16], [-10, -34, 20], [-36, -32, 8], [28, -36, 8]]) {
+      s.fillStyle = flesh[1]; s.fillRect(fx, fy, fw, 1);
+      s.fillStyle = flesh[3]; s.fillRect(fx + 1, fy - 1, fw - 2, 1);
+    }
+    // глазницы (сами глаза светятся в ярком проходе)
+    for (const [ex, ey] of SHUB_EYES) {
+      ell(s, ex - 3, ey - 3, 7, 6, '#1a0e14');
+      s.fillStyle = flesh[3]; s.fillRect(ex - 2, ey - 4, 5, 1);
+    }
+    // пасть
+    const open = 4 + Math.round((Math.sin(t * 3) + 1) * 2);
+    ell(s, -14, -20, 28, open + 3, '#2a0408');
+    s.fillStyle = '#6a1018'; s.fillRect(-10, -18 + Math.round(open / 2), 20, 2);
+    s.fillStyle = '#e8e0c8';
+    for (let i = 0; i < 6; i++) { s.fillRect(-11 + i * 4, -19, 2, 2); s.fillRect(-9 + i * 4, -18 + open - 1, 2, 2); }
+  },
+});
+
+// Монстр: рисуем на черновике, переносим в мир с контуром, запоминаем светящиеся детали.
+const ART_BOX = {};
+function artBox(m) {
+  let b = ART_BOX[m.type];
+  if (!b) {
+    const d = m.def, big = !!d.boss;
+    b = ART_BOX[m.type] = {
+      l: Math.ceil(d.w / 2) + (big ? 70 : 22),
+      u: d.h + (big ? 50 : 22),
+      d: big ? 30 : 6,
+    };
+  }
+  return b;
+}
+function drawMonsterSprite(ctx, x, y, m) {
+  const b = artBox(m);
+  // труп, который уже упал, не меняется — рисуем готовый черновик
+  const still = !m.alive && m.deathT > 0.5 && m.hurtFlash <= 0 && m._spr && m._spr.still;
+  if (!still) {
+    const s = sprBegin(b, m);
+    MONSTER_ART[m.type](s, m);
+    sprFinish(m.hurtFlash > 0);
+    m._spr.still = !m.alive && m.deathT > 0.5;
+  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(m.facing, 1);
+  const lying = !m.alive || m.state === 'down';
+  if (lying) {
+    const k = m.state === 'down' ? 1 : Math.min(1, m.deathT / 0.35);
+    if (m.type === 'dog') {
+      // пёс падает на спину, лапами вверх
+      ctx.translate(0, -6);
+      ctx.rotate(k * Math.PI);
+      ctx.translate(0, 6 - k * 3);
+    } else if (m.def.squash || m.def.fly) {
+      ctx.scale(1, 1 - k * 0.55);
+    } else {
+      ctx.translate(0, -k * Math.min(5, m.w / 2));
+      ctx.rotate(-k * Math.PI / 2);
+    }
+  }
+  let alpha = 1;
+  if (m.type === 'phantom' && m.alive) alpha = 0.72 + Math.sin(m.anim * 7 + m.seed) * 0.18;
+  sprBlit(ctx, m._spr, alpha);
+  ctx.restore();
+  if (m.alive && !lying) keepGlows(m);
+  else if (m.glows) m.glows.length = 0;
+}
 
 // ---------------- предметы ----------------
 function drawItem(ctx, x, y, it, t) {

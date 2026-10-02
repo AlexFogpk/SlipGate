@@ -1024,37 +1024,16 @@ class Monster {
     if (this.type === 'chthon' && this.state === 'idle') return;
     const x = Math.round(this.cx - cam.x), y = Math.round(this.y + this.h - cam.y);
     if (x < -80 || x > ctx.canvas.width + 80 || y < -40 || y > ctx.canvas.height + 140) return;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(this.facing, 1);
-    const lying = !this.alive || this.state === 'down';
-    if (lying) {
-      const k = this.state === 'down' ? 1 : Math.min(1, this.deathT / 0.35);
-      if (this.def.squash || this.def.fly) {
-        ctx.scale(1, 1 - k * 0.55);
-      } else {
-        ctx.translate(0, -k * Math.min(5, this.w / 2));
-        ctx.rotate(-k * Math.PI / 2);
-      }
-    }
-    SPR_FLASH = this.hurtFlash > 0;
-    if (this.type === 'phantom' && this.alive) ctx.globalAlpha = 0.72 + Math.sin(this.anim * 7 + this.seed) * 0.18;
-    MONSTER_ART[this.type](ctx, this);
-    SPR_FLASH = false;
-    ctx.restore();
+    drawMonsterSprite(ctx, x, y, this);
   }
 
   drawBright(ctx, cam) {
     if (!this.alive) return;
     const x = Math.round(this.cx - cam.x), y = Math.round(this.y - cam.y);
+    drawGlows(ctx, x, y + this.h, this.facing, this.glows, this.type === 'phantom' ? 0.8 : 1);
     if (this.type === 'shambler' && this.state === 'attack' && this.attackKind === 'ranged' && this.stateT < 0.8) {
       const hx = x + this.facing * 4, hy = y - 10;
       drawLightning(ctx, hx - 6, hy + rand(-2, 2), hx + 6, hy + rand(-2, 2), '#c8d8ff', 1, 0.9);
-    }
-    if (this.type === 'hknight') {
-      ctx.fillStyle = '#ff6030';
-      const ex = x + (this.facing > 0 ? 1 : -4);
-      ctx.fillRect(ex, y + 3, 3, 1);
     }
     if (this.type === 'shub' && this.state !== 'dying') {
       for (const [ex, ey] of SHUB_EYES) {
@@ -1065,39 +1044,23 @@ class Monster {
     }
     if (this.type === 'pylon') {
       const boss = Game.monsters.find((m) => m.type === 'herald' && m.alive);
-      if (boss) drawLightning(ctx, x + 7, y + 4, Math.round(boss.cx - cam.x), Math.round(boss.cy - cam.y), '#e080ff', 1, 0.35 + Math.random() * 0.3);
-      const k = Math.sin(this.anim * 3) * 0.5 + 0.5;
-      ctx.fillStyle = mix('#c040ff', '#ffd0ff', k);
-      ctx.fillRect(x + 5, y + 5, 4, 12);
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(x + 6, y + 7, 1, 6);
+      if (boss) drawLightning(ctx, x, y + 4, Math.round(boss.cx - cam.x), Math.round(boss.cy - cam.y), '#e080ff', 1, 0.35 + Math.random() * 0.3);
     }
     if (this.type === 'herald') {
-      ctx.fillStyle = '#ff5030';
-      const ex = x + this.w / 2 + this.facing * 3;
-      ctx.fillRect(ex - 5, y + 7, 3, 2); ctx.fillRect(ex + 2, y + 7, 3, 2);
-      const orb = 2 + Math.round(Math.sin(this.anim * 6));
-      ctx.fillStyle = '#ff90ff';
-      ctx.fillRect(x + this.w / 2 - 19 - orb, y + 30 - orb, orb * 2 + 2, orb * 2 + 2);
-      ctx.fillRect(x + this.w / 2 + 17 - orb, y + 30 - orb, orb * 2 + 2, orb * 2 + 2);
       if (this.heraldShielded()) {
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = 0.25 + (this.shieldFlash > 0 ? 0.5 : 0) + Math.sin(this.anim * 4) * 0.05;
         ctx.strokeStyle = '#e080ff'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.ellipse(x + this.w / 2, y + this.h / 2, this.w * 0.85, this.h * 0.7, 0, 0, TAU); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(x, y + this.h / 2, this.w * 0.85, this.h * 0.7, 0, 0, TAU); ctx.stroke();
         ctx.fillStyle = '#6020a0'; ctx.globalAlpha *= 0.3; ctx.fill();
         ctx.restore();
       }
     }
     if (this.type === 'phantom') {
-      ctx.fillStyle = '#e0b0ff';
-      const ex = x + (this.facing > 0 ? 1 : -3);
-      ctx.fillRect(ex, y + 3, 2, 1);
       if (this.state === 'attack' && this.stateT < 0.6) { ctx.fillStyle = '#c080ff'; ctx.fillRect(x + this.facing * 7 - 1, y + 8 + rand(-1, 1), 3, 3); }
     }
     if (this.type === 'guardian') {
-      ctx.fillStyle = '#80f0ff';
-      ctx.fillRect(x + (this.facing > 0 ? 1 : -4), y + 4, 3, 1);
       if (this.shieldFlash > 0) {
         ctx.globalAlpha = clamp(this.shieldFlash / 0.2, 0, 1) * 0.8;
         ctx.fillStyle = '#a0f0ff';
@@ -1106,15 +1069,10 @@ class Monster {
       }
     }
     if (this.type === 'elder') {
-      const cxs = x + this.w / 2;
+      const cxs = x;
       if (this.elderShielded()) {
         for (const b of Game.level.buttons) if (!b.lit) drawLightning(ctx, Math.round(b.x + 6 - cam.x), Math.round(b.y - cam.y), cxs, y + this.h / 2, '#60e0ff', 1, 0.2 + Math.random() * 0.25);
       }
-      const k = Math.sin(this.anim * 5) * 0.5 + 0.5;
-      ctx.fillStyle = mix('#60e0ff', '#ffffff', k * 0.6);
-      const ex = cxs + this.facing * 4;
-      ctx.fillRect(ex - 7, y + 12, 4, 2); ctx.fillRect(ex + 3, y + 12, 4, 2);
-      ctx.fillRect(ex - 1, y + 7, 2, 3);
       // руны на груди горят по числу зажжённых алтарей
       const lit = Game.level.buttons.filter((b) => b.lit).length;
       for (let i = 0; i < 4; i++) {
