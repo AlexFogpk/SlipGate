@@ -516,6 +516,12 @@ class Monster {
     if (this.counted) Game.kills++;
     if (attacker && attacker.isPlayer) Game.player.lastKill = this.def.name;
     if (this.def.drop) Game.dropBackpack(this.cx, this.y + this.h / 2, this.def.drop);
+    else if (Game.player && Game.player.alive && Game.player.ammoStarved()) {
+      // патроны кончились у всего оружия: любой убитый роняет рюкзак к тому, что есть
+      const pack = {};
+      for (const [t, ws, min] of AMMO_RESERVE) if (ws.some((n) => Game.player.weapons[n])) pack[t] = Math.ceil(min / 2);
+      Game.dropBackpack(this.cx, this.y + this.h / 2, pack);
+    }
     if (this.type === 'spawn') {
       this.gibbed = true;
       explode(this.cx, this.cy, 120, 72, this, this);

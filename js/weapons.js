@@ -13,6 +13,9 @@ const WEAPONS = {
   9: { name: 'Лазерная пушка', ammo: 'cells', use: 1, rate: 0.13, len: 12 },
 };
 const AMMO_MAX = { shells: 100, nails: 200, rockets: 100, cells: 100 };
+// [тип патронов, оружие, которому он нужен, неприкосновенный запас, «на пару выстрелов»]
+const AMMO_RESERVE = [['shells', [2, 3], 20, 4], ['nails', [4, 5], 40, 10], ['rockets', [6, 7], 5, 2], ['cells', [8, 9], 20, 5]];
+const AMMO_ITEM = { shells: 'U', nails: 'N', rockets: 'K', cells: 'C' };
 const AMMO_NAMES = { shells: 'патроны', nails: 'гвозди', rockets: 'ракеты', cells: 'батареи' };
 
 const PROJ = {

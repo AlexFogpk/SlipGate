@@ -52,6 +52,21 @@ class Player {
     return Object.assign(this.inventory(), { keys: Object.assign({}, this.keys) });
   }
 
+  // Минимальный запас патронов к каждому имеющемуся оружию (после гибели и в тайниках).
+  ensureAmmoReserve() {
+    for (const [t, ws, min] of AMMO_RESERVE) {
+      if (ws.some((n) => this.weapons[n])) this.ammo[t] = Math.max(this.ammo[t], min);
+    }
+  }
+
+  // Патроны кончились у всего, кроме топора.
+  ammoStarved() {
+    for (const [t, ws, , shot] of AMMO_RESERVE) {
+      if (ws.some((n) => this.weapons[n]) && this.ammo[t] >= shot) return false;
+    }
+    return true;
+  }
+
   applyInventory(inv) {
     if (!inv) return;
     this.health = inv.health; this.armor = inv.armor; this.armorType = inv.armorType;

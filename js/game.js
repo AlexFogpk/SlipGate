@@ -178,9 +178,8 @@ const Game = {
     return def.episode === 1 && i < Store.get('unlocked', 1);
   },
 
-  startFromSelect(id, skill) {
-    this.skill = clamp(skill, 0, 3);
-    const def = LEVELS.find((l) => l.id === id);
+  // Стартовый набор уровня: с ним уровень начинают из меню и с него начинается эпизод.
+  kitInventory(def) {
     const p = new Player(0, 0);
     if (def.kit) {
       for (const n of def.kit.weapons) p.weapons[n] = true;
@@ -188,7 +187,13 @@ const Game = {
       p.weapon = p.bestWeapon();
       if (def.kit.armor) { p.armor = def.kit.armor; p.armorType = 0.3; }
     }
-    this.loadLevel(id, { inv: p.inventory() });
+    return p.inventory();
+  },
+
+  startFromSelect(id, skill) {
+    this.skill = clamp(skill, 0, 3);
+    const def = LEVELS.find((l) => l.id === id);
+    this.loadLevel(id, { inv: this.kitInventory(def) });
     this.state = 'playing';
   },
 
@@ -242,11 +247,42 @@ const Game = {
     const p = new Player(start.cx, start.bottom);
     if (opts.inv) p.applyInventory(opts.inv);
     this.player = p;
+    if (opts.inv && def.kit) this.spawnSupplyCache(def, p, start);
     this.startInv = p.inventory();
     this.snapCamera();
     if (def.episode) HUD.center(def.name + ': ' + def.title, 3);
     else if (def.intro) HUD.center(def.intro, 5);
     Music.start(def.music || 55);
+  },
+
+  // Тайник снабжения у входа: оружие из стартового набора уровня, которое герой
+  // где-то пропустил, и патроны, если их меньше половины от набора.
+  spawnSupplyCache(def, p, start) {
+    const want = [];
+    for (const n of def.kit.weapons) if (n >= 3 && !p.weapons[n]) want.push(String(n));
+    for (const [t, amt] of Object.entries(def.kit.ammo || {})) if ((p.ammo[t] || 0) < amt * 0.5) want.push(AMMO_ITEM[t]);
+    if (!want.length) return;
+    const lv = this.level;
+    const tx0 = Math.floor(start.cx / TILE), ty = Math.floor((start.bottom - 1) / TILE);
+    const free = (tx, y) => !lv.tileSolid(tx, y) && !lv.liquidAt(tx * TILE + 8, y * TILE + 8) && !lv.tileSolid(tx, y - 1);
+    const floor = (tx) => lv.tileSolid(tx, ty + 1) || lv.tile(tx, ty + 1) === T.PLAT;
+    // по закрытому люку пройти можно, но класть на него припасы нельзя
+    const walk = (tx) => free(tx, ty) && !lv.solidAt(tx * TILE + 8, ty * TILE + 8) && (floor(tx) || lv.solidAt(tx * TILE + 8, (ty + 1) * TILE + 4));
+    const taken = (x) => this.items.some((it) => Math.abs(it.cx - x) < 12 && Math.abs(it.y + it.h - (ty + 1) * TILE) < 20);
+    const spots = [];
+    for (const dir of [1, -1]) {
+      for (let tx = tx0 + dir; Math.abs(tx - tx0) <= 30 && walk(tx); tx += dir) {
+        if (Math.abs(tx - tx0) >= 2 && floor(tx) && !taken(tx * TILE + 8) && !spots.some((s) => Math.abs(s - tx) < 2)) spots.push(tx);
+      }
+    }
+    spots.sort((a, b) => Math.abs(a - tx0) - Math.abs(b - tx0) || b - a);
+    if (!spots.length) spots.push(tx0);
+    // не хватило места — по два предмета на клетку
+    want.forEach((ch, i) => {
+      const tx = spots[i % spots.length], shift = i >= spots.length ? 5 : 0;
+      this.items.push(new Item(ch, tx * TILE + 8 + shift, (ty + 1) * TILE));
+    });
+    this.later(1.2, () => HUD.message('У входа тайник снабжения: то, что вы пропустили раньше'));
   },
 
   nextLevel() {
@@ -553,11 +589,17 @@ const Game = {
   },
 
   // Возрождение у контрольной точки: мир остаётся как был, монстры теряют след.
+  // Ключи, оружие и патроны, подобранные после точки, не теряются: предметов
+  // на уровне уже нет, и без них можно застрять.
   respawnAtCheckpoint() {
     const cp = this.checkpoint;
+    const dead = this.player;
     const p = new Player(cp.x, cp.y);
     p.applyInventory(cp.state);
-    p.keys = Object.assign({}, cp.state.keys);
+    p.keys = { silver: cp.state.keys.silver || dead.keys.silver, gold: cp.state.keys.gold || dead.keys.gold };
+    for (const n in dead.weapons) if (dead.weapons[n]) p.weapons[n] = true;
+    for (const t in p.ammo) p.ammo[t] = Math.max(p.ammo[t], dead.ammo[t] || 0);
+    p.ensureAmmoReserve();
     p.health = Math.max(p.health, 60);
     this.player = p;
     this.projectiles = [];
@@ -605,7 +647,7 @@ const Game = {
         this.skill = e.skill;
         HUD.center('Сложность: ' + SKILL_NAMES[e.skill], 2);
         const ep = EPISODES.find((x) => x.id === (this.newEpisode || 1)) || EPISODES[0];
-        this.loadLevel(ep.first, { inv: null });
+        this.loadLevel(ep.first, { inv: this.kitInventory(LEVELS.find((l) => l.id === ep.first)) });
         return;
       }
       this.startIntermission();

@@ -270,6 +270,25 @@ function countGroups(g, ch) {
   return n;
 }
 
+// Снабжение: оружие из стартового набора уровня должно встречаться раньше в эпизоде —
+// в наборе или на карте предыдущего уровня (иначе его выдаст только тайник у входа).
+function supplyWarnings() {
+  const out = {};
+  const eps = [...new Set(LEVELS.filter((l) => l.episode).map((l) => l.episode))];
+  for (const ep of eps) {
+    const lv = LEVELS.filter((l) => l.episode === ep);
+    for (let i = 1; i < lv.length; i++) {
+      const prev = lv[i - 1];
+      const have = new Set(prev.kit ? prev.kit.weapons : [1, 2]);
+      prev.map.forEach((r) => [...r].forEach((c) => { if (/[3-9]/.test(c)) have.add(+c); }));
+      const extra = (lv[i].kit ? lv[i].kit.weapons : []).filter((w) => !have.has(w));
+      if (extra.length) out[lv[i].id] = `оружие ${extra.join(', ')} есть в наборе, но раньше в эпизоде не встречается`;
+    }
+  }
+  return out;
+}
+const SUPPLY = supplyWarnings();
+
 const args = process.argv.slice(2);
 const only = args.includes('--map') ? args[args.indexOf('--map') + 1] : null;
 const show = args.includes('--show');
@@ -281,6 +300,7 @@ for (const def of LEVELS) {
   console.log(`${def.id.padEnd(6)} ${status.padEnd(7)} ${r.stats || ''}`);
   for (const e of r.errors) console.log('   ✗ ' + e);
   for (const e of r.warnings) console.log('   ! ' + e);
+  if (SUPPLY[def.id]) console.log('   ! ' + SUPPLY[def.id]);
   if (r.errors.length) bad++;
 }
 process.exit(bad ? 1 : 0);
