@@ -1,5 +1,20 @@
 'use strict';
-// Синтезированный звук на Web Audio: эффекты и мрачный эмбиент.
+// Звук на Web Audio: записанные эффекты (CC0, js/sounds.js) с синтезом как запасным
+// вариантом, и мрачный синтезированный эмбиент.
+
+// Громкость записанных звуков относительно друг друга.
+const SAMPLE_GAIN = {
+  shotgun: 1.79, sshotgun: 1.68, gunshot: 1.12, nail: 0.63, ric: 0.26, grenade: 1.07, bounce: 0.39, rocket: 0.51,
+  explode: 1.23, lightning: 0.48, zap: 0.99, zapsmall: 0.43, laser: 0.31, axe: 0.27, axehit: 0.89, sword: 0.27,
+  chainsaw: 0.41, jump: 0.26, land: 0.25, pain: 0.46, death: 0.52, gasp: 0.26, gurgle: 0.37, splash: 0.38,
+  burn: 0.82, gib: 0.62, splat: 0.38, spit: 0.37, pickup: 0.29, health: 0.67, armor: 0.71, weapon: 0.31,
+  powerup: 0.33, powerdown: 0.27, key: 0.47, door: 0.27, crush: 1.36, jumppad: 0.68, shield: 0.27, lift: 0.26,
+  checkpoint: 0.59, button: 0.41, secret: 0.36, teleport: 0.6, noammo: 0.32, menu: 0.21, menuok: 0.25, tick: 0.16,
+  sight: 0.45, mpain: 0.41, mdeath: 0.45, roar: 0.68, bark: 0.26, fireball: 0.3, charge: 0.32, voreball: 0.57,
+};
+// Голоса: вариант выбирается по «голосу» монстра (низкий — огры и боссы, высокий — мелочь).
+const VOICE_SFX = new Set(['sight', 'mpain', 'mdeath']);
+const FIXED_RATE = new Set(['menu', 'menuok', 'tick', 'secret', 'checkpoint', 'key']);
 
 const Sound = {
   ctx: null,
@@ -12,6 +27,9 @@ const Sound = {
   listenerX: 0,
   listenerY: 0,
   lastPlay: {},
+  samples: {},
+  lastVariant: {},
+  useSamples: Store.get('samples', true),
 
   init() {
     if (this.ctx) {
@@ -37,7 +55,55 @@ const Sound = {
     this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this.loadSamples();
     Music.onAudioReady();
+  },
+
+  // Декодируем записанные звуки в фоне; пока не готовы — играет синтез.
+  loadSamples() {
+    if (typeof SOUND_FILES === 'undefined') return;
+    for (const name in SOUND_FILES) {
+      const list = this.samples[name] = [];
+      SOUND_FILES[name].forEach((b64, i) => {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+        try {
+          const pr = this.ctx.decodeAudioData(bytes.buffer, (buf) => { list[i] = buf; }, () => {});
+          if (pr && pr.catch) pr.catch(() => {});
+        } catch (e) { /* формат не поддержан — останется синтез */ }
+      });
+    }
+  },
+
+  setSamples(on) { this.useSamples = on; Store.set('samples', on); },
+
+  playSample(name, out, t, vol, p) {
+    const list = this.samples[name];
+    if (!list || !list.length) return false;
+    const n = list.length;
+    let i;
+    if (VOICE_SFX.has(name)) {
+      const k = clamp((p - 0.35) / 1.4, 0, 1);
+      i = clamp(Math.round(k * (n - 1) + rand(-0.6, 0.6)), 0, n - 1);
+    } else {
+      i = Math.floor(Math.random() * n);
+      if (n > 1 && i === this.lastVariant[name]) i = (i + 1) % n;
+    }
+    const buf = list[i] || list.find(Boolean);
+    if (!buf) return false;
+    this.lastVariant[name] = i;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    let rate = 1;
+    if (VOICE_SFX.has(name)) rate = rand(0.95, 1.05) * (p < 0.4 ? 0.85 : 1);
+    else if (!FIXED_RATE.has(name)) rate = clamp(p, 0.5, 2) * rand(0.95, 1.05);
+    src.playbackRate.value = rate;
+    const g = this.ctx.createGain();
+    g.gain.value = vol * (SAMPLE_GAIN[name] !== undefined ? SAMPLE_GAIN[name] : 0.6);
+    src.connect(g); g.connect(out);
+    src.start(t);
+    return true;
   },
 
   applyVolumes() {
@@ -106,6 +172,7 @@ const Sound = {
       p.connect(this.sfxBus);
       out = p;
     }
+    if (this.useSamples && this.playSample(name, out, now, vol, opts.p || 1)) return;
     try { fn(this, out, now, vol, opts.p || 1); } catch (e) { /* звук не обязателен */ }
   },
 };

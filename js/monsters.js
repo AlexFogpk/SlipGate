@@ -405,7 +405,7 @@ class Monster {
       // пустота поглощает без следа
       this.alive = false; this.gibbed = true;
       if (this.counted) Game.kills++;
-      Sound.play('death', this.cx, this.cy, { p: 0.5 });
+      Sound.play('mdeath', this.cx, this.cy, { p: this.def.voice });
       FX.teleport(this.cx, this.cy);
       return;
     }

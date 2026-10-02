@@ -40,6 +40,7 @@ const Menu = {
       case 'options': return [
         { label: 'Звуки: ' + Math.round(Sound.volume * 100) + '%', adj: (d) => Sound.setVolume(Math.round((Sound.volume + d * 0.1) * 10) / 10) },
         { label: 'Музыка: ' + Math.round(Sound.musicVolume * 100) + '%', adj: (d) => Sound.setMusicVolume(Math.round((Sound.musicVolume + d * 0.1) * 10) / 10) },
+        { label: 'Эффекты: ' + (Sound.useSamples ? 'записи' : 'синтез'), act: () => Sound.setSamples(!Sound.useSamples) },
         { label: 'Тряска экрана: ' + (Game.shakeOn ? 'вкл' : 'выкл'), act: () => { Game.shakeOn = !Game.shakeOn; Store.set('shake', Game.shakeOn); } },
         { label: 'Во весь экран', act: () => Game.toggleFullscreen() },
         { label: 'Назад', act: () => this.back() },
