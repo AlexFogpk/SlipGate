@@ -656,12 +656,10 @@ class Level {
         const t = this.tiles[y * this.w + x];
         const px = x * TILE, py = y * TILE;
         if (isSolidType(t)) {
-          // фаски на краях стен
-          if (!solidOrOut(x, y - 1)) {
-            ctx.fillStyle = 'rgba(255,240,210,0.22)'; ctx.fillRect(px, py, TILE, 1);
-            ctx.fillStyle = 'rgba(255,240,210,0.08)'; ctx.fillRect(px, py + 1, TILE, 1);
-          }
-          if (!solidOrOut(x, y + 1)) { ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(px, py + TILE - 2, TILE, 2); }
+          // кромка пола сверху (бортик, карниз, дёрн) и тёмный край потолка снизу
+          const sx = (x % 4) * TILE;
+          if (!solidOrOut(x, y - 1)) ctx.drawImage(tex.trim, sx, 0, TILE, 6, px, py, TILE, 6);
+          if (!solidOrOut(x, y + 1)) ctx.drawImage(tex.ceil, sx, 0, TILE, 4, px, py + TILE - 4, TILE, 4);
           if (!solidOrOut(x - 1, y)) { ctx.fillStyle = 'rgba(255,240,210,0.1)'; ctx.fillRect(px, py, 1, TILE); }
           if (!solidOrOut(x + 1, y)) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(px + TILE - 1, py, 1, TILE); }
         } else if (!skyLike(t) && !this.skyBack(x, y)) {
@@ -686,6 +684,33 @@ class Level {
       } else ctx.fillRect(xa, ya + 2, xb - xa, 2);
     }
     ctx.restore();
+    // толща стен темнеет вглубь: играбельные кромки читаются, повтор текстуры не бросается в глаза
+    const depth = new Uint8Array(this.w * this.h);
+    let frontier = [];
+    for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
+      if (this.tileSolid(x, y)) depth[y * this.w + x] = 9;
+      else frontier.push(x, y);
+    }
+    for (let d = 1; d <= 4 && frontier.length; d++) {
+      const next = [];
+      for (let i = 0; i < frontier.length; i += 2) {
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = frontier[i] + dx, ny = frontier[i + 1] + dy;
+          if (nx < 0 || ny < 0 || nx >= this.w || ny >= this.h) continue;
+          const k = ny * this.w + nx;
+          if (depth[k] === 9) { depth[k] = d; next.push(nx, ny); }
+        }
+      }
+      frontier = next;
+    }
+    for (let d = 2; d <= 5; d++) {
+      ctx.fillStyle = `rgba(0,0,0,${Math.min(0.42, (d - 1) * 0.12)})`;
+      for (let i = 0; i < depth.length; i++) {
+        const v = depth[i];
+        if (v >= 2 && Math.min(v, 5) === d) ctx.fillRect((i % this.w) * TILE, Math.floor(i / this.w) * TILE, TILE, TILE);
+      }
+    }
+    dressLevel(this, ctx);
     for (const d of this.decor) {
       if (d.kind === 'checkpoint') {
         ctx.fillStyle = '#2a2622'; ctx.fillRect(d.x - 6, d.y - 5, 12, 5);
@@ -695,29 +720,24 @@ class Level {
         ctx.fillStyle = '#1a1612'; ctx.fillRect(d.x - 1, d.y - 16, 2, 8);
         continue;
       }
-      if (d.kind === 'torch') {
-        ctx.fillStyle = '#2a221a'; ctx.fillRect(d.x - 1, d.y - 1, 3, 9);
-        ctx.fillStyle = '#4a3a2a'; ctx.fillRect(d.x - 3, d.y - 2, 7, 3);
-        ctx.fillStyle = '#6a5438'; ctx.fillRect(d.x - 3, d.y - 2, 7, 1);
-      } else if (d.kind === 'lamp') {
-        ctx.fillStyle = '#2c2a26'; ctx.fillRect(d.x - 6, d.y - 3, 12, 6);
-        ctx.fillStyle = '#4a4640'; ctx.fillRect(d.x - 6, d.y - 3, 12, 1);
-      }
+      if (d.kind === 'torch') drawTorchHolder(ctx, d.x, d.y);
+      else if (d.kind === 'lamp') drawLampHousing(ctx, d.x, d.y);
     }
     this.bakeLight();
   }
 
   drawPlatform(ctx, x, y) {
     const px = x * TILE, py = y * TILE;
-    const c = this.tex.plat;
-    ctx.fillStyle = shade(c, 0.55); ctx.fillRect(px, py, TILE, 5);
-    ctx.fillStyle = c; ctx.fillRect(px, py, TILE, 4);
-    ctx.fillStyle = shade(c, 1.3); ctx.fillRect(px, py, TILE, 1);
-    ctx.fillStyle = shade(c, 0.7); ctx.fillRect(px + (x % 2 ? 3 : 11), py + 1, 1, 3);
+    ctx.drawImage(this.tex.plat, (x % 4) * TILE, 0, TILE, 6, px, py, TILE, 6);
+    // кронштейны на концах полки
     const left = this.tile(x - 1, y) !== T.PLAT, right = this.tile(x + 1, y) !== T.PLAT;
-    ctx.fillStyle = shade(c, 0.6);
-    if (left) { ctx.fillRect(px + 2, py + 4, 2, 5); ctx.fillRect(px + 1, py + 4, 1, 2); }
-    if (right) { ctx.fillRect(px + TILE - 4, py + 4, 2, 5); ctx.fillRect(px + TILE - 2, py + 4, 1, 2); }
+    const br = (bx, dir) => {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(bx, py + 5, 2, 5);
+      for (let i = 0; i < 4; i++) ctx.fillRect(bx + dir * (i + 1), py + 6 + i, 1, 1);
+      ctx.fillStyle = 'rgba(255,240,210,0.12)'; ctx.fillRect(bx, py + 5, 1, 5);
+    };
+    if (left) br(px + 2, 1);
+    if (right) br(px + TILE - 4, -1);
   }
 
   staticLights() {
@@ -963,29 +983,26 @@ class Level {
       const x = Math.round(e.cx - cam.x), y = Math.round(e.bottom - cam.y);
       if (x < -40 || x > 2000 || y < -60 || y > 2000) continue;
       if (!bright) {
-        // каменная арка
-        ctx.fillStyle = '#2a2420'; ctx.fillRect(x - 13, y - 42, 26, 42);
-        ctx.fillStyle = '#5a4e42'; ctx.fillRect(x - 12, y - 41, 24, 3);
-        ctx.fillStyle = '#4a4036'; ctx.fillRect(x - 12, y - 38, 3, 38); ctx.fillRect(x + 9, y - 38, 3, 38);
-        ctx.fillStyle = '#6a5c4c'; ctx.fillRect(x - 12, y - 41, 24, 1);
-        ctx.fillStyle = '#3a322a'; ctx.fillRect(x - 14, y - 2, 28, 2);
+        drawPortalFrame(ctx, x, y, this.theme);
       } else {
         ctx.save();
         ctx.beginPath();
-        ctx.rect(x - 9, y - 38, 18, 37);
+        if (this.theme === 'base') ctx.rect(x - 9, y - 39, 18, 37);
+        else { ctx.moveTo(x - 9, y - 2); ctx.lineTo(x - 9, y - 34); ctx.arc(x, y - 34, 9, Math.PI, 0); ctx.lineTo(x + 9, y - 2); ctx.closePath(); }
         ctx.clip();
         const tele = Tex.liquidAnim.tele;
-        ctx.drawImage(tele, (t * 20) % 32, 0, 32, 64, x - 9, y - 38, 18, 37);
+        ctx.drawImage(tele, (t * 20) % 32, 0, 32, 64, x - 9, y - 44, 18, 43);
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = 0.25 + Math.sin(t * 4) * 0.1;
         ctx.fillStyle = '#8a70ff';
-        ctx.fillRect(x - 9, y - 38, 18, 37);
+        ctx.fillRect(x - 9, y - 44, 18, 43);
         ctx.restore();
       }
     }
   }
 
   drawDecorBright(ctx, cam, t) {
+    drawGlyphs(ctx, cam, this.glyphs, t);
     if (this.def.altarButtons) {
       for (const b of this.buttons) {
         const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
@@ -1011,17 +1028,9 @@ class Level {
     for (const d of this.decor) {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
       if (x < -20 || y < -40 || x > 2000 || y > 2000) continue;
-      if (d.kind === 'torch') {
-        const f = Math.sin(t * 13 + d.x) * 0.5 + Math.sin(t * 23 + d.y) * 0.5;
-        ctx.fillStyle = '#c03a08'; ctx.fillRect(x - 3, y - 8, 7, 6);
-        ctx.fillStyle = '#ff7a18'; ctx.fillRect(x - 2, y - 10 - (f > 0 ? 1 : 0), 5, 7);
-        ctx.fillStyle = '#ffd050'; ctx.fillRect(x - 1, y - 8 - (f > 0.3 ? 1 : 0), 3, 5);
-        ctx.fillStyle = '#fff4c0'; ctx.fillRect(x, y - 6, 1, 2);
-        if (f > 0.5) { ctx.fillStyle = '#ff9a28'; ctx.fillRect(x + (f > 0.8 ? 1 : -1), y - 13, 1, 2); }
-      } else if (d.kind === 'lamp') {
-        ctx.fillStyle = '#fff2c8'; ctx.fillRect(x - 5, y - 1, 10, 3);
-        ctx.fillStyle = '#ffffff'; ctx.fillRect(x - 3, y, 6, 1);
-      } else if (d.kind === 'electrode') {
+      if (d.kind === 'torch') drawTorchFlame(ctx, x, y, t, d.x * 0.37 + d.y * 0.11);
+      else if (d.kind === 'lamp') drawLampLight(ctx, x, y, t);
+      else if (d.kind === 'electrode') {
         drawElectrode(ctx, x, y, t, Game.bossFx);
       } else if (d.kind === 'checkpoint') {
         const pulse = 0.6 + Math.sin(t * 3) * 0.4;

@@ -30,6 +30,13 @@ function hslToHex(h, s, l) {
   const f = (n) => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
   return rgbToHex(f(0) * 255, f(8) * 255, f(4) * 255);
 }
+// Цвет из общей палитры игры (той же, что у текстур), чтобы герои и стены были одной породы.
+const palCache = {};
+function toPal(hex) {
+  let c = palCache[hex];
+  if (!c) { const [r, g, b] = hexToRgb(hex); c = palCache[hex] = rgbToHex(...qNearest(r, g, b)); }
+  return c;
+}
 // Пять тонов из базового цвета: [глубокая тень, тень, основа, свет, блик].
 // Тени уходят в холод, блики — в тепло, как у художников-пиксельщиков.
 const rampCache = {};
@@ -45,7 +52,7 @@ function ramp(hex) {
     hex,
     hslToHex(tw(55, 0.07), s * 0.95, l + (1 - l) * 0.2),
     hslToHex(tw(55, 0.14), s * 0.85, l + (1 - l) * 0.42),
-  ];
+  ].map(toPal);
   return r;
 }
 
@@ -658,20 +665,20 @@ function swordArm(s, sx, sy, ang, len, sleeveHex, glove, img, g, ol = '#140e0a',
 const MONSTER_ART = {
   grunt(s, m) {
     const pal = mpal('grunt', (p) => {
-      pal5('qrstu', '#7a5a32', p); pal5('FGHIJ', '#555b3a', p); pal5('-abc-', '#b88a68', p);
+      pal5('qrstu', '#646034', p); pal5('FGHIJ', '#4e5236', p); pal5('-abc-', '#b48a6c', p); pal5('vwxyz', '#6e5236', p);
       p.e = '#2a1410'; p.m = '#5a2a1a'; p.k = '#3a2a18'; p.Y = '#b09040'; p.j = '#4a3420';
       return p;
     });
     gunner(s, m, {
-      leg: 10, legHex: '#5a4a30', boot: '#2a2018', gun: 2, sleeve: '#7a5a32', glove: '#8a6448',
-      tx: -4, torso: part('gr-torso', [
-        '..rsstt.',
-        '.rrjstuu',
-        'qrrsjsst',
-        'qrrssjst',
-        '.qrrsssj',
-        '.kkkkkYk',
-        '..rssr..',
+      leg: 10, legHex: '#4e4a30', boot: '#2a2018', gun: 2, sleeve: '#646034', glove: '#8a6448',
+      tx: -6, torso: part('gr-torso', [
+        '.xy.rsstt.',
+        'wxyjrrjstu',
+        'wxyyqrrjss',
+        'wxyyqrrsjs',
+        'wwxx.qrrss',
+        '.ww.kkkkYk',
+        '....rssr..',
       ], pal),
       hx: -4, head: part('gr-head', [
         '..HHIJ..',
@@ -687,20 +694,20 @@ const MONSTER_ART = {
 
   enforcer(s, m) {
     const pal = mpal('enforcer', (p) => {
-      pal5('ABCDE', '#64727e', p); pal5('qrstu', '#363e46', p);
-      p.V = '#e8c040'; p.k = '#22282c'; return p;
+      pal5('ABCDE', '#8c8a6e', p); pal5('qrstu', '#46463a', p); pal5('fghij', '#5e5e56', p);
+      p.V = '#e8c040'; p.k = '#22241c'; p.R = '#c03018'; return p;
     });
     gunner(s, m, {
-      leg: 11, legT: 4, legHex: '#3c444c', boot: '#20242a', gun: 'laser', sleeve: '#4a545e', glove: '#2a3036', armT: 3,
-      tx: -4, torso: part('en-torso', [
-        '..qrsstt.',
-        '.qrBCCDt.',
-        'qrBBCCDDs',
-        'qrBCCCDDs',
-        'qrBBCCCDr',
-        '.qrBBBCr.',
-        '.kkkkkkkk',
-        '..rssr...',
+      leg: 11, legT: 4, legHex: '#56564a', boot: '#24241e', gun: 'laser', sleeve: '#6a6a58', glove: '#2e2e26', armT: 3,
+      tx: -7, torso: part('en-torso', [
+        '.ghi...qrsstt.',
+        'fghhi.qrBCCDt.',
+        'fghRi.qBBCCDDs',
+        'fghhiqrBCCCDDs',
+        'fgghiqrBBCCCDr',
+        '.fghi.qrBBBCr.',
+        '..ff..kkkkkkkk',
+        '.......rssr...',
       ], pal),
       hx: -3, head: part('en-head', [
         '..BCCD.',
@@ -723,8 +730,8 @@ const MONSTER_ART = {
 
   knight(s, m) {
     const pal = mpal('knight', (p) => {
-      pal5('ABCDE', '#8e7848', p); pal5('qrstu', '#6e6e66', p); pal5('vwxyz', '#842c1c', p);
-      pal5('-pP--', '#c42a18', p); p.V = '#120c08'; p.k = '#3a2a18'; return p;
+      pal5('ABCDE', '#8a6c40', p); pal5('qrstu', '#6e6e66', p); pal5('vwxyz', '#5e5e58', p);
+      p.V = '#120c08'; p.k = '#3a2a18'; p.Y = '#a08040'; return p;
     });
     const pose = legPose(10, m.walkPhase, moveMode(m), 0.6);
     const hy = -pose.hip, top = hy - 8;
@@ -736,23 +743,23 @@ const MONSTER_ART = {
     s.drawImage(part('kn-torso', [
       '..rCCDD..',
       '.rBCCDDE.',
-      'qrBCxyyD.',
-      'qrBBxyyC.',
-      '.qrBxyyC.',
-      '.kkkxyykk',
-      '...wxyw..',
-      '...wxw...',
+      'qrBCCCDD.',
+      'qrBBCCDC.',
+      '.qrBBCCC.',
+      '.kkkkYkkk',
+      '..wxyxyw.',
+      '..wxwxyx.',
+      '...w.w.w.',
     ], pal), -4, top);
     s.drawImage(part('kn-head', [
-      '.ppP...',
-      'pPPpp..',
-      '.pBCCD.',
+      '..BCCD.',
+      '.BCCDDD',
       'BCCDDDE',
       'BCCVVVV',
-      'BBCCDDD',
+      'BBCCDVD',
       '.BBCCC.',
       '..qr...',
-    ], pal), -3, top - 7);
+    ], pal), -3, top - 6);
     swordArm(s, -1, top + 2, ang, 6, '#6e6e66', '#4a3a2a', blade('sword'), BLADES.sword.g);
   },
 
@@ -782,8 +789,8 @@ const MONSTER_ART = {
     ], pal), -5, top);
     const hx = -4, hyy = top - 8;
     s.drawImage(part('hk-head', [
-      'H......H',
-      'hH....Hh',
+      '..H.H.H.',
+      '..hHhHh.',
       '.hBCCDh.',
       '.BCCDDE.',
       '.BCkkkk.',
@@ -797,8 +804,8 @@ const MONSTER_ART = {
 
   zombie(s, m) {
     const pal = mpal('zombie', (p) => {
-      pal5('ABCDE', '#7c8c6a', p); pal5('qrstu', '#4e4a3a', p);
-      p.W = '#6a1a10'; p.w = '#a83020'; p.i = '#c8c0a8'; p.e = '#1a0000'; return p;
+      pal5('ABCDE', '#9c8c80', p); pal5('qrstu', '#4a3c30', p);
+      p.W = '#6a1010'; p.w = '#a82418'; p.i = '#d8d0bc'; p.e = '#1a0000'; return p;
     });
     const down = m.state === 'down';
     const pose = legPose(9, m.walkPhase * 0.7, moveMode(m), 0.35, 0.6);
@@ -806,11 +813,11 @@ const MONSTER_ART = {
     let ang = 0.25 + Math.sin(m.anim * 2) * 0.08;
     const throwing = m.state === 'attack';
     if (throwing) ang = lerp(-2.6, 0.2, clamp((m.stateT - 0.2) / 0.3, 0, 1));
-    const flesh = ramp('#7c8c6a'), fleshFar = ramp('#5e6c52');
+    const flesh = ramp('#9c8c80'), fleshFar = ramp('#7a6c62');
     const reach = (a, l) => [Math.cos(a) * l, Math.sin(a) * l];
     const [fx, fy] = reach(ang + 0.15, 8);
-    arm(s, 1, top + 2, 1 + fx, top + 2 + fy, 4, 4, -1, 2, fleshFar, '#6a7a58');
-    drawLegPose(s, 0, hy, pose, '#4a4838', '#2a2a22', 3, 4);
+    arm(s, 1, top + 2, 1 + fx, top + 2 + fy, 4, 4, -1, 2, fleshFar, '#8a7a6e');
+    drawLegPose(s, 0, hy, pose, '#4a3c30', '#2a221c', 3, 4);
     s.drawImage(part('zb-torso', [
       '..rssB..',
       '.rrsBCC.',
@@ -830,7 +837,7 @@ const MONSTER_ART = {
     ], pal), 0, top - 5);
     const [nx, ny] = reach(ang, 8);
     const hx = 0 + nx, hyy = top + 2 + ny;
-    arm(s, 0, top + 2, hx, hyy, 4, 4, -1, 2, flesh, '#8a9a78', 2, '#141a0e');
+    arm(s, 0, top + 2, hx, hyy, 4, 4, -1, 2, flesh, '#b0a090', 2, '#1a1210');
     if (throwing && m.stateT < 0.5) { s.fillStyle = '#7a2010'; s.fillRect(Math.round(hx) - 1, Math.round(hyy) - 2, 3, 3); s.fillStyle = '#a83a20'; s.fillRect(Math.round(hx) - 1, Math.round(hyy) - 2, 2, 1); }
     if (down) { /* лежит — поза рисуется так же, поворот делает обёртка */ }
   },
