@@ -1093,13 +1093,74 @@ class Monster {
   // Барьер пал: Древний оглушён и на несколько секунд опускается к герою — бить его.
   elderBarrierDown() {
     this.elderWake();
-    this.stunT = 3.5;
-    this.cd = Math.max(this.cd, 3.8);
+    this.stunT = 4;
+    this.cd = Math.max(this.cd, 4.2);
     this.shieldFlash = 0.6;
+    // осколки барьера разлетаются
+    for (let i = 0; i < 26; i++) FX.add({ kind: 'spark', x: this.cx + rand(-40, 40), y: this.cy + rand(-40, 40), vx: rand(-260, 260), vy: rand(-260, 160), life: 1, max: 1, size: 2, col: '#a0f0ff', grav: 300, bright: true });
+    FX.explosion(this.cx, this.cy, 1.4);
+    Game.shake(this.cx, this.cy, 12);
+  }
+
+  // На арене финала Древний спит в бездне, пока герой не дойдёт до конца моста.
+  elderDormant() {
+    this.state = 'dormant';
+    this.y = this.homeY + 560;
+    this.vx = this.vy = 0;
+  }
+
+  // Появление: поднимается из бездны к своему месту над кузней.
+  elderIntro() {
+    if (this.state !== 'dormant') return;
+    this.state = 'intro'; this.stateT = 0; this.pattern = 0; this.rage = 0;
+    this.introFrom = this.y;
+    Sound.play('roar');
+    Game.shake(this.cx, this.cy, 6);
+  }
+
+  // Каждая зажжённая руна злит Древнего: он призывает стражу к герою.
+  elderAltarLit(n) {
+    const waves = this.drained ? [['phantom', 'phantom']] : [['phantom', 'phantom'], ['guardian', 'phantom'], ['phantom', 'phantom', 'phantom']];
+    const wave = waves[Math.min(waves.length - 1, n - 1)];
+    Sound.play('roar');
+    this.cd = Math.min(this.cd, 1);
+    Game.later(0.8, () => this.elderWave(wave));
+  }
+
+  elderWave(types) {
+    const p = Game.player;
+    if (!this.alive || !p || !p.alive) return;
+    const exit = Game.level.exits[0];
+    for (const t of types) {
+      if (t === 'phantom') {
+        const m = new Monster('phantom', this.cx, this.y + this.h);
+        m.counted = false; m.minion = true; m.blinkCd = 0;
+        m.alert(p, false);
+        if (!m.blinkNear(p)) {
+          // на тесном островке места нет — фантом выходит на кузне
+          if (!exit) continue;
+          m.x = exit.cx + rand(-1, 1) * rand(40, 220) - m.w / 2; m.y = exit.bottom - m.h;
+          if (!Game.level.boxFree(m.x, m.y, m.w, m.h)) continue;
+          FX.teleport(m.cx, m.cy);
+          Sound.play('teleport', m.cx, m.cy, { p: 1.6, vol: 0.6 });
+        }
+        Game.monsters.push(m);
+      } else {
+        // страж выходит из портала на кузне, подальше от героя
+        const bx = exit ? exit.cx : this.homeX;
+        const sx = Math.abs(p.cx - (bx - 150)) > Math.abs(p.cx - (bx + 220)) ? bx - 150 : bx + 220;
+        const m = new Monster(t, sx, exit ? exit.bottom : this.homeY + 400);
+        m.counted = false; m.minion = true;
+        m.alert(p, false);
+        Game.monsters.push(m);
+        FX.teleport(m.cx, m.cy);
+        Sound.play('teleport', m.cx, m.cy);
+      }
+    }
   }
 
   elderDamage(dmg, attacker, kind) {
-    if (!this.alive || this.state === 'dying') return;
+    if (!this.alive || this.state === 'dying' || this.state === 'dormant' || this.state === 'intro') return;
     if (attacker && attacker.isPlayer) this.elderWake();
     if (this.elderShielded()) {
       this.shieldFlash = 0.25;
@@ -1110,9 +1171,28 @@ class Monster {
       }
       return;
     }
-    this.health -= dmg;
+    // оглушённый получает больше урона
+    this.health -= this.stunT > 0 ? dmg * 1.5 : dmg;
     this.hurtFlash = 0.06;
     const frac = this.health / this.maxHealth;
+    // на половине здоровья Древний вытягивает силу из двух рун и снова закрывается барьером
+    if (frac < 0.5 && !this.drained && this.health > 0 && Game.levelDef.bossIntro) {
+      this.drained = true;
+      this.stunT = 0;
+      const p = Game.player;
+      const lit = Game.level.buttons.filter((b) => b.lit).sort((a, b) => dist(b.x, b.y, p.cx, p.cy) - dist(a.x, a.y, p.cx, p.cy));
+      for (const b of lit.slice(0, 2)) {
+        Game.level.drainAltar(b);
+        FX.beam(b.x + 6, b.y - 4, this.cx, this.cy, '#c060ff', 0.8, 3);
+        FX.teleport(b.x + 6, b.y);
+      }
+      HUD.center('Древний вытягивает силу рун!\nЗажгите алтари снова', 3.5);
+      Sound.play('roar'); Sound.play('charge', this.cx, this.cy);
+      Game.shake(this.cx, this.cy, 10);
+      this.shieldFlash = 0.8;
+      this.elderSummon(2);
+      return;
+    }
     const rage = frac < 0.33 ? 2 : frac < 0.66 ? 1 : 0;
     if (rage > this.rage && this.health > 0) {
       // ярость: рывок через арену и призыв фантомов
@@ -1128,6 +1208,10 @@ class Monster {
       this.state = 'dying'; this.stateT = 0;
       HUD.center('Древний повержен!', 3);
       Sound.play('roar');
+      // время замедляется, пока он рассыпается
+      Game.slowT = 2.4;
+      Game.whiteFlash = 0.5;
+      Game.shake(this.cx, this.cy, 14);
       for (const m of Game.monsters) if (m.minion && m.alive) applyDamage(m, 5000, attacker, 'telefrag');
     }
   }
@@ -1152,6 +1236,18 @@ class Monster {
     this.castT = Math.max(0, (this.castT || 0) - dt);
     this.shieldFlash = (this.shieldFlash || 0) - dt;
     // Древний бесплотен для камня: пролетает сквозь острова
+    if (this.state === 'dormant') return;
+    if (this.state === 'intro') {
+      // поднимается из бездны над кузней, в конце — рёв
+      const k = clamp(this.stateT / 3, 0, 1);
+      const e = 1 - Math.pow(1 - k, 3);
+      this.y = lerp(this.introFrom, this.homeY + 100, e) + Math.sin(this.anim * 1.1) * 4;
+      this.x = this.homeX;
+      if (Math.random() < 0.5) FX.add({ kind: 'spark', x: this.cx + rand(-30, 30), y: this.y + this.h + rand(-10, 20), vx: rand(-30, 30), vy: rand(-120, -40), life: 0.8, max: 0.8, size: 1, col: '#80e0ff', grav: 0, bright: true });
+      if (this.stateT > 3 && !this.introRoar) { this.introRoar = true; Sound.play('roar'); Game.shake(this.cx, this.cy, 12); }
+      if (this.stateT > 3.6) { this.state = 'active'; this.stateT = 0; this.cd = 1.5; }
+      return;
+    }
     if (this.state === 'idle') {
       this.y += Math.sin(this.anim * 1.1) * 10 * dt;
       if (p && p.alive && dist(p.cx, p.cy, this.cx, this.cy) < 460) this.elderWake();
@@ -1170,6 +1266,10 @@ class Monster {
       if (this.stateT > 4) {
         this.alive = false; this.gibbed = true;
         Game.kills++;
+        Game.whiteFlash = 1;
+        Game.shake(this.cx, this.cy, 16);
+        Sound.play('explode', this.cx, this.cy); Sound.play('roar');
+        for (let i = 0; i < 40; i++) FX.add({ kind: 'spark', x: this.cx, y: this.cy, vx: Math.cos(i / 40 * TAU) * 320, vy: Math.sin(i / 40 * TAU) * 320, life: 1.2, max: 1.2, size: 2, col: '#c0f8ff', grav: 0, bright: true });
         for (let i = 0; i < 30; i++) FX.gib(this.x + rand(0, this.w), this.y + rand(0, this.h), rand(-320, 320), rand(-420, -100), pick(['#1a2230', '#3a4a60', '#60e0ff', '#c0f0ff']), randInt(3, 6));
         FX.explosion(this.cx, this.cy, 2.5);
         FX.teleport(this.cx, this.cy);
@@ -1182,8 +1282,9 @@ class Monster {
     if (this.stunT > 0) this.hurtFlash = Math.max(this.hurtFlash, Math.sin(this.stunT * 20) > 0 ? 0.05 : 0);
     // парит над героем, чтобы оставаться в кадре; оглушённый — низко и рядом
     const stun = this.stunT > 0;
-    const tx = clamp(p ? p.cx + (stun ? p.facing * 90 : Math.sin(this.anim * 0.4) * 170) : this.homeX, this.homeX - 560, this.homeX + 560);
-    const ty = clamp((p ? p.cy - (stun ? 70 : 175) : this.homeY) + Math.sin(this.anim * 0.7) * 22, this.homeY, this.homeY + 420);
+    const span = Game.levelDef.bossIntro ? 760 : 560;
+    const tx = clamp(p ? p.cx + (stun ? p.facing * 90 : Math.sin(this.anim * 0.4) * 150) : this.homeX, this.homeX - span, this.homeX + span);
+    const ty = clamp((p ? p.cy - (stun ? 60 : 125) : this.homeY) + Math.sin(this.anim * 0.7) * 18, this.homeY, this.homeY + 440);
     const dx = tx - this.cx, dy = ty - this.cy, d = Math.hypot(dx, dy) || 1;
     const sp = this.def.speed * (1 + this.rage * 0.25) * (stun ? 2.4 : 1);
     this.vx = approach(this.vx, dx / d * sp * Math.min(1, d / 60), 180 * dt);
@@ -1196,6 +1297,24 @@ class Monster {
     const sx = this.cx + this.facing * 18, sy = this.y + 26;
     const aim = Math.atan2(p.cy - sy, p.cx - sx);
     this.castT = 0.45;
+    // в ярости — размашистый луч: молния ведётся дугой через героя
+    if (this.rage >= 1 && this.pattern % 4 === 3 && !this.sweptAt) {
+      this.sweptAt = true;
+      this.pattern++;
+      this.castT = 1.6;
+      Sound.play('charge', sx, sy, { p: 0.8 });
+      const from = aim - 0.9 * (Math.random() < 0.5 ? 1 : -1);
+      for (let i = 0; i <= 14; i++) {
+        Game.later(0.6 + i * 0.07, () => {
+          if (!this.alive || this.state !== 'active') return;
+          const ox = this.cx + this.facing * 18, oy = this.y + 26;
+          lightningRay(this, ox, oy, from + (aim - from) * 2 * (i / 14), 620, 9);
+          if (i % 4 === 0) Sound.play('lightning', ox, oy, { gap: 0.05 });
+        });
+      }
+      return;
+    }
+    this.sweptAt = false;
     switch (this.pattern++ % 5) {
       case 0: {
         const n = 3 + this.rage;
@@ -1266,7 +1385,7 @@ class Monster {
     if (this.type === 'chthon' && this.state !== 'idle') out.push({ x: this.cx, y: this.y + 40, r: 180, c: [1, 0.5, 0.2], i: 0.7 });
     if (this.type === 'pylon') out.push({ x: this.cx, y: this.y + 8, r: 70, c: [0.8, 0.3, 1], i: 0.6 + Math.sin(this.anim * 3) * 0.15 });
     if (this.type === 'herald') out.push({ x: this.cx, y: this.cy, r: 160, c: [0.9, 0.3, 0.8], i: 0.6 });
-    if (this.type === 'elder') out.push({ x: this.cx, y: this.cy, r: 190, c: [0.4, 0.85, 1], i: this.state === 'idle' ? 0.4 : 0.7 });
+    if (this.type === 'elder' && this.state !== 'dormant') out.push({ x: this.cx, y: this.cy, r: 190, c: [0.4, 0.85, 1], i: this.state === 'idle' ? 0.4 : 0.7 });
     if (this.type === 'phantom') out.push({ x: this.cx, y: this.y + 6, r: 36, c: [0.7, 0.45, 1], i: 0.35 });
     if (this.type === 'guardian') out.push({ x: this.cx, y: this.y + 6, r: 34, c: [0.4, 0.9, 1], i: 0.3 });
     if (this.type === 'eel' && this.state === 'attack') out.push({ x: this.cx, y: this.cy, r: 60, c: [0.5, 0.7, 1], i: 0.7 });
@@ -1277,7 +1396,7 @@ class Monster {
   }
 
   draw(ctx, cam) {
-    if (this.gibbed) return;
+    if (this.gibbed || this.state === 'dormant') return;
     if (this.type === 'chthon' && this.state === 'idle') return;
     const x = Math.round(this.cx - cam.x), y = Math.round(this.y + this.h - cam.y);
     if (x < -80 || x > ctx.canvas.width + 80 || y < -40 || y > ctx.canvas.height + 140) return;
@@ -1285,7 +1404,7 @@ class Monster {
   }
 
   drawBright(ctx, cam) {
-    if (!this.alive) return;
+    if (!this.alive || this.state === 'dormant') return;
     const x = Math.round(this.cx - cam.x), y = Math.round(this.y - cam.y);
     drawGlows(ctx, x, y + this.h, this.facing, this.glows, this.type === 'phantom' ? 0.8 : 1);
     if (this.type === 'shambler' && this.state === 'attack' && this.attackKind === 'ranged' && this.stateT < 0.8) {

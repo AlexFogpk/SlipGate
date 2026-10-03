@@ -52,6 +52,10 @@ function hitscan(attacker, x0, y0, ang, pellets, dmg, spread, range = 900) {
       const tt = rayBox(x0, y0, dx, dy, b.x, b.y, b.w, b.h);
       if (tt >= 0 && tt < best && !b.pressed) lv.pressButton(b);
     }
+    for (const b of lv.liftButtons) {
+      const tt = rayBox(x0, y0, dx, dy, b.x, b.y, b.w, 8);
+      if (tt >= 0 && tt < best && attacker && attacker.isPlayer) lv.pressLiftButton(b);
+    }
     const hx = x0 + dx * best, hy = y0 + dy * best;
     if (tgt) {
       acc.set(tgt, (acc.get(tgt) || 0) + dmg);
@@ -88,6 +92,10 @@ function lightningRay(attacker, x0, y0, ang, range, dmg) {
   for (const b of lv.buttons) {
     const tt = rayBox(x0, y0, dx, dy, b.x, b.y, b.w, b.h);
     if (tt >= 0 && tt < best && !b.pressed) lv.pressButton(b);
+  }
+  for (const b of lv.liftButtons) {
+    const tt = rayBox(x0, y0, dx, dy, b.x, b.y, b.w, 8);
+    if (tt >= 0 && tt < best && attacker && attacker.isPlayer) lv.pressLiftButton(b);
   }
   return { x: hx, y: hy, target: tgt };
 }
@@ -149,6 +157,9 @@ class Projectile {
       if (tt >= 0 && tt <= best) { best = tt; tgt = t; }
     }
     const hx = this.x + (nx - this.x) * best, hy = this.y + (ny - this.y) * best;
+    if (this.owner && this.owner.isPlayer) {
+      for (const b of lv.liftButtons) if (rayBox(this.x, this.y, nx - this.x, ny - this.y, b.x, b.y, b.w, 8) >= 0) lv.pressLiftButton(b);
+    }
     if (tgt) { this.hitEntity(tgt, hx, hy); return; }
     if (hit.hit) { this.hitWall(hx, hy, hit); return; }
     this.x = nx; this.y = ny;

@@ -372,3 +372,88 @@ function drawGlyphs(ctx, cam, list, t) {
   }
   ctx.globalAlpha = 1;
 }
+
+// ---------------- лифты и пульты вызова ----------------
+// Состояние лампы: зелёная — лифт на месте и готов, жёлтая мигает — едет или вызван.
+function liftLamp(lf, t, here = true) {
+  if (lf.moving || lf.wait > 0) return Math.floor(t * 6) % 2 ? '#ffb030' : '#6a4010';
+  return here ? '#40ff70' : '#ffb030';
+}
+
+function drawLift(ctx, lf, cam, t) {
+  const x = Math.round(lf.x - cam.x), y = Math.round(lf.y - cam.y);
+  if (x > 2000 || x + lf.w < -40 || y > 2000 || y < -900) return;
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  // тросы вертикального лифта и блок над верхней остановкой
+  if (lf.vertical) {
+    const top = Math.round(Math.min(lf.y0, lf.y1) - cam.y) - 28;
+    if (y > top) {
+      f(x + 3, top, 1, y - top, '#2a2620'); f(x + lf.w - 4, top, 1, y - top, '#2a2620');
+      f(x + 4, top, 1, y - top, '#5a5244'); f(x + lf.w - 3, top, 1, y - top, '#5a5244');
+      f(x + 1, top - 5, lf.w - 2, 5, '#1e1a16');
+      f(x + 2, top - 4, lf.w - 4, 1, '#6a604e');
+      for (const px of [x + 2, x + lf.w - 7]) { f(px, top - 3, 5, 3, '#4a4438'); f(px + 2, top - 2, 1, 1, '#9a8e78'); }
+    }
+  }
+  // платформа: рифлёный настил, полоса «осторожно» по кромке, рама
+  f(x, y, lf.w, lf.h, '#141210');
+  f(x + 1, y + 1, lf.w - 2, 2, '#6e6656');
+  f(x, y, lf.w, 1, '#a89c84');
+  for (let i = 2; i < lf.w - 2; i += 3) f(x + i, y + 1, 1, 1, '#4a4438');
+  for (let i = 1; i < lf.w - 1; i++) f(x + i, y + 3, 1, 2, ((i + Math.floor(lf.x / 4)) >> 1) % 2 ? '#d0a030' : '#2a2218');
+  f(x + 1, y + 5, lf.w - 2, 1, '#3a342c');
+  // ферма снизу
+  for (let i = 3; i < lf.w - 3; i += 6) { f(x + i, y + lf.h, 1, 3, '#2a2520'); f(x + i + 1, y + lf.h + 1, 1, 1, '#2a2520'); f(x + i + 2, y + lf.h + 2, 1, 1, '#2a2520'); }
+  f(x + 2, y + lf.h + 3, lf.w - 4, 1, '#2a2520');
+  // пульт на краю платформы
+  const cx = x + lf.w - 7;
+  f(cx + 1, y - 7, 2, 7, '#2a2520');
+  f(cx - 1, y - 11, 6, 5, '#1e1a16');
+  f(cx, y - 10, 4, 3, '#4a4438');
+}
+
+function drawLiftButton(ctx, b, cam, t) {
+  const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
+  if (x < -20 || x > 2000 || y < -30 || y > 2000) return;
+  const f = (a, c, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(a, c, w, h); };
+  // стойка с основанием
+  f(x + 3, y + 7, 4, 11, '#1e1a16'); f(x + 4, y + 7, 1, 11, '#6a604e');
+  f(x + 1, y + 16, 8, 2, '#1e1a16'); f(x + 2, y + 16, 6, 1, '#5a5244');
+  // панель: рамка, стрелка к другой остановке, кнопка
+  f(x, y, 10, 8, '#141210');
+  f(x + 1, y + 1, 8, 6, '#5a544a');
+  f(x + 1, y + 1, 8, 1, '#8a8070');
+  f(x + 2, y + 2, 3, 4, '#1a1612');
+  const lf = b.lift;
+  const ox = b.stop ? lf.x0 : lf.x1, oy = b.stop ? lf.y0 : lf.y1;
+  const sx = b.stop ? lf.x1 : lf.x0, sy = b.stop ? lf.y1 : lf.y0;
+  ctx.fillStyle = '#c8b890';
+  if (lf.vertical || Math.abs(oy - sy) > Math.abs(ox - sx)) {
+    const up = oy < sy;
+    f(x + 3, y + (up ? 2 : 5), 1, 1, '#c8b890'); f(x + 2, y + (up ? 3 : 4), 3, 1, '#c8b890'); f(x + 3, y + (up ? 4 : 3), 1, 1, '#c8b890');
+  } else {
+    const right = ox > sx;
+    f(x + (right ? 4 : 2), y + 3, 1, 2, '#c8b890'); f(x + 3, y + 2, 1, 4, '#c8b890'); f(x + (right ? 2 : 4), y + 3, 1, 2, '#c8b890');
+  }
+  const pressed = b.flash > 0;
+  f(x + 6, y + (pressed ? 3 : 2), 2, pressed ? 3 : 4, '#1a1612');
+}
+
+// Лампы лифтов и пультов светятся в темноте (рисуются после освещения).
+function drawLiftLights(ctx, lifts, buttons, cam, t) {
+  for (const lf of lifts) {
+    const x = Math.round(lf.x - cam.x) + lf.w - 6, y = Math.round(lf.y - cam.y) - 9;
+    if (x < -20 || x > 2000 || y < -20 || y > 2000) continue;
+    const col = liftLamp(lf, t);
+    ctx.globalAlpha = 0.35; ctx.fillStyle = col; ctx.fillRect(x - 1, y - 1, 4, 3);
+    ctx.globalAlpha = 1; ctx.fillRect(x, y, 2, 1);
+  }
+  for (const b of buttons) {
+    const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
+    if (x < -20 || x > 2000 || y < -30 || y > 2000) continue;
+    const here = b.lift.t === b.stop;
+    const col = b.flash > 0 ? '#ffffff' : liftLamp(b.lift, t, here);
+    ctx.globalAlpha = 0.3; ctx.fillStyle = col; ctx.fillRect(x + 5, y + 1, 4, 6);
+    ctx.globalAlpha = 1; ctx.fillRect(x + 6, y + (b.flash > 0 ? 3 : 2), 2, b.flash > 0 ? 3 : 4);
+  }
+}

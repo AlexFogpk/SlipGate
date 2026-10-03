@@ -307,18 +307,23 @@ const HUD = {
     }
 
     // полоска здоровья Вестника и Древнего
-    const boss = Game.monsters.find((m) => (m.type === 'herald' || m.type === 'elder') && m.alive && m.state !== 'idle');
+    const boss = Game.monsters.find((m) => (m.type === 'herald' || m.type === 'elder') && m.alive && m.state !== 'idle' && m.state !== 'dormant');
     if (boss) {
       const bw = Math.min(W * 0.5, 220 * u), bx = (W - bw) / 2, byy = 8 * u;
       const elder = boss.type === 'elder';
       const shielded = elder ? boss.elderShielded() : boss.heraldShielded();
+      // при появлении полоска наполняется
+      boss.barFill = boss.state === 'intro' ? clamp(boss.stateT / 3, 0, 1) : Math.min(1, (boss.barFill === undefined ? 1 : boss.barFill) + 0.02);
       ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx - 2 * u, byy - 2 * u, bw + 4 * u, 9 * u);
-      ctx.fillStyle = shielded ? (elder ? '#2a5a7a' : '#5a3a7a') : '#b02a20';
-      ctx.fillRect(bx, byy, bw * clamp(boss.health / boss.maxHealth, 0, 1), 5 * u);
+      const stun = elder && boss.stunT > 0;
+      ctx.fillStyle = stun ? (Math.floor(t * 8) % 2 ? '#f0f0ff' : '#c03028') : shielded ? (elder ? '#2a5a7a' : '#5a3a7a') : '#b02a20';
+      ctx.fillRect(bx, byy, bw * clamp(boss.health / boss.maxHealth, 0, 1) * boss.barFill, 5 * u);
+      if (elder && Game.levelDef.bossIntro && !boss.drained) { ctx.fillStyle = '#e0f0ff'; ctx.fillRect(bx + bw / 2, byy - u, Math.max(1, u * 0.6), 7 * u); }
       let label;
       if (elder) {
         const lit = Game.level.buttons.filter((b) => b.lit).length;
-        label = 'ДРЕВНИЙ' + (shielded ? '  ·  барьер, рун: ' + lit + '/' + Game.level.buttons.length : '');
+        const name = Game.levelDef.bossIntro ? 'ДРЕВНИЙ, ПОЖИРАТЕЛЬ ИЗМЕРЕНИЙ' : 'ДРЕВНИЙ';
+        label = name + (shielded ? '  ·  барьер, руны ' + lit + '/' + Game.level.buttons.length : stun ? '  ·  ОГЛУШЁН — БЕЙТЕ!' : boss.rage >= 2 ? '  ·  ЯРОСТЬ' : '');
       } else {
         const pylons = Game.monsters.filter((m) => m.type === 'pylon' && m.alive).length;
         label = 'ВЕСТНИК БЕЗДНЫ' + (shielded ? '  ·  щит, кристаллов: ' + pylons : '');

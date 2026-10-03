@@ -59,6 +59,8 @@ class Box {
 }
 
 // Лифт: движущаяся односторонняя платформа, ездит между стартом ('_') и отметкой (':').
+// Лифт ездит между двумя остановками по вызову, как в Quake: встал на него —
+// через полсекунды поехал; пульты на остановках вызывают его или отправляют.
 class Lift {
   constructor(tx, ty, len, ex, ey) {
     this.x0 = tx * TILE; this.y0 = ty * TILE;
@@ -66,19 +68,36 @@ class Lift {
     this.w = len * TILE; this.h = 7;
     this.x = this.x0; this.y = this.y0;
     this.dx = 0; this.dy = 0;
-    this.t = 0; this.dir = 1; this.wait = 1.2;
+    this.t = 0; this.goal = 0; this.wait = 0;
+    this.moving = false;
+    this.riderT = 0; this.armed = true;
+    this.vertical = this.x0 === this.x1;
     this.dur = Math.max(0.6, dist(this.x0, this.y0, this.x1, this.y1) / 58);
+  }
+  get idle() { return !this.moving && this.wait <= 0 && this.t === this.goal; }
+  // Отправить к остановке s (0 — где лифт стоит на карте, 1 — куда он ходит).
+  send(s, delay = 0.4) {
+    if (this.goal === s && (this.moving || this.wait > 0 || this.t === s)) return false;
+    this.goal = s;
+    this.wait = this.moving ? 0 : delay;
+    return true;
   }
   update(dt) {
     const px = this.x, py = this.y;
-    if (this.wait > 0) {
-      this.wait -= dt;
-      if (this.wait <= 0) Sound.play('lift', this.x + this.w / 2, this.y);
-    } else {
-      this.t += this.dir * dt / this.dur;
-      if (this.t >= 1) { this.t = 1; this.dir = -1; this.wait = 1.6; }
-      else if (this.t <= 0) { this.t = 0; this.dir = 1; this.wait = 1.6; }
-    }
+    if (this.t !== this.goal) {
+      if (this.wait > 0) {
+        this.wait -= dt;
+        if (this.wait <= 0) { this.moving = true; Sound.play('lift', this.x + this.w / 2, this.y); }
+      } else {
+        this.moving = true;
+        const dir = this.goal > this.t ? 1 : -1;
+        this.t = clamp(this.t + dir * dt / this.dur, 0, 1);
+        if (this.t === this.goal) {
+          this.moving = false;
+          Sound.play('door', this.x + this.w / 2, this.y, { vol: 0.5 });
+        }
+      }
+    } else this.wait = 0;
     const k = this.t * this.t * (3 - 2 * this.t);
     this.x = lerp(this.x0, this.x1, k);
     this.y = lerp(this.y0, this.y1, k);
@@ -272,6 +291,7 @@ class Level {
       this.lifts.push(new Lift(r.tx, r.ty, len, best ? best.tx : r.tx, best ? best.ty : r.ty));
       i = j + 1;
     }
+    this.placeLiftButtons();
     srcs.forEach((s, i) => {
       s.dest = dests[i] || dests[0] || { x: s.cx, y: s.bottom };
       this.teleports.push(s);
@@ -279,6 +299,76 @@ class Level {
     if (def.skillPortals) this.exits.forEach((e, i) => { e.skill = def.skillPortals[i]; });
     if (def.exitAfterBoss) this.exits.forEach((e) => { e.hidden = true; });
     this.computeHidden();
+  }
+
+  // Пульт вызова на каждой остановке лифта, где есть площадка: стойка рядом с лифтом
+  // на том же полу. Касание или выстрел вызывает лифт или отправляет его.
+  placeLiftButtons() {
+    this.liftButtons = [];
+    for (const lf of this.lifts) {
+      for (const s of [0, 1]) {
+        const sx = s ? lf.x1 : lf.x0, sy = s ? lf.y1 : lf.y0;
+        if (s === 1 && sx === lf.x0 && sy === lf.y0) continue;
+        const row0 = Math.round(sy / TILE);
+        const left = Math.floor(sx / TILE) - 1, right = Math.floor((sx + lf.w - 1) / TILE) + 1;
+        let placed = false;
+        // площадка рядом с остановкой: пол на уровне лифта, на клетку выше или до двух ниже
+        for (const [c, side] of [[left, -1], [right, 1], [left - 1, -1], [right + 1, 1]]) {
+          for (const row of [row0, row0 + 1, row0 - 1, row0 + 2]) {
+            const stand = row - 1;
+            if (this.tileSolid(c, stand) || this.tileSolid(c, stand - 1)) continue;
+            const t = this.tile(c, row);
+            if (!isSolidType(t) && t !== T.PLAT) continue;
+            if (this.liquidAt(c * TILE + 8, stand * TILE + 8)) continue;
+            this.liftButtons.push({ lift: lf, stop: s, side, x: c * TILE + 3, y: row * TILE - 18, w: 10, h: 18, flash: 0, cool: 0 });
+            placed = true;
+            break;
+          }
+          if (placed) break;
+        }
+        // поставить пульт негде — лифт сам приедет, когда герой подойдёт к этой остановке
+        if (!placed) (lf.autoStops = lf.autoStops || []).push(s);
+      }
+    }
+  }
+
+  pressLiftButton(b) {
+    if (b.cool > 0) return;
+    const lf = b.lift;
+    b.flash = 0.35; b.cool = 0.8;
+    Sound.play('button', b.x + 5, b.y);
+    const p = Game.player;
+    if (lf.t === b.stop && !lf.moving) {
+      // лифт уже здесь: если герой на нём — отправляем, иначе он ждёт
+      if (p && p.lift === lf) { lf.send(1 - b.stop, 0.25); lf.armed = false; }
+      return;
+    }
+    if (lf.send(b.stop, 0.15)) HUD.message('Лифт вызван');
+  }
+
+  updateLifts(dt) {
+    const p = Game.player;
+    for (const lf of this.lifts) {
+      lf.update(dt);
+      const on = p && p.alive && p.lift === lf;
+      // встал на стоящий лифт — через полсекунды он едет на другую остановку
+      if (on && lf.idle && lf.armed) {
+        lf.riderT += dt;
+        if (lf.riderT > 0.5) { lf.send(1 - lf.goal, 0); lf.armed = false; lf.riderT = 0; }
+      } else lf.riderT = 0;
+      if (!on && lf.idle) lf.armed = true;
+      if (lf.autoStops && p && p.alive && !on && lf.idle) {
+        for (const st of lf.autoStops) {
+          if (lf.t === st) continue;
+          const sx = (st ? lf.x1 : lf.x0) + lf.w / 2, sy = st ? lf.y1 : lf.y0;
+          if (Math.abs(p.cx - sx) < lf.w / 2 + 40 && Math.abs(p.y + p.h - sy) < 40) lf.send(st, 0.3);
+        }
+      }
+    }
+    for (const b of this.liftButtons) {
+      b.flash -= dt; b.cool -= dt;
+      if (p && p.alive && overlap(p, { x: b.x - 3, y: b.y, w: b.w + 6, h: b.h })) this.pressLiftButton(b);
+    }
   }
 
   // Комнаты, куда можно попасть только через тайник, скрыты стеной, пока тайник не открыт.
@@ -529,7 +619,7 @@ class Level {
   // --- логика дверей, кнопок и тайников ---
   update(dt) {
     const p = Game.player;
-    for (const lf of this.lifts) lf.update(dt);
+    this.updateLifts(dt);
     for (const c of this.crushers) c.update(dt);
     for (const m of this.movers) {
       if (m.kind === 'door' || m.kind === 'silver' || m.kind === 'gold') {
@@ -573,8 +663,31 @@ class Level {
         b.resetT -= dt;
         if (b.resetT <= 0) b.pressed = false;
       }
+      if (this.def.altarButtons) { this.chargeAltar(b, p, dt); continue; }
       if (!b.pressed && p && p.alive && overlap(p, b)) this.pressButton(b, true);
     }
+  }
+
+  // Алтарь зажигается, если простоять на нём несколько секунд (под огнём Древнего);
+  // ушёл — заряд медленно гаснет. Пока Древний не явился, алтари спят.
+  chargeAltar(b, p, dt) {
+    b.on = false;
+    if (b.lit) return;
+    const boss = Game.monsters.find((m) => m.type === 'elder' && m.alive);
+    const ready = !boss || (boss.state !== 'dormant' && boss.state !== 'intro');
+    b.on = !!(ready && p && p.alive && Math.abs(p.cx - (b.x + 6)) < 14 && Math.abs(p.y + p.h - (b.y + 14)) < 16);
+    if (b.on) {
+      b.charge = (b.charge || 0) + dt / Game.altarTime();
+      b.humT = (b.humT || 0) - dt;
+      if (b.humT <= 0) { b.humT = 0.3; Sound.play('charge', b.x + 6, b.y, { p: 0.7 + b.charge * 0.8, vol: 0.35, gap: 0.2 }); }
+      if (Math.random() < 0.6) FX.add({ kind: 'spark', x: b.x + 6 + rand(-12, 12), y: b.y + 12, vx: rand(-6, 6), vy: rand(-90, -40), life: 0.7, max: 0.7, size: 1, col: '#80f0ff', grav: -20, bright: true });
+      if (b.charge >= 1) { b.charge = 1; this.pressButton(b, true); }
+    } else b.charge = Math.max(0, (b.charge || 0) - dt * 0.2);
+  }
+
+  // Древний вытягивает силу руны: алтарь гаснет, его надо зажечь заново.
+  drainAltar(b) {
+    b.lit = false; b.pressed = false; b.charge = 0;
   }
 
   moverBlocked(m) {
@@ -1031,27 +1144,19 @@ class Level {
       }
       ctx.restore();
     }
-    for (const lf of this.lifts) {
-      const x = Math.round(lf.x - cam.x), y = Math.round(lf.y - cam.y);
-      if (x > 2000 || y > 2000 || x + lf.w < -20 || y < -20) continue;
-      ctx.fillStyle = '#1e1a16'; ctx.fillRect(x, y, lf.w, lf.h);
-      ctx.fillStyle = '#5e564a'; ctx.fillRect(x + 1, y + 1, lf.w - 2, lf.h - 2);
-      ctx.fillStyle = '#9a8e78'; ctx.fillRect(x, y, lf.w, 1);
-      ctx.fillStyle = '#3a342c'; ctx.fillRect(x + 1, y + 4, lf.w - 2, 1);
-      ctx.fillStyle = '#c8a040';
-      for (let i = 4; i < lf.w - 2; i += 8) ctx.fillRect(x + i, y + 2, 2, 1);
-      ctx.fillStyle = '#2a2520';
-      ctx.fillRect(x + 2, y + lf.h, 2, 3); ctx.fillRect(x + lf.w - 4, y + lf.h, 2, 3);
-    }
+    for (const lf of this.lifts) drawLift(ctx, lf, cam, Game.time);
+    for (const b of this.liftButtons) drawLiftButton(ctx, b, cam, Game.time);
     for (const b of this.buttons) {
       const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
       if (this.def.altarButtons) {
-        // рунический алтарь
-        ctx.fillStyle = '#1a1c24'; ctx.fillRect(x - 3, y + 6, 18, 8);
-        ctx.fillStyle = '#4a5064'; ctx.fillRect(x - 3, y + 6, 18, 1);
-        ctx.fillStyle = '#2c3040'; ctx.fillRect(x, y - 6, 12, 12);
-        ctx.fillStyle = '#50586e'; ctx.fillRect(x, y - 6, 12, 1);
-        ctx.fillStyle = b.lit ? '#1a3a4a' : '#141620'; ctx.fillRect(x + 3, y - 3, 6, 7);
+        // рунический алтарь: ступенчатое основание и обелиск с прорезью руны
+        const f = (a, c, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x + a, y + c, w, h); };
+        f(-6, 10, 24, 4, '#141620'); f(-5, 10, 22, 1, '#4a5064');
+        f(-3, 6, 18, 4, '#1a1c24'); f(-2, 6, 16, 1, '#50586e');
+        f(1, -10, 10, 16, '#141620');
+        f(2, -10, 8, 16, '#2c3040'); f(2, -10, 2, 16, '#3c4258'); f(8, -9, 2, 15, '#20242e');
+        f(3, -13, 6, 3, '#2c3040'); f(4, -15, 4, 2, '#3c4258'); f(5, -16, 2, 1, '#50586e');
+        f(4, -7, 4, 10, b.lit ? '#1a3a4a' : '#0c0e14');
         continue;
       }
       ctx.fillStyle = '#2a2622'; ctx.fillRect(x, y, 12, 12);
@@ -1089,14 +1194,30 @@ class Level {
 
   drawDecorBright(ctx, cam, t) {
     drawGlyphs(ctx, cam, this.glyphs, t);
+    drawLiftLights(ctx, this.lifts, this.liftButtons, cam, t);
     if (this.def.altarButtons) {
       for (const b of this.buttons) {
         const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
         const k = 0.6 + Math.sin(t * 3 + b.x) * 0.4;
-        ctx.fillStyle = b.lit ? '#80f0ff' : '#5a3a8a';
-        ctx.globalAlpha = b.lit ? 0.7 + k * 0.3 : 0.5 + k * 0.2;
-        ctx.fillRect(x + 5, y - 2, 2, 5); ctx.fillRect(x + 4, y, 4, 1);
+        const ch = b.charge || 0;
+        // руна: фиолетовая — спит, голубеет по мере заряда, зажжённая — сияет
+        ctx.fillStyle = b.lit ? '#80f0ff' : ch > 0 ? mix('#5a3a8a', '#80f0ff', ch) : '#5a3a8a';
+        ctx.globalAlpha = b.lit ? 0.75 + k * 0.25 : 0.5 + k * 0.2 + ch * 0.3;
+        ctx.fillRect(x + 5, y - 6, 2, 8); ctx.fillRect(x + 4, y - 4, 4, 1); ctx.fillRect(x + 4, y - 1, 4, 1);
+        if (b.lit) {
+          // столб света над зажжённым алтарём
+          const g = ctx.createLinearGradient(0, y - 70, 0, y - 8);
+          g.addColorStop(0, 'rgba(128,240,255,0)'); g.addColorStop(1, `rgba(128,240,255,${0.25 + k * 0.1})`);
+          ctx.globalAlpha = 1; ctx.fillStyle = g; ctx.fillRect(x + 3, y - 70, 6, 62);
+        }
         ctx.globalAlpha = 1;
+        if (!b.lit && (ch > 0 || b.on)) {
+          // кольцо заряда вокруг алтаря
+          ctx.strokeStyle = 'rgba(80,60,140,0.6)'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(x + 6, y - 2, 15, 0, TAU); ctx.stroke();
+          ctx.strokeStyle = '#a0f8ff'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(x + 6, y - 2, 15, -Math.PI / 2, -Math.PI / 2 + TAU * ch); ctx.stroke();
+        }
       }
     }
     for (const pad of this.jumpPads) {

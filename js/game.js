@@ -287,6 +287,7 @@ const Game = {
     this.revealT = 0;
     this.trail = [];
     this.exitHint = false;
+    this.cine = null; this.introDone = false; this.slowT = 0; this.whiteFlash = 0;
     this.attract = !!opts.attract;
     let start = { cx: 40, bottom: 40 };
     for (const s of this.level.spawns) {
@@ -299,6 +300,7 @@ const Game = {
         if (!MONSTER_DEFS[type].static) this.totalKills++;
       } else if (ITEM_CHARS.includes(s.ch)) this.items.push(new Item(s.ch, cx, bottom));
     }
+    if (def.bossIntro) for (const m of this.monsters) if (m.type === 'elder') m.elderDormant();
     if (this.attract) {
       this.player = null;
       this.cam.x = 0;
@@ -441,14 +443,26 @@ const Game = {
     const total = this.level.buttons.length;
     FX.teleport(b.x + 6, b.y);
     Sound.play('secret', b.x, b.y);
-    if (lit < total) HUD.center('Руна зажжена: ' + lit + '/' + total, 2);
-    else {
+    const boss = this.monsters.find((m) => m.type === 'elder' && m.alive);
+    if (lit < total) {
+      HUD.center('Руна зажжена: ' + lit + '/' + total + (boss ? '\nДревний призывает стражу!' : ''), 2.5);
+      if (boss) boss.elderAltarLit(lit);
+    } else {
       HUD.center('Барьер Древнего пал!\nТеперь его можно ранить — стреляйте!', 4);
       Sound.play('roar');
-      this.shake(b.x, b.y, 8);
-      const boss = this.monsters.find((m) => m.type === 'elder' && m.alive);
+      this.shake(b.x, b.y, 10);
+      this.whiteFlash = 0.7;
       if (boss) boss.elderBarrierDown();
     }
+  },
+
+  // Появление босса: камера уходит к нему, герой замирает, табличка с именем.
+  startBossIntro() {
+    this.introDone = true;
+    const boss = this.monsters.find((m) => m.type === 'elder' && m.alive);
+    if (!boss) return;
+    this.cine = { t: 0, dur: 4, boss };
+    boss.elderIntro();
   },
 
   onBossDefeated() {
@@ -486,7 +500,7 @@ const Game = {
     let n = 0;
     for (const m of this.monsters) {
       if (!m.alive || m.def.static) continue;
-      if (m.state === 'idle' || m.state === 'down' || m.state === 'dying' || m.state === 'dead') continue;
+      if (m.state === 'idle' || m.state === 'down' || m.state === 'dying' || m.state === 'dead' || m.state === 'dormant') continue;
       if (m.def.boss) return 1;
       if (Math.abs(m.cx - p.cx) < 520 && Math.abs(m.cy - p.cy) < 360) n += m.def.hp >= 250 ? 2 : 1;
     }
@@ -535,7 +549,7 @@ const Game = {
     const list = [];
     for (const m of this.monsters) {
       if (!m.alive || m === attacker || m.state === 'down') continue;
-      if (m.def.boss && (m.state === 'idle' || m.state === 'dying')) continue;
+      if (m.def.boss && (m.state === 'idle' || m.state === 'dying' || m.state === 'dormant' || m.state === 'intro')) continue;
       list.push(m);
     }
     if (this.player && this.player.alive && attacker !== this.player) list.push(this.player);
@@ -551,6 +565,8 @@ const Game = {
   skillDamageScale() { return [0.7, 1, 1, 1.1][this.skill]; },
   // ИИ: насколько охотно монстры уворачиваются и переминаются, и точность упреждения
   skillAI() { return [0.3, 0.7, 1, 1.25][this.skill]; },
+  // сколько секунд стоять на алтаре, чтобы его зажечь
+  altarTime() { return [3, 4, 4.5, 5.5][this.skill]; },
   skillLead() { return [0, 0.55, 0.85, 1][this.skill]; },
 
   aimWorld() {
@@ -569,7 +585,7 @@ const Game = {
     };
   },
 
-  cameraTarget() {
+  cameraTarget(plain = false) {
     const p = this.player;
     let tx = p.cx - this.viewW / 2, ty = p.cy - this.viewH * 0.58;
     if (Input.touchMode) tx += p.facing * 40;
@@ -579,7 +595,7 @@ const Game = {
       ty += clamp((a.y - p.cy) * 0.25, -this.viewH * 0.2, this.viewH * 0.2);
     }
     // летающий босс: держим в кадре и героя, и его
-    const b = p.alive && this.monsters.find((m) => (m.type === 'elder' || m.type === 'herald') && m.alive && m.state !== 'idle');
+    const b = !plain && p.alive && this.monsters.find((m) => (m.type === 'elder' || m.type === 'herald') && m.alive && m.state !== 'idle' && m.state !== 'dormant');
     if (b && Math.abs(b.cx - p.cx) < this.viewW * 0.8) {
       const want = b.y - 20;
       if (want < ty) ty = Math.max(want, p.cy - this.viewH * 0.84);
@@ -616,7 +632,10 @@ const Game = {
         Menu.update(dt);
         break;
       case 'playing':
-        this.updatePlay(dt);
+        // замедление времени (гибель Древнего)
+        if (this.slowT > 0) this.slowT -= dt;
+        this.whiteFlash = Math.max(0, this.whiteFlash - dt * 0.8);
+        this.updatePlay(this.slowT > 0 ? dt * 0.35 : dt);
         break;
       case 'intermission':
         this.interT += dt;
@@ -647,6 +666,31 @@ const Game = {
 
   updatePlay(dt) {
     const p = this.player;
+    // появление босса: мир замирает, живёт только он, камера смотрит на него
+    const bi = this.levelDef.bossIntro;
+    if (bi && !this.introDone && p.alive) {
+      const tx = Math.floor(p.cx / TILE), ty = Math.floor((p.y + p.h - 1) / TILE);
+      if (tx >= bi[0] && tx <= bi[2] && ty >= bi[1] && ty <= bi[3]) this.startBossIntro();
+    }
+    if (this.cine) {
+      const c = this.cine;
+      c.t += dt;
+      c.boss.update(dt);
+      p.vx = approach(p.vx, 0, 900 * dt);
+      p.vy = Math.min(p.vy + GRAVITY * dt, 800);
+      moveBody(p, dt);
+      FX.update(dt);
+      const k = clamp(Math.min(c.t / 0.8, (c.dur - c.t) / 0.7), 0, 1);
+      const pc = this.cameraTarget(true), bc = this.clampCam(c.boss.cx - this.viewW / 2, c.boss.cy - this.viewH * 0.45);
+      const tx = lerp(pc.x, bc.x, k * k * (3 - 2 * k)), ty = lerp(pc.y, bc.y, k * k * (3 - 2 * k));
+      const kk = 1 - Math.exp(-dt * 6);
+      this.cam.x = lerp(this.cam.x, tx, kk); this.cam.y = lerp(this.cam.y, ty, kk);
+      this.shakeAmt = Math.max(0, this.shakeAmt - dt * 10);
+      Sound.listenerX = p.cx; Sound.listenerY = p.cy;
+      if (c.t >= c.dur) this.cine = null;
+      Input.mouseDown = false;
+      return;
+    }
     if (Input.wasPressed('Escape', 'KeyP', 'PadStart') || Input.buttonPresses.has('pause')) { this.pause(); return; }
     if (Input.actPressed('music')) {
       if (Music.playing) Music.stop(); else Music.start(this.levelDef.music || 55, this.musicStyle());
@@ -840,6 +884,7 @@ const Game = {
           HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u);
         }
         if (this.exitHint && p.alive) this.drawExitPointer(ctx, W, H, u);
+        if (this.cine) this.drawBossCard(ctx, W, H, u);
         if (Input.touchMode) HUD.drawTouch(ctx, W, H, u);
         if (this.showStats) this.drawAutomap(ctx, W, H, u);
       }
@@ -848,6 +893,30 @@ const Game = {
     if (this.state === 'menu' || this.state === 'paused') Menu.draw(ctx, W, H, u, t);
     if (H > W * 1.15) HUD.text(ctx, 'Поверните устройство горизонтально', W / 2, this.offY - 16 * u, 6 * u, '#c8a060', 'center');
     if (this.state !== 'playing' && !Input.touchMode && !Input.padMode) HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u * 0.8);
+  },
+
+  // Табличка с именем босса и киношные полосы во время его появления.
+  drawBossCard(ctx, W, H, u) {
+    const c = this.cine;
+    const k = clamp(Math.min(c.t / 0.5, (c.dur - c.t) / 0.5), 0, 1);
+    const bar = H * 0.11 * k;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+    const a = clamp(Math.min((c.t - 1) / 0.6, (c.dur - 0.3 - c.t) / 0.5), 0, 1);
+    if (a <= 0) return;
+    ctx.globalAlpha = a;
+    const size = Math.min(34 * u, W / 9);
+    ctx.font = `${Math.round(size)}px ${TITLE_FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const y = H * 0.62;
+    ctx.fillStyle = '#05080c'; ctx.fillText('ДРЕВНИЙ', W / 2 + size * 0.05, y + size * 0.06);
+    const g = ctx.createLinearGradient(0, y, 0, y + size);
+    g.addColorStop(0, '#e8fbff'); g.addColorStop(0.5, '#70d8ff'); g.addColorStop(1, '#2a6a9a');
+    ctx.fillStyle = g; ctx.fillText('ДРЕВНИЙ', W / 2, y);
+    HUD.text(ctx, 'Пожиратель Измерений', W / 2, y + size * 1.15, 7 * u, '#a8d8f0', 'center');
+    ctx.fillStyle = '#70d8ff';
+    ctx.fillRect(W / 2 - 90 * u * a, y + size * 1.08, 180 * u * a, Math.max(1, u * 0.6));
+    ctx.globalAlpha = 1;
   },
 
   // После победы над боссом: стрелка у края экрана к открывшемуся слипгейту,
@@ -1057,6 +1126,7 @@ const Game = {
       if (p.suit > 0) tint('#20a030', 0.08);
       tint('#c01000', this.damageFlash * 0.5);
       tint('#e0b040', this.bonusFlash * 0.35);
+      tint('#ffffff', this.whiteFlash);
       if (!p.alive) tint('#400000', Math.min(0.45, p.deadT * 0.4));
     }
   },

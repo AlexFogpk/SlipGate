@@ -20,7 +20,7 @@ module.exports = {
         let hp = 0, ammo = 0, heal = 0;
         const stuck = [];
         for (const m of Game.monsters) {
-          if (!lv.boxFree(m.x, m.y, m.w, m.h)) stuck.push(m.type + '@' + Math.floor(m.cx / 16) + ',' + Math.floor((m.y + m.h - 1) / 16));
+          if (m.state !== 'dormant' && !lv.boxFree(m.x, m.y, m.w, m.h)) stuck.push(m.type + '@' + Math.floor(m.cx / 16) + ',' + Math.floor((m.y + m.h - 1) / 16));
           if (m.def.boss || m.def.static) continue;
           hp += m.def.hp;
           for (const k in (m.def.drop || {})) ammo += m.def.drop[k] * DPA[k];
