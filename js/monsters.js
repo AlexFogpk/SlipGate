@@ -30,6 +30,16 @@ const SHUB_EYES = [[-18, -62], [-6, -70], [8, -66], [20, -56], [-24, -44], [26, 
 
 const MONSTER_CHARS = { g: 'grunt', d: 'dog', e: 'enforcer', k: 'knight', o: 'ogre', z: 'zombie', f: 'fiend', s: 'scrag', n: 'hknight', v: 'vore', t: 'spawn', m: 'shambler', c: 'chthon', a: 'gargoyle', w: 'shub', r: 'scorpion', u: 'eel', y: 'pylon', h: 'herald', p: 'phantom', q: 'guardian', j: 'elder' };
 
+// --- поведение ---
+// Ловкость: шанс увернуться от летящей ракеты, гранаты или заряда лазерной пушки.
+const DODGE = { grunt: 0.3, enforcer: 0.35, dog: 0.5, knight: 0.45, hknight: 0.5, fiend: 0.55, scrag: 0.5, gargoyle: 0.6, scorpion: 0.6, phantom: 0.7, ogre: 0.15, eel: 0.3 };
+const DODGE_FROM = new Set(['rocket', 'grenade', 'bolt']);
+// Кто перепрыгивает провалы, если по ту сторону есть куда приземлиться.
+const GAP_JUMPERS = new Set(['grunt', 'dog', 'enforcer', 'knight', 'hknight', 'fiend', 'scorpion', 'phantom']);
+// Осторожные стрелки не палят сквозь своих; раненые солдаты и каратели отбегают.
+const CAREFUL = new Set(['grunt', 'enforcer', 'guardian', 'hknight']);
+const COWARDS = new Set(['grunt', 'enforcer']);
+
 class Monster {
   constructor(type, cx, bottom) {
     const d = MONSTER_DEFS[type];
@@ -77,6 +87,11 @@ class Monster {
     if (type === 'herald' || type === 'elder') { this.health = Math.round(d.hp * [0.7, 1, 1.2, 1.4][Game.skill || 1]); this.maxHealth = this.health; this.homeX = this.x; this.homeY = this.y; }
     this.blinkCd = rand(1, 3);
     this.baseY = this.y;
+    // у каждого стрелка своя удобная дистанция, чтобы толпа не стояла строем
+    this.pref = (d.keep || 0) * rand(0.85, 1.35);
+    this.navT = 0; this.goal = null; this.lastSeenT = 0;
+    this.dodgeCd = 0; this.strafe = 0; this.strafeT = rand(0.5, 1.5);
+    this.fleeT = 0; this.fled = false; this.gapJump = false;
   }
 
   get cx() { return this.x + this.w / 2; }
@@ -154,7 +169,10 @@ class Monster {
     if (this.target) {
       this.seeT -= dt;
       if (this.seeT <= 0) { this.seeT = 0.15; this.canSee = this.canSeeEntity(this.target); }
+      this.lastSeenT = this.canSee ? 0 : this.lastSeenT + dt;
     }
+    this.dodgeCd -= dt;
+    if (this.state === 'chase') this.checkDodge();
 
     switch (this.state) {
       case 'idle':
@@ -177,7 +195,7 @@ class Monster {
           if (this.lostT > 1.5 && this.blinkNear(this.target)) this.lostT = 0;
         } else this.lostT = 0;
         this.chase(dt);
-        if (this.cd <= 0 && this.target) this.tryAttack();
+        if (this.cd <= 0 && this.target && this.fleeT <= 0) this.tryAttack();
         break;
       case 'attack':
         this.stateT += dt;
@@ -246,8 +264,16 @@ class Monster {
     const t = this.target;
     if (!t) { this.state = 'idle'; return; }
     this.faceTarget();
-    const dx = t.cx - this.cx;
+    // цель не видна — идём по следу героя к ближайшей видимой точке пути
+    let gx = t.cx, gy = t.y + t.h;
+    if (!this.canSee && this.lastSeenT > 0.5 && t.isPlayer) {
+      this.navT -= dt;
+      if (this.navT <= 0) { this.navT = 0.35; this.goal = this.trailGoal(); }
+      if (this.goal) { gx = this.goal.x; gy = this.goal.y; }
+    } else this.goal = null;
+    const dx = gx - this.cx;
     const adx = Math.abs(dx);
+    const feet = this.y + this.h;
     const speed = this.def.speed * (this.waterLevel >= 2 ? 0.6 : 1);
     if (this.def.swim) {
       const ddx = t.cx - this.cx, ddy = t.cy - this.cy;
@@ -257,28 +283,61 @@ class Monster {
       return;
     }
     if (this.def.fly) {
-      const tx = t.cx + Math.sin(this.anim * 0.7 + this.seed) * 50;
-      const ty = t.y - 34 + Math.sin(this.anim * 1.3 + this.seed) * 16;
+      if (this.blockedX) this.seed += Math.PI * 0.5;   // упёрлись — облетаем с другой стороны
+      let tx = t.cx + Math.sin(this.anim * 0.7 + this.seed) * 50;
+      let ty = t.y - 34 + Math.sin(this.anim * 1.3 + this.seed) * 16;
+      if (this.goal) { tx = gx; ty = gy - 30; }
       const ddx = tx - this.cx, ddy = ty - this.cy;
       const d = Math.hypot(ddx, ddy) || 1;
-      const keep = 70;
+      const keep = this.goal ? 0 : 70;
       const k = d > keep ? 1 : -0.4;
       this.vx = approach(this.vx, ddx / d * speed * k, 260 * dt);
       this.vy = approach(this.vy, ddy / d * speed * (d > keep ? 1 : 0.3), 260 * dt);
       return;
     }
-    let want = 0;
-    const keep = this.canSee ? (this.def.keep || 0) : 0;
-    if (adx > Math.max(4, keep)) want = sign(dx);
+    if (this.onGround) this.gapJump = false;
+    let want = 0, pace = 1;
+    if (this.fleeT > 0) {
+      // ранен: отбегает от героя, пока есть куда
+      this.fleeT -= dt;
+      const away = -sign(t.cx - this.cx) || -this.facing;
+      if (this.safeStep(away)) want = away;
+      else this.fleeT = 0;
+    } else if (this.canSee && this.pref > 0) {
+      // стрелок держит свою дистанцию: подходит, пятится или переминается между выстрелами
+      this.strafeT -= dt;
+      if (this.strafeT <= 0) {
+        this.strafeT = rand(0.6, 1.4);
+        this.strafe = Math.random() < 0.25 + Game.skillAI() * 0.3 ? pick([-1, 1]) : 0;
+      }
+      if (adx > this.pref) want = sign(dx);
+      else if (adx < this.pref * 0.55 && this.safeStep(-sign(dx))) { want = -sign(dx); pace = 0.7; }
+      else if (this.strafe && this.safeStep(this.strafe)) { want = this.strafe; pace = 0.5; }
+    } else if (adx > 4) want = sign(dx);
     if (this.type === 'spawn') want = 0;
     if (want !== 0 && this.onGround) {
       const aheadX = want > 0 ? this.x + this.w + 3 : this.x - 3;
-      const g = groundBelow(aheadX, this.y + this.h + 1, 5);
-      const targetBelow = t.y + t.h > this.y + this.h + 20;
-      if (g === -1 || (g === null && !targetBelow)) want = 0;
+      const g = groundBelow(aheadX, feet + 1, 5);
+      const targetBelow = gy > feet + 20;
+      const flat = g !== null && g !== -1 && g * TILE <= feet + 2;
+      if (!flat && gy < feet - 8 && GAP_JUMPERS.has(this.type) && this.waterLevel < 2) {
+        // край платформы, а цель выше: прыгаем к ней, а не шагаем вниз
+        if (this.jumpCd <= 0) {
+          this.vy = -(this.def.jump || 330);
+          this.vx = want * Math.max(speed, 90);
+          this.onGround = false;
+          this.gapJump = true;
+          this.jumpCd = 0.8;
+        } else want = 0;
+      } else if (g === -1 || (g === null && !targetBelow)) {
+        if (!this.tryGapJump(want, speed)) want = 0;
+      }
     }
-    const accel = this.onGround ? 900 : 300;
-    this.vx = approach(this.vx, want * speed, accel * dt);
+    // в прыжке через провал скорость не гасим
+    if (!this.gapJump) {
+      const accel = this.onGround ? 900 : 300;
+      this.vx = approach(this.vx, want * speed * pace, accel * dt);
+    }
     if (this.onGround && want !== 0 && this.blockedX && this.jumpCd <= 0) {
       this.vy = -(this.def.jump || 330);
       this.jumpCd = 0.7;
@@ -286,8 +345,121 @@ class Monster {
       if (this.stuckT > 4) { this.stuckT = 0; this.vx = -want * speed; this.jumpCd = 1.5; }
     }
     if (!this.blockedX && this.onGround) this.stuckT = Math.max(0, this.stuckT - dt);
-    // монстр застрял под целью, которая стоит выше — изредка подпрыгивает
-    if (this.onGround && adx < 20 && t.y + t.h < this.y - 20 && this.jumpCd <= 0) { this.vy = -(this.def.jump || 330); this.jumpCd = 1.2; }
+    // цель стоит выше и почти над головой — запрыгиваем к ней
+    if (this.onGround && adx < 36 && gy < this.y - 4 && this.jumpCd <= 0) {
+      this.vy = -(this.def.jump || 330);
+      this.vx = sign(dx) * speed;
+      this.jumpCd = 0.9;
+    }
+  }
+
+  // Самая свежая точка следа героя, которую монстр видит отсюда и до которой
+  // допрыгнет (летуны — любая видимая).
+  trailGoal() {
+    const tr = Game.trail;
+    if (!tr || !tr.length) return null;
+    const lv = Game.level, feet = this.y + this.h;
+    const jump = this.def.jump || 330;
+    const reach = this.def.fly ? Infinity : (jump * jump) / (2 * GRAVITY) * 0.85;
+    for (let i = tr.length - 1, n = 0; i >= 0 && n < 40; i--, n++) {
+      const c = tr[i];
+      // уже стоим на этой точке — к следующей по пути
+      if (Math.abs(c.x - this.cx) < 10 && Math.abs(c.y - feet) < 20) return tr[i + 1] || null;
+      if (c.y < feet - reach) continue;
+      if (lv.los(this.cx, this.cy, c.x, c.y - 8)) return c;
+    }
+    return null;
+  }
+
+  // Шаг в сторону dir безопасен: нет стены, впереди пол, а не яма или лава.
+  safeStep(dir) {
+    const lv = Game.level, feet = this.y + this.h;
+    const x = dir > 0 ? this.x + this.w + 4 : this.x - 4;
+    if (lv.solidAt(x, feet - 4) || lv.solidAt(x, this.y + 2)) return false;
+    const g = groundBelow(x, feet + 1, 1);
+    return g !== null && g !== -1;
+  }
+
+  // Прыжок через провал или лаву: ищем по ту сторону пол, куда можно приземлиться.
+  tryGapJump(dir, speed) {
+    if (!GAP_JUMPERS.has(this.type) || this.jumpCd > 0 || this.waterLevel >= 2) return false;
+    const lv = Game.level, feet = this.y + this.h;
+    const edge = dir > 0 ? this.x + this.w : this.x;
+    for (let d = 12; d <= 72; d += 6) {
+      const lx = edge + dir * d;
+      // над провалом должно быть свободно на высоте тела
+      if (lv.solidAt(lx, feet - 6) || lv.solidAt(lx, this.y - 6)) return false;
+      const g = groundBelow(lx, feet - TILE, 3);
+      if (g === null || g === -1) continue;
+      const land = g * TILE;
+      if (land < feet - TILE || land > feet + TILE * 2) continue;
+      const far = groundBelow(lx + dir * this.w, feet - TILE, 3);
+      if (far === null || far === -1 || lv.solidAt(lx + dir * this.w, land - this.h + 2)) continue;
+      const jump = this.def.jump || 330;
+      const air = (2 * jump) / GRAVITY;
+      this.vx = dir * clamp((d + this.w) / air * 1.15, speed, 210);
+      this.vy = -jump;
+      this.onGround = false;
+      this.gapJump = true;
+      this.jumpCd = 0.8;
+      return true;
+    }
+    return false;
+  }
+
+  // Уворот: летящая в монстра ракета, граната или заряд — прыжок или рывок поперёк.
+  checkDodge() {
+    const base = DODGE[this.type];
+    if (!base || this.dodgeCd > 0) return;
+    for (const pr of Game.projectiles) {
+      if (pr.dead || !pr.owner || !pr.owner.isPlayer || !DODGE_FROM.has(pr.kind)) continue;
+      const rx = this.cx - pr.x, ry = this.cy - pr.y;
+      const v2 = pr.vx * pr.vx + pr.vy * pr.vy;
+      if (v2 < 100) continue;
+      const tc = (rx * pr.vx + ry * pr.vy) / v2;   // через сколько снаряд ближе всего
+      if (tc < 0.05 || tc > 0.6) continue;
+      if (Math.hypot(rx - pr.vx * tc, ry - pr.vy * tc) > Math.max(this.w, this.h) * 0.6 + 14) continue;
+      // по каждому снаряду монстр решает один раз
+      if (!pr.dodgeSeen) pr.dodgeSeen = new Set();
+      if (pr.dodgeSeen.has(this)) continue;
+      pr.dodgeSeen.add(this);
+      if (Math.random() >= base * Game.skillAI()) continue;
+      this.dodge(pr);
+      return;
+    }
+  }
+
+  dodge(pr) {
+    this.dodgeCd = 1.2;
+    if (this.def.blink && this.blinkCd <= 0 && this.target && this.blinkNear(this.target)) return;
+    if (this.def.fly || this.def.swim) {
+      const n = Math.hypot(pr.vx, pr.vy) || 1;
+      let px = -pr.vy / n, py = pr.vx / n;
+      if (px * (this.cx - pr.x) + py * (this.cy - pr.y) < 0) { px = -px; py = -py; }
+      this.vx = px * 230; this.vy = py * 230;
+      return;
+    }
+    if (!this.onGround) return;
+    // прыжок над снарядом; если есть куда — ещё и шаг в сторону от линии огня
+    this.vy = -(this.def.jump || 330);
+    this.onGround = false;
+    const side = Math.abs(pr.vy) > Math.abs(pr.vx) ? (sign(this.cx - pr.x) || 1) : 0;
+    if (side && this.safeStep(side)) this.vx = side * this.def.speed * 1.3;
+    this.jumpCd = 0.6;
+  }
+
+  // Между стрелком и героем стоит союзник — осторожные не стреляют сквозь своих.
+  allyInLine() {
+    const t = this.target;
+    if (!t || !t.isPlayer || !CAREFUL.has(this.type)) return false;
+    const s = this.shootPoint();
+    const dx = t.cx - s.x, dy = t.cy - s.y;
+    for (const m of Game.monsters) {
+      if (m === this || !m.alive || m.def.static || m.def.boss) continue;
+      const tt = rayBox(s.x, s.y, dx, dy, m.x, m.y, m.w, m.h);
+      if (tt >= 0 && tt < 0.92) return true;
+    }
+    return false;
   }
 
   startAttack(kind) {
@@ -307,6 +479,13 @@ class Monster {
     const d = this.distTo(t);
     const gap = this.gapTo(t);
     const see = this.canSee;
+    if (see && gap >= 14 && this.allyInLine()) {
+      // свой на линии огня: отходим в сторону и пробуем снова
+      this.cd = 0.3;
+      this.strafe = pick([-1, 1]);
+      this.strafeT = 0.6;
+      return;
+    }
     switch (this.type) {
       case 'grunt': if (see && d < 360) this.startAttack('ranged'); break;
       case 'enforcer': if (see && d < 380) this.startAttack('ranged'); break;
@@ -343,7 +522,8 @@ class Monster {
         break;
       case 'gargoyle':
         if (see && d < 250) {
-          const a = Math.atan2(t.cy - this.cy, t.cx - this.cx);
+          const pt = this.predict(t, { x: this.cx, y: this.cy }, 330);
+          const a = Math.atan2(pt.y - this.cy, pt.x - this.cx);
           this.state = 'leap'; this.stateT = 0; this.leapHit = false;
           this.vx = Math.cos(a) * 330; this.vy = Math.sin(a) * 330;
           Sound.play('sight', this.cx, this.cy, { p: 1.6, gap: 0.2 });
@@ -390,11 +570,26 @@ class Monster {
 
   shootPoint() { return { x: this.cx + this.facing * 5, y: this.y + this.h * 0.4 }; }
 
-  aimAt(t, spreadByDist = 0) {
-    const s = this.shootPoint();
-    const d = dist(s.x, s.y, t.cx, t.cy);
-    // упреждение для медленных снарядов
-    return Math.atan2(t.cy - s.y, t.cx - s.x) + rand(-1, 1) * spreadByDist * Math.min(1, d / 300);
+  // Угол выстрела; speed — скорость снаряда для стрельбы на упреждение.
+  aimAt(t, spreadByDist = 0, speed = 0, from = null) {
+    const s = from || this.shootPoint();
+    const p = speed ? this.predict(t, s, speed) : { x: t.cx, y: t.cy };
+    const d = dist(s.x, s.y, p.x, p.y);
+    return Math.atan2(p.y - s.y, p.x - s.x) + rand(-1, 1) * spreadByDist * Math.min(1, d / 300);
+  }
+
+  // Где будет цель, когда долетит снаряд. Точность упреждения растёт со сложностью;
+  // если упреждённая точка за стеной, целимся прямо.
+  predict(t, s, speed) {
+    const k = Game.skillLead();
+    if (!k) return { x: t.cx, y: t.cy };
+    let x = t.cx, y = t.cy;
+    for (let i = 0; i < 2; i++) {
+      const tt = dist(s.x, s.y, x, y) / speed;
+      x = t.cx + (t.vx || 0) * tt * k;
+      y = t.cy + clamp(t.vy || 0, -250, 250) * tt * k * 0.4;
+    }
+    return Game.level.los(s.x, s.y, x, y) ? { x, y } : { x: t.cx, y: t.cy };
   }
 
   updateLiquid(dt) {
@@ -459,6 +654,11 @@ class Monster {
     this.hurtFlash = 0.08;
     if (!this.def.static) this.retarget(attacker);
     if (this.health <= 0) { this.die(attacker); return; }
+    // тяжело раненый солдат или каратель иногда отбегает, прежде чем стрелять дальше
+    if (COWARDS.has(this.type) && !this.fled && this.health < this.def.hp * 0.35 && attacker && attacker.isPlayer && Math.random() < 0.3 + Game.skillAI() * 0.3) {
+      this.fled = true;
+      this.fleeT = rand(1, 1.8);
+    }
     if (this.def.blink && this.blinkCd <= 0 && this.target && Math.random() < 0.45) { this.blinkNear(this.target); return; }
     if (Math.random() < this.def.pain * Game.skillPainScale() && this.state !== 'leap' && this.state !== 'pain') {
       this.state = 'pain';
@@ -1121,7 +1321,7 @@ const ATTACKS = {
       if (m.fired === i && m.stateT > tt) {
         m.fired++;
         const s = m.shootPoint();
-        spawnProjectile('laser', m, s.x + m.facing * 8, s.y - 2, m.aimAt(m.target, 0.04));
+        spawnProjectile('laser', m, s.x + m.facing * 8, s.y - 2, m.aimAt(m.target, 0.04, PROJ.laser.speed));
         Sound.play('laser', m.cx, m.cy);
         m.fireAnim = 0.1;
       }
@@ -1145,7 +1345,7 @@ const ATTACKS = {
     if (m.fired === 0 && m.stateT > 0.45) {
       m.fired = 1;
       const s = m.shootPoint();
-      const base = m.aimAt(m.target);
+      const base = m.aimAt(m.target, 0, PROJ.fireball.speed);
       for (let i = -2.5; i <= 2.5; i += 1) spawnProjectile('fireball', m, s.x, s.y - 4, base + i * 0.09);
       Sound.play('fireball', m.cx, m.cy);
     }
@@ -1172,7 +1372,8 @@ const ATTACKS = {
       m.fired = 1;
       const s = m.shootPoint();
       const t = m.target;
-      const ang = lobAngle(s.x, s.y - 6, t.cx, t.cy, 330, PROJ.grenade.grav);
+      const pt = m.predict(t, s, 250);
+      const ang = lobAngle(s.x, s.y - 6, pt.x, t.cy, 330, PROJ.grenade.grav);
       spawnProjectile('grenade', m, s.x, s.y - 6, ang, { speed: 330, splash: 40 });
       Sound.play('grenade', m.cx, m.cy);
     }
@@ -1183,7 +1384,8 @@ const ATTACKS = {
       m.fired = 1;
       const s = { x: m.cx, y: m.y + 4 };
       const t = m.target;
-      const ang = lobAngle(s.x, s.y, t.cx, t.cy, 300, PROJ.flesh.grav);
+      const pt = m.predict(t, s, 230);
+      const ang = lobAngle(s.x, s.y, pt.x, t.cy, 300, PROJ.flesh.grav);
       spawnProjectile('flesh', m, s.x, s.y, ang, { speed: 300 });
       Sound.play('spit', m.cx, m.cy);
     }
@@ -1197,7 +1399,8 @@ const ATTACKS = {
     for (const [i, tt] of [[0, 0.3], [1, 0.45], [2, 0.6]]) {
       if (m.fired === i && m.stateT > tt) {
         m.fired++;
-        spawnProjectile('spike', m, m.cx + m.facing * 4, m.cy, m.aimAt(m.target, 0.06));
+        const from = { x: m.cx + m.facing * 4, y: m.cy };
+        spawnProjectile('spike', m, from.x, from.y, m.aimAt(m.target, 0.06, PROJ.spike.speed, from));
         Sound.play('spit', m.cx, m.cy);
       }
     }
@@ -1239,7 +1442,7 @@ const ATTACKS = {
       if (m.fired === i && m.stateT > tt) {
         m.fired++;
         const s = m.shootPoint();
-        spawnProjectile('shard', m, s.x + m.facing * 6, s.y, m.aimAt(m.target, 0.05), { target: m.target });
+        spawnProjectile('shard', m, s.x + m.facing * 6, s.y, m.aimAt(m.target, 0.05, PROJ.shard.speed), { target: m.target });
         Sound.play('spit', m.cx, m.cy, { p: 0.7 });
       }
     }
@@ -1267,7 +1470,7 @@ const ATTACKS = {
       if (m.fired === i && m.stateT > tt) {
         m.fired++;
         const s = m.shootPoint();
-        spawnProjectile('rune', m, s.x + m.facing * 8, s.y - 4, m.aimAt(m.target, 0.03));
+        spawnProjectile('rune', m, s.x + m.facing * 8, s.y - 4, m.aimAt(m.target, 0.03, PROJ.rune.speed));
         Sound.play('laser', m.cx, m.cy, { p: 0.7 });
         m.fireAnim = 0.12;
       }
@@ -1283,8 +1486,8 @@ const ATTACKS = {
     for (const [i, tt] of [[0, 0.25], [1, 0.33], [2, 0.41], [3, 0.49]]) {
       if (m.fired === i && m.stateT > tt) {
         m.fired++;
-        const sx = m.cx + m.facing * 10, sy = m.y + 4;
-        spawnProjectile('nail', m, sx, sy, Math.atan2(m.target.cy - sy, m.target.cx - sx) + rand(-0.06, 0.06), { dmg: 6 });
+        const from = { x: m.cx + m.facing * 10, y: m.y + 4 };
+        spawnProjectile('nail', m, from.x, from.y, m.aimAt(m.target, 0, PROJ.nail.speed, from) + rand(-0.06, 0.06), { dmg: 6 });
         Sound.play('nail', m.cx, m.cy, { p: 1.2, gap: 0.05 });
       }
     }

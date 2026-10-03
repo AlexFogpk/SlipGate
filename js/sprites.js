@@ -1650,55 +1650,260 @@ function drawMonsterSprite(ctx, x, y, m) {
 }
 
 // ---------------- предметы ----------------
+// Картинки подбираемых предметов собираются один раз: ящики со светотенью,
+// эмблемы, контур. Точка привязки — середина низа.
+const OUTLINE = '#140c08';
+
+// Ящик: контур, светлая крышка, левая кромка в свету, правая грань и низ в тени.
+function itemBox(c, x, y, w, h, hex, lid = 2) {
+  const r = ramp(hex);
+  const f = (a, b, ww, hh, col) => { c.fillStyle = col; c.fillRect(a, b, ww, hh); };
+  f(x, y, w, h, OUTLINE);
+  f(x + 1, y + 1, w - 2, h - 2, r[2]);
+  f(x + 1, y + 1, w - 2, lid, r[3]);
+  f(x + 1, y + 1, w - 3, 1, r[4]);
+  f(x + 1, y + 1 + lid, 1, h - 3 - lid, r[3]);
+  f(x + w - 2, y + 1 + lid, 1, h - 2 - lid, r[1]);
+  f(x + 1, y + h - 2, w - 2, 1, r[0]);
+  // скруглённые углы
+  c.clearRect(x, y, 1, 1); c.clearRect(x + w - 1, y, 1, 1);
+  c.clearRect(x, y + h - 1, 1, 1); c.clearRect(x + w - 1, y + h - 1, 1, 1);
+  return r;
+}
+
+// Красный крест с объёмом: центр (cx, cy), длина плеча и толщина.
+function itemCross(c, cx, cy, arm, th) {
+  const r = ramp('#c81818');
+  const f = (a, b, ww, hh, col) => { c.fillStyle = col; c.fillRect(a, b, ww, hh); };
+  const h0 = Math.floor(th / 2);
+  f(cx - h0, cy - arm, th, arm * 2 + 1, r[2]);
+  f(cx - arm, cy - h0, arm * 2 + 1, th, r[2]);
+  f(cx - h0, cy - arm, th, 1, r[3]); f(cx - arm, cy - h0, arm - h0, 1, r[3]);
+  f(cx - h0 + th - 1, cy - arm + 1, 1, arm - h0, r[1]); f(cx + th - h0, cy - h0 + th - 1, arm - th + h0 + 1, 1, r[1]);
+  f(cx - h0 + th - 1, cy + th - h0, 1, arm - th + h0 + 1, r[1]);
+}
+
+// Картинка по маске: '#' — тело, контур дорисовывается сам, цвет точки задаёт shadeAt(x, y).
+function maskArt(rows, shadeAt) {
+  const h = rows.length, w = rows[0].length;
+  const c = makeCanvas(w, h), x = c.getContext('2d');
+  const at = (i, j) => j >= 0 && j < h && i >= 0 && i < w && rows[j][i] !== '.';
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      if (!at(i, j)) continue;
+      const edge = !at(i - 1, j) || !at(i + 1, j) || !at(i, j - 1) || !at(i, j + 1);
+      x.fillStyle = edge ? OUTLINE : shadeAt(i, j, !at(i, j - 2));
+      x.fillRect(i, j, 1, 1);
+    }
+  }
+  return c;
+}
+
+const ARMOR_MASK = [
+  '..####...####..',
+  '.#####...#####.',
+  '.######.######.',
+  '###############',
+  '###############',
+  '###############',
+  '###############',
+  '.#############.',
+  '.#############.',
+  '.#############.',
+  '..###########..',
+  '..###########..',
+  '...#########...',
+];
+const PACK_MASK = [
+  '....######....',
+  '...########...',
+  '..##########..',
+  '.############.',
+  '.############.',
+  '##############',
+  '##############',
+  '##############',
+  '##############',
+  '##############',
+  '##############',
+  '.############.',
+  '..##########..',
+];
+
+const itemCache = new Map();
+function itemImg(kind) {
+  if (itemCache.has(kind)) return itemCache.get(kind);
+  let c = null;
+  const px = (cv, a, b, w, h, col) => { const x = cv.getContext('2d'); x.fillStyle = col; x.fillRect(a, b, w, h); };
+  switch (kind) {
+    case '+': {
+      // малая аптечка: эмалированный ящик с крестом
+      c = makeCanvas(13, 10);
+      const x = c.getContext('2d');
+      itemBox(x, 1, 1, 11, 9, '#cfc6b4', 2);
+      itemCross(x, 6, 5, 2, 2);
+      px(c, 2, 8, 9, 1, '#8a8274');
+      break;
+    }
+    case 'H': {
+      // большая аптечка: ручка сверху, защёлки, крупный крест
+      c = makeCanvas(17, 14);
+      const x = c.getContext('2d');
+      px(c, 6, 0, 5, 1, OUTLINE); px(c, 5, 1, 1, 2, OUTLINE); px(c, 11, 1, 1, 2, OUTLINE);
+      px(c, 6, 1, 5, 1, '#6a6a72');
+      itemBox(x, 1, 2, 15, 12, '#d8d0c0', 3);
+      px(c, 2, 5, 13, 1, '#a8a090');
+      itemCross(x, 8, 9, 3, 3);
+      px(c, 2, 4, 2, 1, '#6a6a72'); px(c, 13, 4, 2, 1, '#6a6a72');
+      break;
+    }
+    case 'M': {
+      // мегаздоровье: светящаяся сфера с белым крестом
+      c = makeCanvas(15, 15);
+      const x = c.getContext('2d');
+      const r = ['#101c78', '#1c34c0', '#3058f0', '#6a8cff', '#b8c8ff'];
+      // сфера кольцами от тени к блику, блик смещён влево-вверх
+      x.fillStyle = OUTLINE; x.beginPath(); x.arc(7.5, 7.5, 7.5, 0, TAU); x.fill();
+      [[6.5, 0, 0], [5.6, -0.5, -0.5], [4.3, -1, -1], [2.6, -1.8, -1.8], [1.2, -2.4, -2.4]].forEach(([rad, dx, dy], i) => {
+        x.fillStyle = r[i]; x.beginPath(); x.arc(7.5 + dx, 7.5 + dy, rad, 0, TAU); x.fill();
+      });
+      px(c, 6, 4, 3, 7, '#f4f4ff'); px(c, 4, 6, 7, 3, '#f4f4ff');
+      px(c, 8, 5, 1, 6, '#9fb0f0'); px(c, 4, 8, 7, 1, '#9fb0f0');
+      // пиксели без полутонов
+      const d = x.getImageData(0, 0, 15, 15);
+      for (let i = 3; i < d.data.length; i += 4) d.data[i] = d.data[i] > 100 ? 255 : 0;
+      x.putImageData(d, 0, 0);
+      break;
+    }
+    case 'A': case 'Y': case 'R': {
+      // бронежилет: наплечники, вырез ворота, пластины и шов
+      const r = ramp({ A: '#3a8a2e', Y: '#c8a428', R: '#b42420' }[kind]);
+      c = maskArt(ARMOR_MASK, (i, j, top) => {
+        if (top) return r[4];
+        if (j === 7 || j === 10 || (i === 7 && j >= 4)) return r[1];
+        if ((i === 3 || i === 11) && j === 5) return r[4];
+        return i < 4 ? r[3] : i > 11 ? r[1] : r[2];
+      });
+      break;
+    }
+    case 'U': {
+      // дробь: картонная коробка, из которой торчат пять патронов
+      c = makeCanvas(14, 13);
+      const x = c.getContext('2d');
+      const red = ramp('#d83020'), brass = ramp('#d8a840');
+      // пять гильз над краем коробки: красная гильза, светлый бок, тёмный загиб сверху
+      for (let i = 0; i < 5; i++) {
+        const sx = 2 + i * 2, top = i % 2 ? 1 : 0;
+        px(c, sx, top, 2, 6 - top, OUTLINE);
+        px(c, sx, top + 1, 2, 5 - top, red[2]);
+        px(c, sx, top + 1, 1, 5 - top, red[4]);
+        px(c, sx + 1, top + 1, 1, 1, red[0]);
+      }
+      px(c, 1, 1, 1, 5, OUTLINE); px(c, 12, 1, 1, 5, OUTLINE);
+      itemBox(x, 1, 5, 12, 8, '#7a2414', 1);
+      px(c, 2, 8, 10, 2, brass[2]); px(c, 2, 8, 10, 1, brass[3]); px(c, 11, 8, 1, 2, brass[1]);
+      px(c, 4, 9, 6, 1, '#6a3a10');
+      break;
+    }
+    case 'N': {
+      // гвозди: железный ящик с ручкой и рёбрами, на боку — гвоздь
+      c = makeCanvas(14, 12);
+      const x = c.getContext('2d');
+      px(c, 4, 0, 6, 1, OUTLINE); px(c, 4, 1, 1, 2, OUTLINE); px(c, 9, 1, 1, 2, OUTLINE); px(c, 5, 1, 4, 1, '#8a8a96');
+      const r = itemBox(x, 1, 2, 12, 10, '#5a6270', 2);
+      px(c, 2, 5, 10, 1, r[1]); px(c, 2, 6, 10, 1, r[3]);
+      // гвоздь на боку: шляпка, стержень, остриё
+      px(c, 3, 7, 1, 3, '#f0f0f8'); px(c, 4, 8, 6, 1, '#d0d0dc'); px(c, 10, 8, 1, 1, '#8a8a98');
+      px(c, 4, 9, 6, 1, r[1]);
+      break;
+    }
+    case 'K': {
+      // ракеты: две ракеты в деревянном ящике
+      c = makeCanvas(16, 16);
+      const x = c.getContext('2d');
+      const body = ramp('#8a8a80'), war = ramp('#c42818');
+      for (const rx of [3, 9]) {
+        px(c, rx + 1, 0, 2, 1, OUTLINE); px(c, rx, 1, 1, 9, OUTLINE); px(c, rx + 4, 1, 1, 9, OUTLINE);
+        px(c, rx + 1, 1, 3, 3, war[2]); px(c, rx + 1, 1, 1, 3, war[3]); px(c, rx + 2, 0, 1, 1, war[1]);
+        px(c, rx + 1, 4, 3, 6, body[2]); px(c, rx + 1, 4, 1, 6, body[4]); px(c, rx + 3, 4, 1, 6, body[1]);
+        px(c, rx + 1, 4, 3, 1, OUTLINE);
+      }
+      itemBox(x, 1, 9, 14, 7, '#7a5430', 1);
+      px(c, 5, 11, 1, 4, '#3a2410'); px(c, 10, 11, 1, 4, '#3a2410');
+      px(c, 2, 12, 12, 1, '#a07a48');
+      break;
+    }
+    case 'C': {
+      // батарея: клеммы сверху, светящаяся молния, вентиляционные щели
+      c = makeCanvas(14, 14);
+      const x = c.getContext('2d');
+      px(c, 3, 0, 3, 3, OUTLINE); px(c, 8, 0, 3, 3, OUTLINE);
+      px(c, 4, 1, 1, 2, '#d03020'); px(c, 9, 1, 1, 2, '#8a8a90');
+      const r = itemBox(x, 1, 2, 12, 12, '#46553a', 2);
+      const bolt = ['...YY', '..YY.', '.YYYY', '..YY.', '.YY..', 'YY...'];
+      bolt.forEach((row, j) => { for (let i = 0; i < 5; i++) if (row[i] === 'Y') px(c, 4 + i, 6 + j, 1, 1, i + j < 5 ? '#fff0a0' : '#f0c830'); });
+      for (let j = 6; j < 12; j += 2) px(c, 11, j, 1, 1, r[0]);
+      break;
+    }
+    case 'backpack': {
+      // рюкзак: клапан с пряжкой, ремни, нижний карман
+      const r = ramp('#6e6034');
+      c = maskArt(PACK_MASK, (i, j, top) => {
+        if (top) return r[4];
+        if ((i === 6 || i === 7) && (j === 5 || j === 6)) return '#e0b840';
+        if (j === 5 && i > 1 && i < 12) return r[0];
+        if ((i === 3 || i === 10) && j > 5) return r[1];
+        if (j >= 8 && j <= 11 && i >= 5 && i <= 8) return j === 8 ? r[0] : r[3];
+        return j < 5 ? r[3] : i < 3 ? r[3] : i > 10 ? r[1] : r[2];
+      });
+      break;
+    }
+    default: break;
+  }
+  itemCache.set(kind, c);
+  return c;
+}
+
+// Маленькие значки патронов для строки состояния.
+const AMMO_ICON_PAL = { k: OUTLINE, R: '#e04830', r: '#a82010', Y: '#f0d070', y: '#b88a30', W: '#f0f0f8', w: '#a0a0b0', m: '#5a5a66', G: '#6a7a52', g: '#46553a' };
+const AMMO_ICONS = {
+  shells: ['.kk.kk.', 'kRrkRrk', 'kRrkRrk', 'kRrkRrk', 'kRrkRrk', 'kYykYyk', 'kYykYyk', '.kk.kk.'],
+  nails: ['kkkkkkk', 'kWkWkWk', 'kwkwkwk', 'kwkwkwk', 'kwkwkwk', 'kwkwkwk', '.k.k.k.'],
+  rockets: ['..k..', '.kRk.', 'kRrrk', 'kWwmk', 'kWwmk', 'kWwmk', 'kWwmk', 'kmkmk', 'k...k'],
+  cells: ['.k...k.', 'kkkkkkk', 'kGgYggk', 'kggYYgk', 'kgYYYgk', 'kgYYggk', 'kgYgggk', 'kkkkkkk'],
+};
+function ammoIcon(kind) { return part('ammo-' + kind, AMMO_ICONS[kind], AMMO_ICON_PAL); }
+
 function drawItem(ctx, x, y, it, t) {
   const ch = it.ch;
   const bob = it.dropped ? 0 : Math.round(Math.sin(t * 3 + it.phase) * 1.5) - 1;
   ctx.save();
   ctx.translate(x, y + bob);
+  const img = itemImg(ch);
+  if (img) {
+    ctx.drawImage(img, -(img.width >> 1), -img.height);
+    const ph = it.phase || 0;
+    if (ch === 'M') {
+      // мегаздоровье пульсирует светлым ореолом
+      const p = Math.sin(t * 5 + ph) * 0.5 + 0.5;
+      ctx.strokeStyle = `rgba(150,175,255,${0.25 + p * 0.35})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(0, -7.5, 8.5 + p * 1.5, 0, TAU); ctx.stroke();
+    } else if (ch === 'C') {
+      // молния на батарее вспыхивает
+      const k = Math.sin(t * 7 + ph);
+      if (k > 0.6) { ctx.fillStyle = `rgba(255,250,200,${(k - 0.6) * 1.5})`; ctx.fillRect(-3, -8, 5, 6); }
+    }
+    // блик пробегает по крышке раз в несколько секунд
+    const g = ((t * 0.35 + ph) % 1) * 30 - 8;
+    if (g > -img.width / 2 && g < img.width / 2 - 2 && ch !== 'A' && ch !== 'Y' && ch !== 'R' && ch !== 'backpack') {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillRect(Math.round(g), -img.height + (ch === 'H' ? 3 : ch === 'K' ? 10 : ch === 'U' ? 5 : 2), 2, 1);
+    }
+    ctx.restore();
+    return;
+  }
   switch (ch) {
-    case '+':
-      R(ctx, -4, -6, 8, 6, '#b8b0a0'); R(ctx, -4, -6, 8, 1, '#e0d8c8'); R(ctx, -1, -5, 2, 4, '#c01010'); R(ctx, -3, -4, 6, 2, '#c01010');
-      break;
-    case 'H':
-      R(ctx, -6, -9, 12, 9, '#9a9488'); R(ctx, -6, -9, 12, 1, '#d8d0c0'); R(ctx, -5, -8, 10, 7, '#c8c0b0');
-      R(ctx, -1, -7, 2, 5, '#c01010'); R(ctx, -3, -5, 6, 2, '#c01010'); R(ctx, -6, -1, 12, 1, '#6a645a');
-      break;
-    case 'M': {
-      const p = Math.sin(t * 5) * 0.5 + 0.5;
-      ctx.fillStyle = '#3040c0'; ctx.beginPath(); ctx.arc(0, -6, 6, 0, TAU); ctx.fill();
-      ctx.fillStyle = mix('#6080ff', '#c0d0ff', p); ctx.beginPath(); ctx.arc(0, -6, 4.5, 0, TAU); ctx.fill();
-      R(ctx, -2, -9, 2, 2, '#ffffff');
-      break;
-    }
-    case 'A': case 'Y': case 'R': {
-      const col = ch === 'A' ? '#3a8a2e' : ch === 'Y' ? '#c0a020' : '#b02020';
-      R(ctx, -6, -11, 12, 11, col);
-      R(ctx, -2, -11, 4, 2, '#000000');
-      R(ctx, -6, -11, 4, 1, mix(col, '#ffffff', 0.35));
-      R(ctx, 2, -11, 4, 1, mix(col, '#ffffff', 0.35));
-      R(ctx, -1, -9, 2, 9, shade(col, 0.6));
-      R(ctx, 4, -10, 2, 10, shade(col, 0.7));
-      R(ctx, -6, -1, 12, 1, shade(col, 0.5));
-      break;
-    }
-    case 'U':
-      R(ctx, -5, -7, 10, 7, '#8a2a1a'); R(ctx, -5, -7, 10, 1, '#aa4a2a');
-      for (let i = 0; i < 4; i++) { R(ctx, -4 + i * 2, -9, 1, 2, '#a02010'); R(ctx, -4 + i * 2, -10, 1, 1, '#d0a040'); }
-      break;
-    case 'N':
-      R(ctx, -5, -7, 10, 7, '#5a5a60'); R(ctx, -5, -7, 10, 1, '#7a7a82');
-      for (let i = 0; i < 4; i++) R(ctx, -4 + i * 2, -9, 1, 2, '#b0b0b8');
-      R(ctx, -3, -4, 6, 1, '#3a3a40');
-      break;
-    case 'K':
-      R(ctx, -5, -6, 10, 6, '#6a4a2a'); R(ctx, -5, -6, 10, 1, '#8a6a3a');
-      R(ctx, -3, -11, 2, 5, '#7a7a70'); R(ctx, 1, -11, 2, 5, '#7a7a70');
-      R(ctx, -3, -12, 2, 1, '#b02010'); R(ctx, 1, -12, 2, 1, '#b02010');
-      break;
-    case 'C':
-      R(ctx, -5, -8, 10, 8, '#4a5a3a'); R(ctx, -5, -8, 10, 1, '#6a7a52');
-      R(ctx, 0, -7, 2, 3, '#e0c030'); R(ctx, -1, -4, 3, 1, '#e0c030'); R(ctx, -1, -3, 2, 2, '#e0c030');
-      break;
     case 'Q': {
       const k = Math.sin(t * 2);
       const w = Math.max(2, Math.round(Math.abs(k) * 10));
@@ -1734,10 +1939,6 @@ function drawItem(ctx, x, y, it, t) {
       drawKeyIcon(ctx, 0, -6, col);
       break;
     }
-    case 'backpack':
-      R(ctx, -5, -9, 10, 9, '#6a5030'); R(ctx, -5, -9, 10, 1, '#8a6a40'); R(ctx, -4, -6, 8, 3, '#5a4028');
-      R(ctx, -2, -10, 4, 1, '#4a3a20'); R(ctx, 3, -8, 1, 7, '#4a3a20');
-      break;
     default:
       if (ch >= '3' && ch <= '9') {
         R(ctx, -9, -2, 18, 2, '#2a2420');

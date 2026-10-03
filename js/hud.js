@@ -18,6 +18,8 @@ const DIGITS = {
 };
 const DIGIT_GOLD = ['#f8e0a0', '#f0cc78', '#e0b060', '#cc9848', '#b88038', '#a06a2a', '#88561e'];
 const DIGIT_RED = ['#ffb0a0', '#ff8070', '#f05848', '#d84030', '#c02818', '#a01810', '#801008'];
+const DIGIT_WHITE = ['#ffffff', '#fff8e0', '#fff0c8', '#ffe8b0', '#f8dc98', '#f0d088', '#e0c078'];
+const HUD_BAR = 40;   // высота строки состояния в единицах интерфейса
 
 const HUD = {
   msgs: [],
@@ -25,8 +27,12 @@ const HUD = {
   centerT: 0,
   hitT: 0,
   hitSide: 0,
+  flash: {},
+  prev: null,
+  weaponT: 0,
+  barTex: null,
 
-  reset() { this.msgs.length = 0; this.centerT = 0; this.hitT = 0; },
+  reset() { this.msgs.length = 0; this.centerT = 0; this.hitT = 0; this.weaponT = 0; this.flash = {}; this.prev = null; },
 
   message(text) {
     this.msgs.push({ text, t: 3.5 });
@@ -53,13 +59,15 @@ const HUD = {
     }
     this.centerT -= dt;
     this.hitT -= dt;
+    this.weaponT -= dt;
+    for (const k in this.flash) this.flash[k].t -= dt;
   },
 
   num(ctx, value, x, y, ps, red, align = 'left', minDigits = 1) {
     const s = String(Math.max(0, Math.floor(value))).padStart(minDigits, ' ');
     const cw = 6 * ps;
     let cx = align === 'right' ? x - s.length * cw : x;
-    const pal = red ? DIGIT_RED : DIGIT_GOLD;
+    const pal = Array.isArray(red) ? red : red ? DIGIT_RED : DIGIT_GOLD;
     for (const ch of s) {
       const g = DIGITS[ch];
       if (g) {
@@ -86,97 +94,222 @@ const HUD = {
     ctx.fillText(str, x, y);
   },
 
+  // --- строка состояния ---
+  // Металлическая панель (текстура строится один раз под ширину экрана): полоса
+  // инвентаря сверху — оружие с картинками и все патроны, ниже три утопленные
+  // секции: броня, лицо и здоровье, патроны текущего оружия.
+  barTexture(w) {
+    if (this.barTex && this.barTex.width === w) return this.barTex;
+    const h = HUD_BAR;
+    const c = makeCanvas(w, h), x = c.getContext('2d');
+    const img = x.createImageData(w, h), d = img.data;
+    for (let j = 0; j < h; j++) {
+      const k = 1 - (j / h) * 0.35;
+      for (let i = 0; i < w; i++) {
+        const n = (hash2(i >> 1, j, 3) - 0.5) * 16 + (hash2(i >> 3, j >> 2, 5) - 0.5) * 14 + ((i * 7 + j * 3) % 23 === 0 ? -10 : 0);
+        const o = (j * w + i) * 4;
+        d[o] = (64 + n) * k; d[o + 1] = (47 + n * 0.8) * k; d[o + 2] = (31 + n * 0.6) * k; d[o + 3] = 245;
+      }
+    }
+    x.putImageData(img, 0, 0);
+    const line = (y, col) => { x.fillStyle = col; x.fillRect(0, y, w, 1); };
+    line(0, '#a07c4a'); line(1, '#64482a'); line(2, '#1a1008');
+    line(14, '#1e140a'); line(15, '#6e5232');
+    for (let i = 10; i < w - 4; i += 64) {
+      x.fillStyle = '#2a1c0e'; x.fillRect(i, 38, 2, 2); x.fillStyle = '#c8a070'; x.fillRect(i, 38, 1, 1);
+    }
+    this.barTex = c;
+    return c;
+  },
+
+  inset(ctx, x, y, w, h, u, glow) {
+    ctx.fillStyle = glow || 'rgba(10,6,3,0.62)';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#120a04';
+    ctx.fillRect(x, y, w, u); ctx.fillRect(x, y, u, h);
+    ctx.fillStyle = 'rgba(170,130,80,0.45)';
+    ctx.fillRect(x, y + h - u, w, u); ctx.fillRect(x + w - u, y, u, h);
+  },
+
+  bar(ctx, x, y, w, h, k, col, u) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, w, h);
+    const fw = Math.round(w * clamp(k, 0, 1));
+    ctx.fillStyle = col; ctx.fillRect(x, y, fw, h);
+    ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.fillRect(x, y, fw, Math.max(1, u * 0.6));
+  },
+
+  // Картинка, вписанная в прямоугольник, пиксели без сглаживания.
+  icon(ctx, img, cx, cy, maxW, maxH, scale, alpha = 1) {
+    if (!img) return;
+    const k = Math.min(scale, maxW / img.width, maxH / img.height);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(img, Math.round(cx - img.width * k / 2), Math.round(cy - img.height * k / 2), Math.round(img.width * k), Math.round(img.height * k));
+    ctx.globalAlpha = 1;
+  },
+
+  // Числа вспыхивают: золотом при подборе, красным при потере. Смена оружия — подпись.
+  trackValues(p) {
+    const w = WEAPONS[p.weapon];
+    const v = { health: p.health, armor: p.armor, ammo: w.ammo ? p.ammo[w.ammo] : -1, weapon: p.weapon, p };
+    const prev = this.prev;
+    if (prev && prev.p === p) {
+      for (const k of ['health', 'armor']) if (v[k] !== prev[k]) this.flash[k] = { t: 0.45, up: v[k] > prev[k] };
+      if (v.weapon === prev.weapon && v.ammo > prev.ammo) this.flash.ammo = { t: 0.45, up: true };
+      if (v.weapon !== prev.weapon) this.weaponT = 1.6;
+    }
+    this.prev = v;
+  },
+
+  digitPal(key, low) {
+    const f = this.flash[key];
+    if (f && f.t > 0 && Math.floor(f.t * 16) % 2 === 0) return f.up ? DIGIT_WHITE : DIGIT_RED;
+    return low ? DIGIT_RED : DIGIT_GOLD;
+  },
+
   draw(ctx, W, H, u, t) {
     const p = Game.player;
     if (!p) return;
+    this.trackValues(p);
     const VW = W / u;
-    const barH = 32;
-    const by = H - barH * u;
-    // подложка
-    const g = ctx.createLinearGradient(0, by, 0, H);
-    g.addColorStop(0, 'rgba(46,32,20,0.92)');
-    g.addColorStop(1, 'rgba(20,13,8,0.96)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, by, W, barH * u);
-    ctx.fillStyle = '#7a5a34'; ctx.fillRect(0, by, W, Math.max(1, u));
-    ctx.fillStyle = '#2a1a0c'; ctx.fillRect(0, by + u, W, Math.max(1, u));
+    const by = H - HUD_BAR * u;
 
-    const cw = Math.min(VW - 8, 400);
-    const x0 = (VW - cw) / 2;
-    const X = (v) => (x0 + v) * u;
-    const rowY = by + 3 * u;
-
-    // слоты оружия
-    const slotW = Math.min(18, cw * 0.42 / 9);
-    for (let n = 1; n <= 9; n++) {
-      const sx = X((n - 1) * slotW);
-      const owned = p.weapons[n];
-      const cur = p.weapon === n;
-      ctx.fillStyle = cur ? '#8a6428' : owned ? '#3a2a18' : '#1e140c';
-      ctx.fillRect(sx, rowY, (slotW - 2) * u, 9 * u);
-      if (cur) { ctx.fillStyle = '#f0c870'; ctx.fillRect(sx, rowY, (slotW - 2) * u, u); }
-      this.text(ctx, String(n), sx + (slotW - 2) * u / 2, rowY + 1.5 * u, 6 * u, owned ? (cur ? '#fff0c0' : '#c8a060') : '#4a3a28', 'center', false);
+    // мало здоровья — по краям экрана пульсирует красное
+    if (p.alive && p.health <= 25) {
+      const a = 0.16 + Math.sin(t * 6) * 0.08;
+      const g = ctx.createRadialGradient(W / 2, by / 2, Math.min(W, by) * 0.35, W / 2, by / 2, Math.max(W, by) * 0.75);
+      g.addColorStop(0, 'rgba(150,0,0,0)');
+      g.addColorStop(1, `rgba(150,0,0,${a})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, by);
     }
-    // счётчики патронов
-    const ammoX = 9 * slotW + 6;
-    const kinds = [['shells', '#c04020'], ['nails', '#9a9aa4'], ['rockets', '#b07030'], ['cells', '#e0c030']];
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.barTexture(Math.ceil(VW)), 0, by, Math.ceil(VW) * u, HUD_BAR * u);
+
+    const cw = Math.min(VW - 8, 440);
+    const x0 = (VW - cw) / 2;
+    const X = (v) => Math.round((x0 + v) * u);
+    const rowY = Math.round(by + 3.5 * u), rowH = Math.round(10 * u);
+
+    // оружие: картинки в ячейках, номер в углу, выбранное — в золотой рамке
+    const slotW = Math.min(26, (cw * 0.6) / 9);
+    for (let n = 1; n <= 9; n++) {
+      const sx = X((n - 1) * slotW), sw = Math.round((slotW - 1.5) * u);
+      const owned = p.weapons[n], cur = p.weapon === n;
+      const empty = owned && !p.hasAmmoFor(n);
+      this.inset(ctx, sx, rowY, sw, rowH, u, cur ? 'rgba(150,100,30,0.55)' : null);
+      if (owned) this.icon(ctx, gunImg(n, t), sx + sw / 2 + u, rowY + rowH / 2 + 0.5 * u, sw - 4 * u, rowH - 3 * u, u, empty ? 0.35 : cur ? 1 : 0.8);
+      if (cur) {
+        ctx.fillStyle = '#f0c870';
+        ctx.fillRect(sx, rowY, sw, u); ctx.fillRect(sx, rowY + rowH - u, sw, u);
+        ctx.fillRect(sx, rowY, u, rowH); ctx.fillRect(sx + sw - u, rowY, u, rowH);
+      }
+      this.text(ctx, String(n), sx + 1.5 * u, rowY + 1.3 * u, Math.max(3.6 * u, 6), cur ? '#fff0c0' : empty ? '#c05040' : owned ? '#c8a060' : '#4a3a28', 'left', false);
+    }
+    // все патроны: значок и число, патроны текущего оружия подсвечены
+    const ammoX = 9 * slotW + 3;
     const aw = (cw - ammoX) / 4;
-    kinds.forEach(([k, col], i) => {
-      const ax = X(ammoX + i * aw);
-      const active = WEAPONS[p.weapon].ammo === k;
-      ctx.fillStyle = col; ctx.fillRect(ax, rowY + 2 * u, 4 * u, 5 * u);
-      this.text(ctx, String(p.ammo[k]), ax + 6 * u, rowY + 1.5 * u, 6 * u, active ? '#fff0c0' : '#a88858', 'left', false);
+    const curAmmo = WEAPONS[p.weapon].ammo;
+    ['shells', 'nails', 'rockets', 'cells'].forEach((k, i) => {
+      const ax = X(ammoX + i * aw), axw = Math.round((aw - 2) * u);
+      const active = curAmmo === k;
+      this.inset(ctx, ax, rowY, axw, rowH, u, active ? 'rgba(150,100,30,0.55)' : null);
+      this.icon(ctx, ammoIcon(k), ax + 5 * u, rowY + rowH / 2, 8 * u, rowH - 2 * u, u * 0.95);
+      const v = p.ammo[k];
+      this.text(ctx, String(v), ax + 10 * u, rowY + 2.7 * u, Math.max(5 * u, 7), v === 0 ? '#7a4a30' : active ? '#fff0c0' : '#c8a060', 'left', false);
+      if (active) { ctx.fillStyle = '#f0c870'; ctx.fillRect(ax, rowY + rowH - u, axw, u); }
     });
 
-    // броня / лицо+здоровье / патроны текущего оружия
-    const my = by + 14 * u;
-    const ps = 2 * u;
+    // три секции: броня, здоровье, патроны
+    const py = Math.round(by + 16.5 * u), ph = Math.round(21 * u);
     const third = cw / 3;
-    if (p.armor > 0) {
-      const col = p.armorType >= 0.8 ? '#b02020' : p.armorType >= 0.6 ? '#c0a020' : '#3a8a2e';
-      const ax = X(4), ay = my;
-      ctx.fillStyle = col; ctx.fillRect(ax, ay, 12 * u, 13 * u);
-      ctx.fillStyle = '#000'; ctx.fillRect(ax + 4 * u, ay, 4 * u, 2 * u);
-      ctx.fillStyle = shade(col, 0.6); ctx.fillRect(ax + 5.5 * u, ay + 2 * u, u, 11 * u);
-    } else {
-      ctx.strokeStyle = '#4a3a28'; ctx.lineWidth = u;
-      ctx.strokeRect(X(4) + u / 2, my + u / 2, 11 * u, 12 * u);
+    const ps = 2 * u;
+    const panel = (i) => ({ x: X(i * third), w: Math.round((third - 3) * u) });
+    // броня
+    {
+      const { x, w } = panel(0);
+      this.inset(ctx, x, py, w, ph, u);
+      const kind = p.armorType >= 0.8 ? 'R' : p.armorType >= 0.6 ? 'Y' : 'A';
+      this.icon(ctx, itemImg(kind), x + 11 * u, py + ph / 2 - u, 16 * u, 15 * u, u * 1.15, p.armor > 0 ? 1 : 0.22);
+      const jx = this.flash.armor && this.flash.armor.t > 0 && !this.flash.armor.up ? Math.round(Math.sin(t * 90) * u) : 0;
+      this.num(ctx, p.armor, x + 22 * u + jx, py + 2.5 * u, ps, this.digitPal('armor', false));
+      const col = { A: '#4aa03a', Y: '#d8b030', R: '#c83028' }[kind];
+      this.bar(ctx, x + 22 * u, py + ph - 4.5 * u, w - 26 * u, 2 * u, p.armor / 200, col, u);
     }
-    this.num(ctx, p.armor, X(20), my - 0.5 * u, ps, false);
-
-    drawFace(ctx, X(third + 4), my - 2 * u, u, p, t);
-    this.num(ctx, p.health, X(third + 22), my - 0.5 * u, ps, p.health <= 25);
-
-    const w = WEAPONS[p.weapon];
-    if (w.ammo) {
-      const col = { shells: '#c04020', nails: '#9a9aa4', rockets: '#b07030', cells: '#e0c030' }[w.ammo];
-      ctx.fillStyle = col; ctx.fillRect(X(third * 2 + 4), my + u, 9 * u, 11 * u);
-      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(X(third * 2 + 4), my + 7 * u, 9 * u, 5 * u);
-      this.num(ctx, p.ammo[w.ammo], X(third * 2 + 17), my - 0.5 * u, ps, p.ammo[w.ammo] === 0);
-    } else this.text(ctx, 'ТОПОР', X(third * 2 + 4), my + 3 * u, 7 * u, '#c8a060', 'left', false);
-
-    // ключи и усиления (правый край)
-    let kx = W - 6 * u;
-    const drawIco = (fn) => { kx -= 13 * u; fn(kx); };
-    if (p.keys.gold) drawIco((x) => { ctx.save(); ctx.translate(x + 6 * u, my + 6 * u); ctx.scale(u * 1.4, u * 1.4); drawKeyIcon(ctx, 0, 0, '#e8b830'); ctx.restore(); });
-    if (p.keys.silver) drawIco((x) => { ctx.save(); ctx.translate(x + 6 * u, my + 6 * u); ctx.scale(u * 1.4, u * 1.4); drawKeyIcon(ctx, 0, 0, '#c8d0dc'); ctx.restore(); });
-    const pw = [['quad', '#4a68ff'], ['pent', '#ff3020'], ['ring', '#d0a030'], ['suit', '#3a9a4a']];
-    let py = 6 * u;
-    for (const [k, col] of pw) {
-      if (p[k] > 0) {
-        const blink = p[k] < 3 && Math.floor(t * 6) % 2;
-        ctx.fillStyle = blink ? '#ffffff' : col;
-        ctx.fillRect(W - 44 * u, py, 8 * u, 8 * u);
-        this.text(ctx, String(Math.ceil(p[k])), W - 34 * u, py + u, 7 * u, '#fff0c0');
-        py += 11 * u;
+    // лицо и здоровье
+    {
+      const { x, w } = panel(1);
+      const low = p.health <= 25;
+      this.inset(ctx, x, py, w, ph, u, low && Math.floor(t * 4) % 2 ? 'rgba(90,10,6,0.6)' : null);
+      drawFace(ctx, x + 3 * u, py + 3 * u, u, p, t);
+      const jx = this.flash.health && this.flash.health.t > 0 && !this.flash.health.up ? Math.round(Math.sin(t * 90) * u) : 0;
+      this.num(ctx, p.health, x + 22 * u + jx, py + 2.5 * u, ps, this.digitPal('health', low));
+      const bx = x + 22 * u, bw = w - 26 * u;
+      this.bar(ctx, bx, py + ph - 4.5 * u, bw, 2 * u, p.health / 100, low ? '#e03020' : '#c84030', u);
+      if (p.health > 100) { ctx.fillStyle = '#6a8cff'; ctx.fillRect(bx, py + ph - 4.5 * u, Math.round(bw * clamp((p.health - 100) / 100, 0, 1)), 2 * u); }
+    }
+    // патроны текущего оружия
+    {
+      const { x, w } = panel(2);
+      this.inset(ctx, x, py, w, ph, u);
+      const wd = WEAPONS[p.weapon];
+      if (wd.ammo) {
+        const v = p.ammo[wd.ammo];
+        this.icon(ctx, itemImg(AMMO_ITEM[wd.ammo]), x + 11 * u, py + ph / 2 - u, 16 * u, 15 * u, u * 1.1);
+        this.num(ctx, v, x + 22 * u, py + 2.5 * u, ps, this.digitPal('ammo', v === 0));
+        this.bar(ctx, x + 22 * u, py + ph - 4.5 * u, w - 26 * u, 2 * u, v / AMMO_MAX[wd.ammo], '#d8a040', u);
+      } else {
+        this.icon(ctx, gunImg(1), x + 11 * u, py + ph / 2, 16 * u, 14 * u, u * 1.2);
+        this.text(ctx, 'ТОПОР', x + 22 * u, py + 6 * u, 6 * u, '#c8a060', 'left', false);
       }
     }
+    // ключи: в правом поле строки, а если его нет — над секцией патронов
+    const keys = [p.keys.silver && '#c8d0dc', p.keys.gold && '#e8b830'].filter(Boolean);
+    if (keys.length) {
+      const margin = (VW - cw) / 2;
+      const kx0 = margin >= 30 ? W - 15 * u : X(cw) - 13 * u;
+      const ky = margin >= 30 ? py + 3 * u : by - 15 * u;
+      keys.forEach((col, i) => {
+        const kx = kx0 - i * 14 * u;
+        this.inset(ctx, kx - 6 * u, ky - 1 * u, 12 * u, 14 * u, u);
+        ctx.save(); ctx.translate(kx, ky + 6 * u); ctx.scale(u * 1.4, u * 1.4); drawKeyIcon(ctx, 0, 0, col); ctx.restore();
+      });
+    }
+
+    // название оружия при смене
+    if (this.weaponT > 0) {
+      ctx.globalAlpha = clamp(this.weaponT * 2, 0, 1);
+      this.text(ctx, WEAPONS[p.weapon].name.toUpperCase(), W / 2, by - 12 * u, 6 * u, '#f0d080', 'center');
+      ctx.globalAlpha = 1;
+    }
+
+    // усиления: значок в круге, кольцо — сколько осталось
+    const pw = [['quad', 'Q', '#4a68ff'], ['pent', 'X', '#ff3020'], ['ring', 'V', '#d0a030'], ['suit', 'W', '#3a9a4a']];
+    let pi = 0;
+    for (const [k, ch, col] of pw) {
+      if (!(p[k] > 0)) continue;
+      const cx = W - 16 * u, cy = 16 * u + pi * 24 * u;
+      const blink = p[k] < 3 && Math.floor(t * 6) % 2;
+      ctx.fillStyle = 'rgba(10,6,3,0.7)';
+      ctx.beginPath(); ctx.arc(cx, cy, 10 * u, 0, TAU); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2.4 * u;
+      ctx.beginPath(); ctx.arc(cx, cy, 10 * u, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = blink ? '#ffffff' : col;
+      ctx.lineWidth = 1.6 * u;
+      ctx.beginPath(); ctx.arc(cx, cy, 10 * u, -Math.PI / 2, -Math.PI / 2 + TAU * clamp(p[k] / 30, 0, 1)); ctx.stroke();
+      ctx.save(); ctx.translate(cx, cy + 6.5 * u); ctx.scale(u * 0.9, u * 0.9);
+      drawItem(ctx, 0, 0, { ch, dropped: true, phase: 0 }, t);
+      ctx.restore();
+      this.text(ctx, String(Math.ceil(p[k])), cx - 13 * u, cy - 3 * u, 6 * u, blink ? '#ffffff' : '#fff0c0', 'right');
+      pi++;
+    }
+
     // воздух под водой
     if (p.waterLevel === 3 && p.suit <= 0) {
-      const bw = 60 * u, bx = (W - bw) / 2, byy = by - 10 * u;
-      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(bx - u, byy - u, bw + 2 * u, 6 * u);
-      ctx.fillStyle = p.air > 3 ? '#6ab0e0' : '#e05040';
-      ctx.fillRect(bx, byy, bw * clamp(p.air / 12, 0, 1), 4 * u);
+      const bw = 70 * u, bx = Math.round((W - bw) / 2), byy = Math.round(by - 24 * u);
+      this.inset(ctx, bx - 2 * u, byy - 2 * u, bw + 4 * u, 8 * u, u);
+      this.bar(ctx, bx, byy, bw, 4 * u, p.air / 12, p.air > 3 ? '#6ab0e0' : '#e05040', u);
+      this.text(ctx, 'ВОЗДУХ', bx - 4 * u, byy - 0.5 * u, 4.5 * u, '#a8d0f0', 'right');
     }
 
     // полоска здоровья Вестника и Древнего
@@ -237,7 +370,7 @@ const HUD = {
   },
 
   layoutTouch(W, H, u) {
-    const by = H - 32 * u;
+    const by = H - HUD_BAR * u;
     Input.touchButtons = [
       { name: 'pause', x: W - 18 * u, y: 18 * u, r: 13 * u, label: 'II' },
       { name: 'next', x: W - 22 * u, y: by - 58 * u, r: 16 * u, label: '⇄' },

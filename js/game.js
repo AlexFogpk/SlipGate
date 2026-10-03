@@ -84,10 +84,12 @@ const Game = {
   cam: { x: 0, y: 0 },
   shakeAmt: 0, kickAmt: 0, kickX: 0, kickY: 0,
   shakeOn: Store.get('shake', true),
+  brightness: clamp(Store.get('brightness', 1), 0.5, 1.6),
   damageFlash: 0, bonusFlash: 0,
   bossFx: 0, bossHintShown: false,
   god: false,
   startInv: null,
+  trail: [],               // след героя: точки, где он стоял (по ним монстры ищут обход)
   attract: false,
   deathMsg: '',
   interT: 0,
@@ -134,6 +136,12 @@ const Game = {
     this.light.width = vw; this.light.height = vh;
     this.u = Math.max(0.8, Math.min(this.canvas.width / 540, this.canvas.height / 300));
     HUD.layoutTouch(this.canvas.width, this.canvas.height, this.u);
+  },
+
+  // Яркость: выше 100% поднимает тени (как гамма в Quake), ниже — приглушает свет.
+  setBrightness(v) {
+    this.brightness = clamp(Math.round(v * 10) / 10, 0.5, 1.6);
+    Store.set('brightness', this.brightness);
   },
 
   toggleFullscreen() {
@@ -277,6 +285,7 @@ const Game = {
     for (const t of this.traps) t.spawn.forEach(([,, ch], i) => { if (this.trapSpawns(ch, i)) this.totalKills++; });
     this.mapOpen = false;
     this.revealT = 0;
+    this.trail = [];
     this.attract = !!opts.attract;
     let start = { cx: 40, bottom: 40 };
     for (const s of this.level.spawns) {
@@ -530,6 +539,9 @@ const Game = {
   skillCdScale() { return [1.35, 1, 0.8, 0.55][this.skill]; },
   skillPainScale() { return [1, 1, 0.8, 0.4][this.skill]; },
   skillDamageScale() { return [0.7, 1, 1, 1.1][this.skill]; },
+  // ИИ: насколько охотно монстры уворачиваются и переминаются, и точность упреждения
+  skillAI() { return [0.3, 0.7, 1, 1.25][this.skill]; },
+  skillLead() { return [0, 0.55, 0.85, 1][this.skill]; },
 
   aimWorld() {
     const p = this.player;
@@ -567,7 +579,7 @@ const Game = {
 
   clampCam(tx, ty) {
     const lv = this.level;
-    const maxX = lv.pxW - this.viewW, maxY = lv.pxH - this.viewH + 34;
+    const maxX = lv.pxW - this.viewW, maxY = lv.pxH - this.viewH + 42;   // пол не прячется под строкой состояния
     tx = maxX < 0 ? maxX / 2 : clamp(tx, 0, maxX);
     ty = maxY < 0 ? maxY / 2 : clamp(ty, 0, maxY);
     return { x: tx, y: ty };
@@ -646,6 +658,7 @@ const Game = {
     this.level.update(dt);
     p.update(dt);
     if (p.alive) this.checkTriggers(p);
+    this.recordTrail(this.player);
     for (const m of this.monsters) m.update(dt);
     Music.setIntensity(this.musicIntensity());
     this.jumpPads();
@@ -672,6 +685,15 @@ const Game = {
     }
   },
 
+  recordTrail(p) {
+    if (!p.alive || !p.onGround) return;
+    const tr = this.trail, last = tr[tr.length - 1];
+    const x = p.cx, y = p.y + p.h;
+    if (last && Math.abs(last.x - x) + Math.abs(last.y - y) < 24) return;
+    tr.push({ x, y });
+    if (tr.length > 60) tr.shift();
+  },
+
   // Возрождение у контрольной точки: мир остаётся как был, монстры теряют след.
   // Ключи, оружие и патроны, подобранные после точки, не теряются: предметов
   // на уровне уже нет, и без них можно застрять.
@@ -687,6 +709,7 @@ const Game = {
     p.health = Math.max(p.health, 60);
     this.player = p;
     this.projectiles = [];
+    this.trail = [];
     for (const m of this.monsters) {
       if (!m.alive || m.def.boss) continue;
       m.target = null;
@@ -718,6 +741,7 @@ const Game = {
       p.x = tp.dest.x - p.w / 2;
       p.y = tp.dest.y - p.h;
       p.vx = 0; p.vy = 0;
+      this.trail = [];   // сквозь телепорт по следу не пройти
       FX.teleport(p.cx, p.cy);
       Sound.play('teleport');
       for (const m of this.monsters) if (m.alive && overlap(m, p)) applyDamage(m, 5000, p, 'telefrag');
@@ -945,6 +969,19 @@ const Game = {
       g.addColorStop(1, `rgba(${c},0)`);
       lctx.fillStyle = g;
       lctx.fillRect(x - l.r, y - l.r, l.r * 2, l.r * 2);
+    }
+    const br = this.brightness;
+    if (br > 1) {
+      // «экран» поднимает тени сильнее, чем светлые места, и не пережигает их
+      lctx.globalCompositeOperation = 'screen';
+      const v = Math.round(255 * (br - 1) * 0.6);
+      lctx.fillStyle = `rgb(${v},${v},${v})`;
+      lctx.fillRect(0, 0, vw, vh);
+    } else if (br < 1) {
+      lctx.globalCompositeOperation = 'multiply';
+      const v = Math.round(255 * br);
+      lctx.fillStyle = `rgb(${v},${v},${v})`;
+      lctx.fillRect(0, 0, vw, vh);
     }
     lctx.globalCompositeOperation = 'source-over';
     ctx.globalCompositeOperation = 'multiply';
