@@ -1,5 +1,5 @@
 """Эпизод 3: «Нижний мир» — прыжковые площадки, давилки, угри, Вестник Бездны."""
-from ldtools import trap, floor_secret, wall_secret, add_near
+from ldtools import trap, floor_secret, wall_secret, add_near, secret_exit
 
 ALL = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
@@ -269,8 +269,11 @@ def e3m3(M, level):
     add_near(m, 210, 45, 'K'); add_near(m, 228, 31, 'C'); add_near(m, 115, 31, 'N')
     # ещё один тайник (место подобрано tools/dev/secret-spots.js)
     floor_secret(m, 153, 46, 'RK')
+    # секретный выход на E3M7 — за тайной стеной у серебряного ключа
+    secret_exit(m, 221, 45)
     level({
         'id': 'e3m3', 'name': 'E3M3', 'title': 'Цитадель Пепла', 'theme': 'elder', 'episode': 3, 'next': 'e3m4', 'music': 38.9,
+        'secretNext': 'e3m7',
         'kit': {'weapons': ALL, 'ammo': {'shells': 60, 'nails': 120, 'rockets': 20, 'cells': 40}, 'armor': 100},
         'traps': [
             trap(215, 43, 219, 45, [(195, 45, 'r'), (185, 45, 'k'), (200, 41, 's')], 'Засада!'),

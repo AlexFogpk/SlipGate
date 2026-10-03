@@ -1,5 +1,5 @@
 """Эпизод 2: «Царство Чёрной Магии» — большие уровни."""
-from ldtools import trap, floor_secret, wall_secret, add_near
+from ldtools import trap, floor_secret, wall_secret, add_near, secret_exit
 
 
 def e2m1(M, level):
@@ -325,8 +325,11 @@ def e2m3(M, level):
     add_near(m, 123, 30, 'H'); add_near(m, 220, 30, 'H'); add_near(m, 103, 45, 'H')
     # ещё один тайник (место подобрано tools/dev/secret-spots.js)
     floor_secret(m, 184, 31, 'MK')
+    # секретный выход на E2M7 — за тайной стеной в восточном конце нижнего зала
+    secret_exit(m, 206, 52)
     level({
         'id': 'e2m3', 'name': 'E2M3', 'title': 'Кузни Тени', 'theme': 'elder', 'episode': 2, 'next': 'e2m4', 'music': 43.65,
+        'secretNext': 'e2m7',
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7], 'ammo': {'shells': 50, 'nails': 100, 'rockets': 15}, 'armor': 100},
         'traps': [
             trap(114, 44, 118, 45, [(100, 45, 'o'), (108, 30, 'e'), (90, 20, 'a')]),

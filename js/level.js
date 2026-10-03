@@ -249,6 +249,8 @@ class Level {
         case '>': srcs.push({ x: px + 2, y: py - 16, w: 12, h: 30, cx: px + 8, bottom: py + TILE }); break;
         case '<': dests.push({ x: px + 8, y: py + TILE }); break;
         case 'E': this.exits.push({ x: px + 2, y: py - 16, w: 12, h: 30, cx: px + 8, bottom: py + TILE, skill: null }); break;
+        // секретный слипгейт — на секретный уровень эпизода
+        case 'Z': this.exits.push({ x: px + 2, y: py - 16, w: 12, h: 30, cx: px + 8, bottom: py + TILE, skill: null, secret: true }); break;
         case 'L': this.decor.push({ kind: 'torch', x: px + 8, y: py + 8 }); break;
         case '*': this.decor.push({ kind: 'lamp', x: px + 8, y: py + 4 }); break;
         case '@': this.decor.push({ kind: 'electrode', x: px + 8, y: py + TILE }); break;
@@ -297,7 +299,7 @@ class Level {
       this.teleports.push(s);
     });
     if (def.skillPortals) this.exits.forEach((e, i) => { e.skill = def.skillPortals[i]; });
-    if (def.exitAfterBoss) this.exits.forEach((e) => { e.hidden = true; });
+    if (def.exitAfterBoss) this.exits.forEach((e) => { if (!e.secret) e.hidden = true; });
     this.computeHidden();
   }
 
@@ -898,7 +900,7 @@ class Level {
       else if (d.kind === 'lamp') L.push({ x: d.x, y: d.y + 3, r: 175, c: [1.0, 0.95, 0.82], i: 1.15 });
       else if (d.kind === 'electrode') L.push({ x: d.x, y: d.y - 30, r: 80, c: [0.6, 0.7, 1.0], i: 0.6 });
     }
-    for (const e of this.exits.concat(this.teleports)) if (!e.hidden) L.push({ x: e.cx, y: e.bottom - 18, r: 80, c: [0.65, 0.5, 1.0], i: 0.9 });
+    for (const e of this.exits.concat(this.teleports)) if (!e.hidden) L.push({ x: e.cx, y: e.bottom - 18, r: 80, c: e.secret ? [1, 0.35, 0.3] : [0.65, 0.5, 1.0], i: 0.9 });
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
         const t = this.tiles[y * this.w + x];
@@ -1197,9 +1199,15 @@ class Level {
           continue;
         }
         ctx.drawImage(tele, (t * 20) % 32, 0, 32, 64, x - 9, y - 44, 18, 43);
+        if (e.secret) {
+          // секретный слипгейт — кроваво-красный
+          ctx.globalCompositeOperation = 'hue';
+          ctx.fillStyle = '#ff2010';
+          ctx.fillRect(x - 9, y - 44, 18, 43);
+        }
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = 0.25 + Math.sin(t * 4) * 0.1;
-        ctx.fillStyle = '#8a70ff';
+        ctx.fillStyle = e.secret ? '#ff3020' : '#8a70ff';
         ctx.fillRect(x - 9, y - 44, 18, 43);
         ctx.restore();
       }

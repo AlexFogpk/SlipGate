@@ -1,6 +1,6 @@
 """Эпизод 4: «Измерение Древних» — пустота, фантомы, стражи, алтари и Древний."""
 
-from ldtools import trap, floor_secret, wall_secret, add_near
+from ldtools import trap, floor_secret, wall_secret, add_near, secret_exit
 
 ALL = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
@@ -311,8 +311,11 @@ def e4m3(M, level):
     add_near(m, 170, 49, 'K'); add_near(m, 88, 49, 'K')
     # ещё один тайник (место подобрано tools/dev/secret-spots.js)
     floor_secret(m, 189, 50, 'RC')
+    # секретный выход на E4M7 — за тайной стеной у нижней остановки лифта
+    secret_exit(m, 201, 65)
     level({
         'id': 'e4m3', 'name': 'E4M3', 'title': 'Кристальные Копи', 'theme': 'cave', 'skyTheme': 'void', 'episode': 4, 'next': 'e4m4', 'music': 43.65,
+        'secretNext': 'e4m7',
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7, 9], 'ammo': {'shells': 60, 'nails': 120, 'rockets': 20, 'cells': 40}, 'armor': 100},
         'traps': [
             trap(172, 66, 178, 69, [(186, 64, 'u'), (160, 64, 'u'), (150, 65, 'z')]),

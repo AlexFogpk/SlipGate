@@ -125,7 +125,8 @@ function updateAmbience(lv, dt, cam, vw, vh) {
 // Столбы света (яркий проход): косые полосы с мягким затуханием книзу.
 function drawShafts(ctx, lv, cam, vw, vh, t) {
   const amb = lv.amb;
-  if (!amb || !amb.shafts || !amb.shafts.length) return;
+  // на тёмном уровне снаружи света нет
+  if (!amb || !amb.shafts || !amb.shafts.length || lv.def.dark) return;
   const [r, g, b] = amb.shaftCol;
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';

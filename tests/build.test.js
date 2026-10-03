@@ -24,7 +24,7 @@ module.exports = {
       }
       return { levels: LEVELS.length, episodes: EPISODES.length };
     });
-    check(r.levels === 25 && r.episodes === 4, `во фрагменте ${r.levels} уровней и ${r.episodes} эпизодов`);
+    check(r.levels === 29 && r.episodes === 4, `во фрагменте ${r.levels} уровней и ${r.episodes} эпизодов`);
     check(!errors.length, 'ошибки во фрагменте:\n' + errors.join('\n'));
     await page.close();
     return Math.round(frag.length / 1024) + ' КБ';

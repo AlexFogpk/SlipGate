@@ -10,7 +10,7 @@
 общие приёмы (засады, тайники) — в ldtools.py.
 """
 import json, os, sys
-from ldtools import trap, floor_secret, wall_secret, add_near
+from ldtools import trap, floor_secret, wall_secret, add_near, secret_exit
 from supply_moves import SUPPLY_MOVES
 
 class M:
@@ -366,8 +366,11 @@ def e1m2():
     m.put(143, 17, 'H'); m.put(144, 17, 'U')
     # ещё один тайник (место подобрано tools/dev/secret-spots.js)
     wall_secret(m, 99, 30, 96, 98, '7K')
+    # секретный выход на E1M7 — за тайной стеной в конце нижнего зала
+    secret_exit(m, 121, 41)
     level({
         'id': 'e1m2', 'name': 'E1M2', 'title': 'Замок проклятых', 'theme': 'castle', 'episode': 1, 'next': 'e1m3', 'music': 46.25,
+        'secretNext': 'e1m7',
         'kit': {'weapons': [1, 2, 3], 'ammo': {'shells': 40}},
         'traps': [
             trap(76, 14, 80, 16, [(44, 24, 'k'), (54, 24, 'k'), (70, 24, 'd')]),
@@ -673,6 +676,8 @@ import e3_levels
 e3_levels.build(M, level)
 import e4_levels
 e4_levels.build(M, level)
+import secret_levels
+secret_levels.build(M, level)
 
 if __name__ == '__main__':
     default = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js', 'levels.js')

@@ -65,10 +65,11 @@ const Menu = {
         return list;
       }
       case 'levels': {
-        const list = LEVELS.filter((l) => l.episode === this.pendingEpisode).map((l) => {
+        // секретный уровень появляется в списке, когда его нашли
+        const list = LEVELS.filter((l) => l.episode === this.pendingEpisode && (!l.secret || Game.secretFound(l.id))).map((l) => {
           const rec = Game.bestRecord(l.id);
           return {
-            label: `${l.name}  ${l.title}`,
+            label: `${l.name}  ${l.title}` + (l.secret ? '  (секрет)' : ''),
             note: rec ? 'Лучшее время ' + fmtTime(rec.time) : '',
             disabled: !Game.levelUnlocked(l),
             act: () => { this.pendingLevel = l.id; this.open('skill'); },

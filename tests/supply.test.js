@@ -32,7 +32,8 @@ module.exports = {
       out.respawn = { cpOk, gotKey, gotGun, keyAfter: p.keys.gold, gunAfter: !!p.weapons[gunN], shellsAfter: p.ammo.shells };
       const cache = [];
       for (const def of LEVELS) {
-        if (!def.kit) continue;
+        // на уровне «только топор» тайника нет: оружие вернётся на выходе
+        if (!def.kit || def.axeOnly) continue;
         Game.skill = 1;
         const bare = new Player(0, 0); bare.ammo = { shells: 0, nails: 0, rockets: 0, cells: 0 };
         const before = def.map.join('').split('').filter((c) => '+HMAYRUNKCQXVW()3456789'.includes(c)).length;

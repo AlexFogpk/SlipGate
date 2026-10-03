@@ -26,14 +26,20 @@ module.exports = {
           for (const k in (m.def.drop || {})) ammo += m.def.drop[k] * DPA[k];
         }
         for (const tr of (def.traps || [])) for (const sp of tr.spawn) { const t = MONSTER_CHARS[sp[2]]; if (t) hp += MONSTER_DEFS[t].hp; }
-        for (const it of Game.items) {
+        // арена волн: монстры волн и припасы, которые приходят после каждой
+        const drops = [];
+        for (const w of (def.waves ? def.waves.list : [])) {
+          for (const sp of w.spawn) hp += MONSTER_DEFS[MONSTER_CHARS[sp[2]]].hp;
+          for (const d of w.drop || []) drops.push({ ch: d[2] });
+        }
+        for (const it of Game.items.concat(drops)) {
           const c = it.ch;
           if (c === '+') heal += 15; else if (c === 'H') heal += 25; else if (c === 'M') heal += 100;
           else if (AMMO_PICKUP[c]) ammo += AMMO_PICKUP[c][1] * DPA[AMMO_PICKUP[c][0]];
           else if (WEAPON_PICKUP[c]) ammo += WEAPON_PICKUP[c].amount * DPA[WEAPON_PICKUP[c].ammo];
         }
         const boss = Game.monsters.some((m) => m.def.boss);
-        out.push({ id: def.id, boss, ammo: ammo / Math.max(1, hp), heal: heal / Math.max(1, hp) * 100, secrets: Game.totalSecrets, stuck });
+        out.push({ id: def.id, boss, axe: !!def.axeOnly, ammo: ammo / Math.max(1, hp), heal: heal / Math.max(1, hp) * 100, secrets: Game.totalSecrets, stuck });
       }
       return out;
     });
@@ -41,14 +47,14 @@ module.exports = {
     for (const r of rows) {
       if (r.stuck.length) bad.push(`${r.id}: монстры в стене ${r.stuck.join(' ')}`);
       if (r.boss) continue;
-      if (r.ammo < 1.3) bad.push(`${r.id}: патронов ${r.ammo.toFixed(2)} от здоровья монстров (нужно ≥ 1,3)`);
+      if (!r.axe && r.ammo < 1.3) bad.push(`${r.id}: патронов ${r.ammo.toFixed(2)} от здоровья монстров (нужно ≥ 1,3)`);
       if (r.heal < 4.4) bad.push(`${r.id}: лечения ${r.heal.toFixed(1)} на 100 (нужно ≥ 4,4)`);
       if (r.secrets < 2) bad.push(`${r.id}: тайников ${r.secrets} (нужно ≥ 2)`);
     }
     check(!bad.length, bad.join('\n'));
     noPageErrors(page);
     await page.close();
-    const reg = rows.filter((r) => !r.boss);
+    const reg = rows.filter((r) => !r.boss && !r.axe);
     const min = (k) => Math.min(...reg.map((r) => r[k]));
     return `минимум по обычным уровням: патроны ${min('ammo').toFixed(2)}, лечение ${min('heal').toFixed(1)}, тайников ${min('secrets')}`;
   },

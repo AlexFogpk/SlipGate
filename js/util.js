@@ -3,7 +3,9 @@
 
 const TILE = 16;
 const TAU = Math.PI * 2;
-const GRAVITY = 1100;
+const BASE_GRAVITY = 1100;
+// тяжесть уровня: на секретном уровне E1 она вдвое меньше (см. поле gravity)
+let GRAVITY = BASE_GRAVITY;
 
 function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 function lerp(a, b, t) { return a + (b - a) * t; }

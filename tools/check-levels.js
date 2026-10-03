@@ -11,7 +11,7 @@ const SOLID = new Set(['#', '%']);
 const LIQUID = new Set(['~', '!', ';', '.']);
 const TILE_CH = new Set([' ', '#', '%', '-', '~', '!', ';', ',', '.', 'I']);
 const MOVER_CH = new Set(['D', '[', ']', '=', '$']);
-const ENTITY_CH = new Set('PE><L*b@x&_:^|()+HMAYRUNKCQXVW3456789gdekozfsnvtmcawruyhpqj'.split(''));
+const ENTITY_CH = new Set('PEZ><L*b@x&_:^|()+HMAYRUNKCQXVW3456789gdekozfsnvtmcawruyhpqj'.split(''));
 const MONSTER_CH_FLY = new Set(['s', 'a', 'h', 'j']);
 const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1, a: 1, w: 6, r: 1, u: 1, y: 2, h: 4, p: 2, q: 2, j: 5 };
 
@@ -100,6 +100,7 @@ function analyze(def, show) {
   const fits = (x, y) => passable(x, y) && passable(x, y - 1);
   const stand = (x, y) => fits(x, y) && !deadly(x, y) && (support(x, y + 1) || water(x, y));
 
+  const jumpK = 1 / (def.gravity || 1), jumpUp = Math.floor(3 * jumpK);
   let reach;
   const bfs = () => {
     reach = new Set();
@@ -159,14 +160,15 @@ function analyze(def, show) {
           }
         }
       }
-      // прыжки
+      // прыжки (при слабой тяжести выше и дальше во столько же раз)
       if (!support(x, y + 1) && !inWater) continue;
-      for (let dy = -3; dy <= 0; dy++) {
+      for (let dy = -jumpUp; dy <= 0; dy++) {
         const py = y + dy;
         let ok = true;
         for (let r = y; r >= py; r--) if (!fits(x, r)) { ok = false; break; }
         if (!ok) continue;
-        const maxDx = dy === -3 ? 3 : dy === -2 ? 4 : 5;
+        const ndy = Math.ceil(dy / jumpK);
+        const maxDx = Math.floor((ndy <= -3 ? 3 : ndy === -2 ? 4 : 5) * jumpK);
         for (const dir of [-1, 1]) {
           for (let dx = 1; dx <= maxDx; dx++) {
             const nx = x + dir * dx;
@@ -228,6 +230,31 @@ function analyze(def, show) {
   const lostCp = cps.filter((s) => !near(s));
   if (lostCp.length) warnings.push('недостижимые контрольные точки: ' + lostCp.map((s) => `(${s.x},${s.y})`).join(' '));
   if (exits.length && !reachedExits.length) errors.push('выход E недостижим');
+  // секретный выход: есть, достижим и ведёт на существующий секретный уровень
+  const zs = spawns.filter((s) => s.c === 'Z');
+  if (def.secretNext) {
+    const to = LEVELS.find((l) => l.id === def.secretNext);
+    if (!to || !to.secret) errors.push(`секретный выход ведёт на ${def.secretNext}, но такого секретного уровня нет`);
+    if (!zs.length) errors.push('у уровня есть secretNext, но нет секретного выхода Z');
+    else if (!zs.some(near)) errors.push('секретный выход Z недостижим');
+  } else if (zs.length) errors.push('секретный выход Z без поля secretNext');
+  // арена волн: монстры волн помещаются и стоят на опоре
+  if (def.waves) {
+    const [x0, y0, x1, y1] = def.waves.at;
+    let hit = false;
+    for (let y = y0; y <= y1 && !hit; y++) for (let x = x0; x <= x1; x++) if (reach.has(y * w + x)) { hit = true; break; }
+    if (!hit) errors.push('зона арены волн недостижима');
+    def.waves.list.forEach((wv, i) => {
+      for (const [sx, sy, ch] of wv.spawn) {
+        const hh = MONSTER_H[ch];
+        if (!hh) { errors.push(`волна ${i + 1}: неизвестный монстр '${ch}'`); continue; }
+        trapMonsters++;
+        for (let k = 0; k < hh; k++) if (SOLID.has(base(sx, sy - k))) { warnings.push(`волна ${i + 1}: монстру '${ch}' тесно в (${sx},${sy})`); break; }
+        if (!MONSTER_CH_FLY.has(ch) && !SOLID.has(base(sx, sy + 1)) && base(sx, sy + 1) !== '-') warnings.push(`волна ${i + 1}: монстр '${ch}' в (${sx},${sy}) не стоит на опоре`);
+      }
+      for (const [sx, sy] of wv.drop || []) if (!reach.has(sy * w + sx)) warnings.push(`волна ${i + 1}: припасы в (${sx},${sy}) недостижимы`);
+    });
+  }
   if (def.skillPortals && reachedExits.length < exits.length) errors.push(`достижимо порталов сложности: ${reachedExits.length}/${exits.length}`);
   const items = spawns.filter((s) => '()+HMAYRUNKCQXVW3456789'.includes(s.c));
   const lost = items.filter((s) => !near(s));
@@ -276,7 +303,7 @@ function supplyWarnings() {
   const out = {};
   const eps = [...new Set(LEVELS.filter((l) => l.episode).map((l) => l.episode))];
   for (const ep of eps) {
-    const lv = LEVELS.filter((l) => l.episode === ep);
+    const lv = LEVELS.filter((l) => l.episode === ep && !l.secret);
     for (let i = 1; i < lv.length; i++) {
       const prev = lv[i - 1];
       const have = new Set(prev.kit ? prev.kit.weapons : [1, 2]);

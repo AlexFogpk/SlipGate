@@ -450,6 +450,8 @@ class Player {
   lights(out) {
     // тусклый «ореол», чтобы в темноте было видно героя
     out.push({ x: this.cx, y: this.cy, r: 56, c: [0.9, 0.85, 0.8], i: 0.22 });
+    // на тёмном уровне у героя фонарь
+    if (Game.levelDef && Game.levelDef.dark) out.push({ x: this.cx + this.facing * 10, y: this.cy - 4, r: 150, c: [1, 0.86, 0.62], i: 0.62 + Math.sin(Game.time * 9) * 0.03 });
     if (this.quad > 0) out.push({ x: this.cx, y: this.cy, r: 70, c: [0.3, 0.45, 1], i: 0.7 });
     if (this.pent > 0) out.push({ x: this.cx, y: this.cy, r: 70, c: [1, 0.25, 0.2], i: 0.7 });
   }

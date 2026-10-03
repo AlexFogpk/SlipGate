@@ -26,6 +26,22 @@ def wall_secret(m, wall_x, y_floor, x0, x1, items, h=3):
         m.put(x0 + 1 + i, y_floor, c)
 
 
+def secret_exit(m, wall_x, y_floor, direction=1, width=7):
+    """Секретный выход: тайная стена в столбце wall_x и за ней комната со слипгейтом Z
+    (в сторону direction), четыре клетки высотой, с факелами."""
+    m.fill(wall_x, y_floor - 2, wall_x, y_floor, '$')
+    xa, xb = (wall_x + 1, wall_x + width) if direction > 0 else (wall_x - width, wall_x - 1)
+    for x in range(xa, xb + 1):
+        for y in range(y_floor - 3, y_floor + 1):
+            assert m.g[y][x] == '#', ('secret_exit: не камень', x, y, m.g[y][x])
+        assert m.g[y_floor + 1][x] in '#%', ('secret_exit: нет пола', x)
+    m.fill(xa, y_floor - 3, xb, y_floor, ' ')
+    far = xb - 1 if direction > 0 else xa + 1
+    m.put(far, y_floor, 'Z')
+    m.put(xa + 1, y_floor - 2, 'L')
+    m.put(xb - 1, y_floor - 3, 'L')
+
+
 BLOCKING = set('#%D[]=$')   # стены, двери, решётки, тайные стены
 SUPPORT = set('#%-')         # на чём можно стоять
 

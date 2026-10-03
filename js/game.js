@@ -187,11 +187,23 @@ const Game = {
   },
 
   levelUnlocked(def) {
-    const eps = LEVELS.filter((l) => l.episode === def.episode);
+    if (def.secret) return this.secretFound(def.id);
+    const eps = LEVELS.filter((l) => l.episode === def.episode && !l.secret);
     const i = eps.indexOf(def);
     if (i <= 0) return true;
     if (Store.get('done', {})[eps[i - 1].id]) return true;
     return def.episode === 1 && i < Store.get('unlocked', 1);
+  },
+
+  // Секретный уровень открыт в меню, если в него хоть раз попали.
+  secretFound(id) { return !!Store.get('found', {})[id] || !!Store.get('done', {})[id]; },
+
+  // Снаряжение, которое герой уносит с уровня: на уровне «только топор» отнятое
+  // оружие возвращается.
+  carryInventory() {
+    const inv = this.player.inventory();
+    if (this.stash) inv.weapons = Object.assign({}, this.stash, inv.weapons);
+    return inv;
   },
 
   // Стартовый набор уровня: с ним уровень начинают из меню и с него начинается эпизод.
@@ -293,10 +305,15 @@ const Game = {
     this.checkpoint = null;
     this.traps = (def.traps || []).map((t) => ({ at: t.at, spawn: t.spawn, msg: t.msg, fired: false }));
     for (const t of this.traps) t.spawn.forEach(([,, ch], i) => { if (this.trapSpawns(ch, i)) this.totalKills++; });
+    for (const w of def.waves ? def.waves.list : []) this.totalKills += w.spawn.length;
     this.mapOpen = false;
     this.revealT = 0;
     this.trail = [];
     this.exitHint = false;
+    this.secretExit = false;
+    GRAVITY = BASE_GRAVITY * (def.gravity || 1);
+    // арена волн: волны идут одна за другой, выход появляется после последней
+    this.waves = def.waves ? { i: -1, t: 0, started: false, done: false, cleared: -1 } : null;
     this.cine = null; this.introDone = false; this.slowT = 0; this.whiteFlash = 0; this.hitstop = 0;
     this.attract = !!opts.attract;
     let start = { cx: 40, bottom: 40 };
@@ -327,13 +344,25 @@ const Game = {
       return;
     }
     const p = new Player(start.cx, start.bottom);
+    // на уровне «только топор» остальное оружие убирается до выхода с уровня
+    this.stash = null;
+    if (opts.inv && def.axeOnly) {
+      const inv = Object.assign({}, opts.inv);
+      this.stash = Object.assign({}, inv.stash || inv.weapons);
+      inv.weapons = { 1: true }; inv.weapon = 1;
+      delete inv.stash;
+      opts = Object.assign({}, opts, { inv });
+    }
     if (opts.inv) p.applyInventory(opts.inv);
     this.player = p;
-    if (opts.inv && def.kit) this.spawnSupplyCache(def, p, start);
+    if (opts.inv && def.kit && !def.axeOnly) this.spawnSupplyCache(def, p, start);
     this.startInv = p.inventory();
+    if (this.stash) this.startInv.stash = this.stash;
     if (def.episode) this.saveProgress(id, this.startInv);
+    if (def.secret) { const f = Store.get('found', {}); f[id] = true; Store.set('found', f); }
     this.snapCamera();
-    if (def.episode) HUD.center(def.name + ': ' + def.title, 3);
+    if (def.secret) HUD.center('Секретный уровень!\n' + def.name + ': ' + def.title + (def.hint ? '\n' + def.hint : ''), 5);
+    else if (def.episode) HUD.center(def.name + ': ' + def.title, 3);
     else if (def.intro) HUD.center(def.intro, 5);
     Music.start(def.music || 55, this.musicStyle());
   },
@@ -373,10 +402,11 @@ const Game = {
     const def = this.levelDef;
     if (def.finale && !this.finaleDone) { this.startFinale(def.finale); return; }
     this.finaleDone = false;
-    if (!def.next) { this.toMenu(); return; }
-    const inv = this.player.inventory();
+    const next = this.secretExit ? def.secretNext : def.next;
+    if (!next) { this.toMenu(); return; }
+    const inv = this.carryInventory();
     inv.health = clamp(inv.health, 50, 100);
-    this.loadLevel(def.next, { inv });
+    this.loadLevel(next, { inv });
     this.state = 'playing';
   },
 
@@ -390,10 +420,11 @@ const Game = {
     if (!this.god) this.saveRecord();
     // «Продолжить» ведёт уже на следующий уровень; после последнего сохранять нечего
     const def = this.levelDef;
-    if (def.next) {
-      const inv = this.player.inventory();
+    const next = this.secretExit ? def.secretNext : def.next;
+    if (next) {
+      const inv = this.carryInventory();
       inv.health = clamp(inv.health, 50, 100);
-      this.saveProgress(def.next, inv);
+      this.saveProgress(next, inv);
     } else Store.set('save', null);
     Sound.play('secret');
   },
@@ -455,6 +486,56 @@ const Game = {
       });
       if (t.msg) HUD.center(t.msg, 2);
     }
+  },
+
+  // Арена волн: вход на арену будит её; следующая волна — когда перебита прежняя,
+  // после каждой волны телепортируются припасы, после последней открывается выход.
+  updateWaves(dt) {
+    const W = this.waves, p = this.player;
+    if (!W || W.done || !p || !p.alive) return;
+    const def = this.levelDef.waves;
+    if (!W.started) {
+      const tx = Math.floor(p.cx / TILE), ty = Math.floor((p.y + p.h - 1) / TILE);
+      const [x0, y0, x1, y1] = def.at;
+      if (tx < x0 || tx > x1 || ty < y0 || ty > y1) return;
+      W.started = true; W.t = 2;
+      HUD.center(def.msg || 'Арена пробудилась!', 3);
+      Sound.play('roar');
+      return;
+    }
+    if (W.i >= 0 && (W.pending > 0 || this.monsters.some((m) => m.wave === W.i && m.alive))) return;
+    if (W.i >= 0 && W.cleared < W.i) {
+      // волна отбита: припасы и передышка
+      W.cleared = W.i; W.t = 3.5;
+      const last = W.i + 1 >= def.list.length;
+      if (!last) HUD.center(`Волна ${W.i + 1} отбита!`, 2);
+      for (const [x, y, ch] of def.list[W.i].drop || []) {
+        const it = new Item(ch, x * TILE + 8, (y + 1) * TILE);
+        this.items.push(it);
+        FX.teleport(it.cx, it.y);
+      }
+      if (def.list[W.i].drop) Sound.play('teleport', p.cx, p.cy, { vol: 0.5 });
+      if (last) { W.done = true; this.onBossDefeated('Арена побеждена!\nСлипгейт открыт — он отмечен стрелкой'); return; }
+    }
+    W.t -= dt;
+    if (W.t > 0) return;
+    W.i++;
+    const wave = def.list[W.i];
+    // монстры волны «живы» с момента объявления, даже пока телепортируются
+    W.pending = wave.spawn.length;
+    wave.spawn.forEach(([sx, sy, ch], i) => {
+      this.later(i * 0.15, () => {
+        W.pending--;
+        const m = new Monster(MONSTER_CHARS[ch], sx * TILE + 8, (sy + 1) * TILE);
+        m.wave = W.i;
+        this.monsters.push(m);
+        m.alert(this.player, false);
+        m.cd = Math.max(m.cd, 0.8);
+        FX.teleport(m.cx, m.cy);
+        Sound.play('teleport', m.cx, m.cy);
+      });
+    });
+    HUD.center(`Волна ${W.i + 1} из ${def.list.length}` + (wave.msg ? '\n' + wave.msg : ''), 2.5);
   },
 
   onAltarLit(b) {
@@ -679,14 +760,14 @@ const Game = {
     ctx.globalAlpha = 1;
   },
 
-  onBossDefeated() {
+  onBossDefeated(msg) {
     this.level.openAllGates();
     for (const e of this.level.exits) {
       if (!e.hidden) continue;
       e.hidden = false;
       FX.teleport(e.cx, e.bottom - 16);
     }
-    HUD.center('Путь к руне открыт —\nслипгейт отмечен стрелкой', 4);
+    HUD.center(msg || 'Путь к руне открыт —\nслипгейт отмечен стрелкой', 4);
     Sound.play('secret');
     this.exitHint = true;
   },
@@ -970,6 +1051,7 @@ const Game = {
     Music.setIntensity(this.musicIntensity());
     this.jumpPads();
     this.updateTraps();
+    this.updateWaves(dt);
     this.separateMonsters(dt);
     for (const pr of this.projectiles) pr.update(dt);
     this.projectiles = this.projectiles.filter((pr) => !pr.dead);
@@ -1068,6 +1150,7 @@ const Game = {
         this.loadLevel(ep.first, { inv: this.kitInventory(LEVELS.find((l) => l.id === ep.first)) });
         return;
       }
+      if (e.secret) this.secretExit = true;
       this.startIntermission();
       return;
     }
@@ -1235,6 +1318,7 @@ const Game = {
       ['Секреты', mark(Math.round(this.secrets * k) + ' / ' + this.totalSecrets, old && this.secrets > old.secrets, old && old.secrets)],
       ['Сложность', SKILL_NAMES[this.skill]],
     ];
+    if (this.secretExit) rows.push(['', 'Найден секретный выход!']);
     HUD.stats(ctx, W, H, u, def.name + ' ' + def.title, rows, footer, this.time);
   },
 

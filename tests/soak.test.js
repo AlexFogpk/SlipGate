@@ -49,7 +49,7 @@ module.exports = {
       return out;
     }, frames);
     const bad = res.filter((r) => r.err);
-    check(res.length === 25, 'ожидалось 25 уровней, прогнано ' + res.length);
+    check(res.length === 29, 'ожидалось 29 уровней, прогнано ' + res.length);
     check(!bad.length, bad.map((r) => r.id + ': ' + r.err).join('\n'));
     noPageErrors(page);
     await page.close();
