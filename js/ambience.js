@@ -5,14 +5,14 @@
 // Всё это не влияет на игру: считается один раз при загрузке, рисуется поверх.
 
 const AMB = {
-  base: { shaft: [255, 238, 205], fg: ['girder', 'cable', 'chain'], pillar: 'steel', rim: '#7a7262' },
-  castle: { shaft: [255, 222, 176], fg: ['chain', 'banner', 'cage'], pillar: 'stone', rim: '#8a6a44' },
-  crypt: { shaft: [205, 235, 212], fg: ['chain', 'roots', 'cage'], pillar: 'stone', rim: '#6a6e58' },
+  base: { shaft: [255, 238, 205], fg: ['girder', 'cable', 'lamp', 'chain', 'lamp'], pillar: 'steel', rim: '#7a7262' },
+  castle: { shaft: [255, 222, 176], fg: ['chain', 'banner', 'cage', 'lantern', 'hook'], pillar: 'stone', rim: '#8a6a44' },
+  crypt: { shaft: [205, 235, 212], fg: ['chain', 'roots', 'cage', 'skulls', 'hook'], pillar: 'stone', rim: '#6a6e58' },
   cave: { shaft: [225, 232, 205], fg: ['stal', 'roots', 'stal'], pillar: 'rock', rim: '#7a6444' },
-  rune: { shaft: [195, 212, 255], fg: ['chain', 'cage', 'stal'], pillar: 'stone', rim: '#5a6480' },
-  nether: { shaft: [255, 185, 242], fg: ['horn', 'stal', 'chain'], pillar: 'stone', rim: '#6a4278' },
+  rune: { shaft: [195, 212, 255], fg: ['chain', 'cage', 'stal', 'lantern'], pillar: 'stone', rim: '#5a6480' },
+  nether: { shaft: [255, 185, 242], fg: ['horn', 'stal', 'chain', 'hook'], pillar: 'stone', rim: '#6a4278' },
   void: { shaft: [195, 222, 255], fg: [], pillar: null, rim: '#3a4662' },
-  elder: { shaft: [255, 192, 140], fg: ['stal', 'chain', 'cage'], pillar: 'stone', rim: '#8a4a2c' },
+  elder: { shaft: [255, 192, 140], fg: ['stal', 'chain', 'cage', 'skulls'], pillar: 'stone', rim: '#8a4a2c' },
 };
 
 function prepareAmbience(lv) {
