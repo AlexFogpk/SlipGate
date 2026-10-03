@@ -186,6 +186,7 @@ class Level {
         if (isLiquidType(t)) this.hasLiquid = true;
       }
     }
+    this.horizon = this.findHorizon();
     // группировка соседних клеток дверей в один объект
     const seen = new Uint8Array(this.w * this.h);
     for (let y = 0; y < this.h; y++) {
@@ -505,7 +506,7 @@ class Level {
               m.locked = false; m.target = 1;
               HUD.message(need === 'silver' ? 'Серебряный ключ открыл дверь' : 'Золотой ключ открыл дверь');
             } else if (p.x + p.w > m.x - 3 && p.x < m.x + m.w + 3) {
-              const where = Input.touchMode ? 'Он отмечен на карте' : 'Он отмечен на карте (Tab)';
+              const where = Input.touchMode || !Input.binds.map.length ? 'Он отмечен на карте' : 'Он отмечен на карте (' + keyName(Input.binds.map[0]) + ')';
               HUD.center((need === 'silver' ? 'Нужен серебряный ключ' : 'Нужен золотой ключ') + '\n' + where, 2);
             }
           }
@@ -849,10 +850,57 @@ class Level {
     ctx.globalCompositeOperation = 'source-over';
   }
 
+  // Горизонт для силуэтов: медиана нижних клеток неба по столбцам (в пикселях мира).
+  findHorizon() {
+    const bottoms = [];
+    for (let x = 0; x < this.w; x++) {
+      for (let y = this.h - 1; y >= 0; y--) {
+        if (skyLike(this.tiles[y * this.w + x])) { bottoms.push(y); break; }
+      }
+    }
+    if (!bottoms.length) return this.h * TILE;
+    bottoms.sort((a, b) => a - b);
+    return (bottoms[bottoms.length >> 1] + 1) * TILE;
+  }
+
+  // Слой силуэтов: по горизонтали сдвигается медленнее камеры, по вертикали
+  // привязан к горизонту уровня (у парящих островов — к середине уровня).
+  drawSkyline(ctx, L, cam, vw, vh, t, glow) {
+    const anchor = L.float ? this.pxH / 2 + L.h / 2 : this.horizon;
+    const at = L.float ? 0.5 + L.h / vh / 2 : 0.72;
+    const base = Math.round(vh * at + (anchor - vh * at - cam.y) * L.par);
+    const top = base - L.h;
+    if (top >= vh || base <= 0) {
+      if (L.fill && base <= 0) { ctx.fillStyle = L.fill; ctx.fillRect(0, 0, vw, vh); }
+      return;
+    }
+    const ox = -Math.round(((cam.x * L.par) % L.w + L.w) % L.w);
+    for (let x = ox; x < vw; x += L.w) ctx.drawImage(L.canvas, x, top);
+    if (L.fill && base < vh) { ctx.fillStyle = L.fill; ctx.fillRect(0, base, vw, vh - base); }
+    if (!glow || !L.beacons.length) return;
+    // мигающие огни: маяки на мачтах, кратеры, кристаллы
+    ctx.fillStyle = glow;
+    for (const b of L.beacons) {
+      const a = 0.45 + 0.55 * Math.sin(t * (b.r > 1 ? 1.3 : 2.6) + b.ph);
+      if (a <= 0.05) continue;
+      for (let x = ox + b.x; x < vw + 4; x += L.w) {
+        if (x < -4) continue;
+        const y = top + b.y;
+        ctx.globalAlpha = a * 0.35;
+        ctx.fillRect(x - b.r - 1, y - b.r - 1, b.r * 2 + 3, b.r * 2 + 3);
+        ctx.globalAlpha = a;
+        ctx.fillRect(x - Math.floor(b.r / 2), y - Math.floor(b.r / 2), Math.max(1, b.r), Math.max(1, b.r));
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // --- отрисовка ---
   drawSky(ctx, cam, vw, vh, t) {
     if (!this.hasSky) return;
-    const sky = Tex.sky(this.def.skyTheme || this.theme);
+    const theme = this.def.skyTheme || this.theme;
+    const sky = Tex.sky(theme);
+    const sl = Skyline.get(theme);
     ctx.save();
     const pb = ctx.createPattern(sky.back, 'repeat');
     const ox1 = -(cam.x * 0.2 + t * 6) % 128, oy1 = -(cam.y * 0.1) % 128;
@@ -867,6 +915,9 @@ class Level {
     ctx.fillStyle = pf;
     ctx.fillRect(-ox2, -oy2, vw, vh);
     ctx.restore();
+    // облака высоко, силуэты перед ними
+    this.drawSkyline(ctx, sl.far, cam, vw, vh, t, sl.glow);
+    this.drawSkyline(ctx, sl.near, cam, vw, vh, t, sl.glow);
   }
 
   drawBaked(ctx, cam, vw, vh) {

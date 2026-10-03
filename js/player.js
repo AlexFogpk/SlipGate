@@ -256,8 +256,8 @@ class Player {
     this.fireCd -= dt;
     this.attackAnim = Math.max(0, this.attackAnim - dt);
     for (let n = 1; n <= 9; n++) if (Input.wasPressed('Digit' + n, 'Numpad' + n)) this.selectWeapon(n, true);
-    if (Input.wheel > 0 || Input.wasPressed('KeyE') || Input.buttonPresses.has('next')) this.cycleWeapon(1);
-    if (Input.wheel < 0 || Input.wasPressed('KeyQ')) this.cycleWeapon(-1);
+    if (Input.wheel > 0 || Input.actPressed('next') || Input.buttonPresses.has('next')) this.cycleWeapon(1);
+    if (Input.wheel < 0 || Input.actPressed('prev')) this.cycleWeapon(-1);
     if (Input.fireHeld() && this.fireCd <= 0) this.fire();
   }
 

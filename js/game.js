@@ -160,7 +160,7 @@ const Game = {
     this.state = 'menu';
     Menu.reset('main');
     this.loadLevel(Store.get('done', {}).e1m6 && Math.random() < 0.5 ? 'e2m1' : 'e1m1', { attract: true });
-    Music.start(41);
+    Music.start(41, 'menu');
   },
 
   newGame(episode = 1) {
@@ -188,6 +188,57 @@ const Game = {
       if (def.kit.armor) { p.armor = def.kit.armor; p.armorType = 0.3; }
     }
     return p.inventory();
+  },
+
+  // Сохранение «Продолжить»: уровень эпизода и снаряжение, с которым в него вошли.
+  savedGame() {
+    const s = Store.get('save', null);
+    return s && LEVELS.find((l) => l.id === s.id && l.episode) && s.inv ? s : null;
+  },
+
+  saveProgress(id, inv) {
+    Store.set('save', { id, skill: this.skill, inv });
+  },
+
+  continueGame() {
+    const s = this.savedGame();
+    if (!s) return;
+    this.skill = clamp(s.skill | 0, 0, 3);
+    this.newEpisode = LEVELS.find((l) => l.id === s.id).episode;
+    this.loadLevel(s.id, { inv: s.inv });
+    this.state = 'playing';
+  },
+
+  // Рекорды уровня для сложности: лучшее время, больше всего убитых и найденных тайников.
+  records: null,
+  levelRecord(id, skill) {
+    if (!this.records) this.records = Store.get('records', {});
+    const all = this.records;
+    return (all[id] && all[id][skill]) || null;
+  },
+
+  bestRecord(id) {
+    let best = null;
+    for (let s = 0; s < 4; s++) {
+      const r = this.levelRecord(id, s);
+      if (r && (!best || r.time < best.time)) best = r;
+    }
+    return best;
+  },
+
+  saveRecord() {
+    const id = this.levelDef.id;
+    const old = this.levelRecord(id, this.skill);
+    const all = this.records;
+    const rec = {
+      time: old ? Math.min(old.time, this.levelTime) : this.levelTime,
+      kills: old ? Math.max(old.kills, this.kills) : this.kills,
+      secrets: old ? Math.max(old.secrets, this.secrets) : this.secrets,
+      totalKills: this.totalKills, totalSecrets: this.totalSecrets,
+    };
+    this.prevRecord = old;
+    (all[id] = all[id] || {})[this.skill] = rec;
+    Store.set('records', all);
   },
 
   startFromSelect(id, skill) {
@@ -249,10 +300,11 @@ const Game = {
     this.player = p;
     if (opts.inv && def.kit) this.spawnSupplyCache(def, p, start);
     this.startInv = p.inventory();
+    if (def.episode) this.saveProgress(id, this.startInv);
     this.snapCamera();
     if (def.episode) HUD.center(def.name + ': ' + def.title, 3);
     else if (def.intro) HUD.center(def.intro, 5);
-    Music.start(def.music || 55);
+    Music.start(def.music || 55, this.musicStyle());
   },
 
   // Тайник снабжения у входа: оружие из стартового набора уровня, которое герой
@@ -302,6 +354,15 @@ const Game = {
     const done = Store.get('done', {});
     done[this.levelDef.id] = true;
     Store.set('done', done);
+    this.prevRecord = null;
+    if (!this.god) this.saveRecord();
+    // «Продолжить» ведёт уже на следующий уровень; после последнего сохранять нечего
+    const def = this.levelDef;
+    if (def.next) {
+      const inv = this.player.inventory();
+      inv.health = clamp(inv.health, 50, 100);
+      this.saveProgress(def.next, inv);
+    } else Store.set('save', null);
     Sound.play('secret');
   },
 
@@ -309,7 +370,7 @@ const Game = {
     this.state = 'finale';
     this.finaleKey = key;
     this.finaleT = 0;
-    Music.start(36);
+    Music.start(36, 'finale');
   },
 
   onPlayerDeath(attacker, kind) {
@@ -404,6 +465,22 @@ const Game = {
     if (!ok) HUD.center('Электроды разряжаются впустую...', 1.5);
   },
 
+  // Музыка: характер эпизода (у хаба и меню — свой) и накал боя для боевого слоя.
+  musicStyle() { return this.levelDef && this.levelDef.episode ? 'e' + this.levelDef.episode : 'menu'; },
+
+  musicIntensity() {
+    const p = this.player;
+    if (!p || !p.alive) return 0;
+    let n = 0;
+    for (const m of this.monsters) {
+      if (!m.alive || m.def.static) continue;
+      if (m.state === 'idle' || m.state === 'down' || m.state === 'dying' || m.state === 'dead') continue;
+      if (m.def.boss) return 1;
+      if (Math.abs(m.cx - p.cx) < 520 && Math.abs(m.cy - p.cy) < 360) n += m.def.hp >= 250 ? 2 : 1;
+    }
+    return clamp(n / 4, 0, 1);
+  },
+
   // --- вспомогательное для сущностей ---
   later(delay, fn) { this.timers.push({ t: delay, fn }); },
 
@@ -460,6 +537,10 @@ const Game = {
       const s = p.shoulder();
       return { x: s.x + Math.cos(p.aim) * 100, y: s.y + Math.sin(p.aim) * 100 };
     }
+    if (Input.padMode) {
+      const s = p.shoulder();
+      return { x: s.x + Math.cos(Input.padAngle) * 90, y: s.y + Math.sin(Input.padAngle) * 90 };
+    }
     return {
       x: this.cam.x + (Input.mouseX * this.dpr - this.offX) / this.scale,
       y: this.cam.y + (Input.mouseY * this.dpr - this.offY) / this.scale,
@@ -501,7 +582,9 @@ const Game = {
   // --- обновление ---
   update(dt) {
     this.time += dt;
+    Input.pollPad();
     HUD.update(dt);
+    if (this.state !== 'playing') Music.setIntensity(0);
     switch (this.state) {
       case 'menu':
         this.updateAttract(dt);
@@ -527,7 +610,7 @@ const Game = {
   },
 
   anyKey() {
-    return Input.clicks.length > 0 || Input.wasPressed('Enter', 'Space', 'Escape', 'NumpadEnter') || (Input.mouseDown && Input.clicks.length > 0);
+    return Input.clicks.length > 0 || Input.wasPressed('Enter', 'Space', 'Escape', 'NumpadEnter', 'PadA', 'PadStart') || Input.actPressed('fire');
   },
 
   updateAttract(dt) {
@@ -542,12 +625,12 @@ const Game = {
 
   updatePlay(dt) {
     const p = this.player;
-    if (Input.wasPressed('Escape', 'KeyP') || Input.buttonPresses.has('pause')) { this.pause(); return; }
-    if (Input.wasPressed('KeyM')) {
-      if (Music.playing) Music.stop(); else Music.start(this.levelDef.music || 55);
+    if (Input.wasPressed('Escape', 'KeyP', 'PadStart') || Input.buttonPresses.has('pause')) { this.pause(); return; }
+    if (Input.actPressed('music')) {
+      if (Music.playing) Music.stop(); else Music.start(this.levelDef.music || 55, this.musicStyle());
     }
-    if (Input.buttonPresses.has('map') || Input.wasPressed('KeyN')) this.mapOpen = !this.mapOpen;
-    this.showStats = Input.isDown('Tab') || this.mapOpen;
+    if (Input.buttonPresses.has('map') || Input.actPressed('mapPin')) this.mapOpen = !this.mapOpen;
+    this.showStats = Input.act('map') || this.mapOpen;
     this.revealT -= dt;
     if (this.revealT <= 0) {
       this.revealT = 0.2;
@@ -564,6 +647,7 @@ const Game = {
     p.update(dt);
     if (p.alive) this.checkTriggers(p);
     for (const m of this.monsters) m.update(dt);
+    Music.setIntensity(this.musicIntensity());
     this.jumpPads();
     this.updateTraps();
     this.separateMonsters(dt);
@@ -583,7 +667,7 @@ const Game = {
     this.bonusFlash = Math.max(0, this.bonusFlash - dt * 1.5);
     this.bossFx = Math.max(0, this.bossFx - dt);
     Sound.listenerX = p.cx; Sound.listenerY = p.cy;
-    if (!p.alive && p.deadT > 1 && (Input.clicks.length || Input.wasPressed('Space', 'Enter', 'KeyW', 'ArrowUp') || Input.buttonPresses.has('jump'))) {
+    if (!p.alive && p.deadT > 1 && (Input.clicks.length || Input.wasPressed('Enter') || Input.actPressed('jump') || Input.actPressed('fire') || Input.buttonPresses.has('jump'))) {
       if (this.checkpoint) this.respawnAtCheckpoint(); else this.restartLevel();
     }
   },
@@ -715,6 +799,9 @@ const Game = {
             const what = this.checkpoint ? 'вернуться к контрольной точке' : 'начать заново';
             HUD.text(ctx, (Input.touchMode ? 'Коснитесь экрана, чтобы ' : 'Нажмите огонь, чтобы ') + what, W / 2, H * 0.36 + 20 * u, 6 * u, '#c8a878', 'center');
           }
+        } else if (Input.padMode) {
+          const a = this.aimWorld();
+          HUD.crosshair(ctx, this.offX + (a.x - this.cam.x) * this.scale, this.offY + (a.y - this.cam.y) * this.scale, u);
         } else if (!Input.touchMode) {
           HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u);
         }
@@ -725,16 +812,19 @@ const Game = {
     if (this.state === 'intermission') this.drawLevelStats(ctx, W, H, u, Input.touchMode ? 'Коснитесь, чтобы продолжить' : 'Нажмите огонь, чтобы продолжить');
     if (this.state === 'menu' || this.state === 'paused') Menu.draw(ctx, W, H, u, t);
     if (H > W * 1.15) HUD.text(ctx, 'Поверните устройство горизонтально', W / 2, this.offY - 16 * u, 6 * u, '#c8a060', 'center');
-    if (this.state !== 'playing' && !Input.touchMode) HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u * 0.8);
+    if (this.state !== 'playing' && !Input.touchMode && !Input.padMode) HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u * 0.8);
   },
 
   drawLevelStats(ctx, W, H, u, footer) {
     const def = this.levelDef;
     const k = footer ? clamp(this.interT / 1.2, 0, 1) : 1;
+    // рядом — прошлый рекорд на этой сложности или отметка, что он побит
+    const old = this.prevRecord, done = k >= 1 && !this.god;
+    const mark = (v, better, was) => (!done || !old ? v : better ? v + '  рекорд!' : v + '  (рекорд ' + was + ')');
     const rows = [
-      ['Время', fmtTime(this.levelTime * k)],
-      ['Убито', Math.round(this.kills * k) + ' / ' + this.totalKills],
-      ['Секреты', Math.round(this.secrets * k) + ' / ' + this.totalSecrets],
+      ['Время', mark(fmtTime(this.levelTime * k), old && this.levelTime < old.time, old && fmtTime(old.time))],
+      ['Убито', mark(Math.round(this.kills * k) + ' / ' + this.totalKills, old && this.kills > old.kills, old && old.kills)],
+      ['Секреты', mark(Math.round(this.secrets * k) + ' / ' + this.totalSecrets, old && this.secrets > old.secrets, old && old.secrets)],
       ['Сложность', SKILL_NAMES[this.skill]],
     ];
     HUD.stats(ctx, W, H, u, def.name + ' ' + def.title, rows, footer, this.time);
@@ -777,7 +867,7 @@ const Game = {
     }
     if (p && Math.floor(this.time * 3) % 2 === 0) mark(p.cx, p.cy, '#ff4030', r * 1.2);
     HUD.text(ctx, 'Мигают ключи, цветной рамкой — запертые двери', W / 2, H - 22 * u, 5 * u, '#a08050', 'center');
-    HUD.text(ctx, Input.touchMode ? 'Кнопка «карта» — закрыть' : 'Tab — карта (N — закрепить)', W / 2, H - 30 * u, 5 * u, '#806040', 'center');
+    HUD.text(ctx, Input.touchMode ? 'Кнопка «карта» — закрыть' : Input.padMode ? 'Back — закрыть карту' : `${keyName(Input.binds.map[0])} — карта (${keyName(Input.binds.mapPin[0])} — закрепить)`, W / 2, H - 30 * u, 5 * u, '#806040', 'center');
   },
 
   drawLabels(ctx) {
