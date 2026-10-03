@@ -105,7 +105,7 @@ class Monster {
     if (type === 'chthon') this.y += 14; // Хтон по пояс в лаве
     if (type === 'shub') this.facing = 1;
     if (d.static) { this.counted = false; this.facing = 1; }
-    if (type === 'herald' || type === 'elder') { this.health = Math.round(d.hp * [0.7, 1, 1.2, 1.4][Game.skill || 1]); this.maxHealth = this.health; this.homeX = this.x; this.homeY = this.y; }
+    if (type === 'herald' || type === 'elder') { this.health = Math.round(d.hp * ([0.7, 1, 1.2, 1.4][Game.skill] || 1)); this.maxHealth = this.health; this.homeX = this.x; this.homeY = this.y; }
     this.blinkCd = rand(1, 3);
     this.baseY = this.y;
     // у каждого стрелка своя удобная дистанция, чтобы толпа не стояла строем

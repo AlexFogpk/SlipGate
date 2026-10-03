@@ -118,6 +118,7 @@ const Game = {
     document.addEventListener('visibilitychange', () => { if (document.hidden && this.state === 'playing') this.pause(); });
     const params = new URLSearchParams(location.search);
     if (params.has('god')) this.god = true;
+    if (params.has('debug')) this.debugOn = true;
     const map = params.get('map');
     if (map && LEVELS.find((l) => l.id === map)) {
       this.startFromSelect(map, +(params.get('skill') || 1));
@@ -322,10 +323,17 @@ const Game = {
       if (s.ch === 'P') start = { cx, bottom };
       else if (MONSTER_CHARS[s.ch]) {
         const type = MONSTER_CHARS[s.ch];
-        if (this.skill === 0 && type !== 'chthon' && hash2(s.tx, s.ty, 7) < 0.3) continue;
+        // на лёгком — около трети обычных монстров меньше; боссов и кристаллы щита не трогаем
+        const md = MONSTER_DEFS[type];
+        if (this.skill === 0 && !md.boss && !md.static && hash2(s.tx, s.ty, 7) < 0.3) continue;
         this.monsters.push(new Monster(type, cx, bottom));
         if (!MONSTER_DEFS[type].static) this.totalKills++;
       } else if (ITEM_CHARS.includes(s.ch)) this.items.push(new Item(s.ch, cx, bottom));
+    }
+    if (def.exitAfterBoss && !def.waves && !this.monsters.some((m) => m.def.boss)) {
+      // такого быть не должно: без босса выход не откроется — открываем его сразу
+      console.error(`${id}: на уровне нет босса, выход открыт без боя`);
+      this.level.exits.forEach((e) => { e.hidden = false; });
     }
     if (def.bossIntro) for (const m of this.monsters) if (m.def.boss && BOSS_CARDS[m.type]) m.bossDormant();
     // лава, которая поднимается на арене Хтона
@@ -1025,6 +1033,8 @@ const Game = {
       return;
     }
     if (Input.wasPressed('Escape', 'KeyP', 'PadStart') || Input.buttonPresses.has('pause')) { this.pause(); return; }
+    // отладочная панель — по клавише ~, как консоль в Quake
+    if (Input.wasPressed('Backquote')) this.debugOn = !this.debugOn;
     if (Input.actPressed('music')) {
       if (Music.playing) Music.stop(); else Music.start(this.levelDef.music || 55, this.musicStyle());
     }
@@ -1226,6 +1236,7 @@ const Game = {
         if (Input.touchMode) HUD.drawTouch(ctx, W, H, u);
         if (this.showStats) this.drawAutomap(ctx, W, H, u);
       }
+      if (this.debugOn && p) this.drawDebug(ctx, W, H, u);
     }
     if (this.state === 'intermission') this.drawLevelStats(ctx, W, H, u, Input.touchMode ? 'Коснитесь, чтобы продолжить' : 'Нажмите огонь, чтобы продолжить');
     if (this.state === 'menu' || this.state === 'paused') Menu.draw(ctx, W, H, u, t);
@@ -1263,6 +1274,46 @@ const Game = {
     ctx.fillStyle = card.line;
     ctx.fillRect(W / 2 - 90 * u * a, y + size * 1.08, 180 * u * a, Math.max(1, u * 0.6));
     ctx.globalAlpha = 1;
+  },
+
+  // Отладочная панель: что происходит на уровне прямо сейчас — для проверки и отчётов об ошибках.
+  debugOn: false,
+  debugLines() {
+    const def = this.levelDef, lv = this.level, p = this.player;
+    const now = performance.now();
+    if (this.dbgLast) this.dbgFps = lerp(this.dbgFps || 60, 1000 / Math.max(1, now - this.dbgLast), 0.1);
+    this.dbgLast = now;
+    const alive = this.monsters.filter((m) => m.alive && !m.def.static);
+    const L = [
+      `${def.id} «${def.title}» · ${SKILL_NAMES[this.skill]} · ${Math.round(this.dbgFps || 60)} кадр/с`,
+      `герой: клетка ${Math.floor(p.cx / TILE)},${Math.floor((p.y + p.h - 1) / TILE)} · здоровье ${Math.ceil(p.health)} · броня ${Math.ceil(p.armor)}${this.god ? ' · бессмертие' : ''}`,
+      `монстры: живых ${alive.length}, убито ${this.kills}/${this.totalKills} · тяжесть ×${(GRAVITY / BASE_GRAVITY).toFixed(2)}`,
+    ];
+    const boss = this.monsters.find((m) => m.def.boss);
+    const needBoss = def.exitAfterBoss && !def.waves;
+    if (boss) {
+      const hp = boss.type === 'chthon' ? `раны ${boss.hits}/${boss.def.hp}` : boss.type === 'shub' ? 'неуязвима' : `здоровье ${Math.ceil(boss.health)}/${boss.maxHealth}`;
+      L.push(`босс: ${boss.type} · ${boss.alive ? boss.state : 'повержен'} · ${hp}` + (def.bossIntro ? ` · появление: ${this.cine ? 'идёт' : this.introDone ? 'было' : 'ждёт героя'}` : ''));
+    } else if (needBoss) L.push('ОШИБКА: на уровне должен быть босс, а его нет');
+    if (def.altarButtons) L.push(`алтари: зажжено ${lv.buttons.filter((b) => b.lit).length}/${lv.buttons.length}`);
+    const els = lv.decor.filter((d) => d.kind === 'electrode');
+    if (els.length) L.push('электроды: ' + els.map((e) => e.est || 'off').join(', ') + (this.flood ? ` · лава ${this.flood.st} ${Math.round(this.flood.h)} px` : ''));
+    if (this.shubGate) L.push(`кровь для телепорта: ${this.shubGate.have}/${this.shubGate.need}${this.shubGate.open ? ' · открыт' : ''}`);
+    const pylons = this.monsters.filter((m) => m.type === 'pylon');
+    if (pylons.length) L.push(`кристаллы щита: целы ${pylons.filter((m) => m.alive).length}/${pylons.length}`);
+    if (this.waves) L.push(`волны: ${this.waves.started ? Math.max(0, this.waves.i + 1) : 0}/${def.waves.list.length}${this.waves.done ? ' · пройдено' : ''}`);
+    const exits = lv.exits.filter((e) => !e.skill && e.skill !== 0);
+    L.push(`выходы: открыто ${exits.filter((e) => !e.hidden).length}/${exits.length}` + (exits.some((e) => e.secret) ? ' (есть секретный)' : ''));
+    return L;
+  },
+
+  drawDebug(ctx, W, H, u) {
+    const L = this.debugLines();
+    const size = 4.6 * u, lh = size * 1.45;
+    const w = Math.min(W - 12 * u, 250 * u), x = W - w - 6 * u, y = 38 * u;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(x - 3 * u, y - 3 * u, w + 6 * u, L.length * lh + 6 * u);
+    L.forEach((s, i) => HUD.text(ctx, s, x, y + i * lh, size, /ОШИБКА/.test(s) ? '#ff6050' : i === 0 ? '#ffe0a0' : '#c8e0c0', 'left'));
   },
 
   // После победы над боссом: стрелка у края экрана к открывшемуся слипгейту,

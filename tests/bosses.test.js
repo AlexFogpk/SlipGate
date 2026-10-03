@@ -157,8 +157,78 @@ module.exports = {
     check(r.hStorm && r.hBolts >= 2, 'нет грозы Бездны: молний ' + r.hBolts);
     check(r.hDive, 'Вестник без щита не бросается рывком');
     check(r.hDying === 'dying' && r.hSlow && r.hDead && r.hExit > 0, 'Вестник не гибнет в замедлении или нет выхода');
+
+    // На всех сложностях босс на месте (раньше «Лёгкий» выкидывал Древнего вместе с
+    // обычными монстрами), здоровье Вестника и Древнего растёт со сложностью, кристаллов три.
+    const sk = await page.evaluate(() => {
+      const out = { missing: [], hp: {}, pylons: [] };
+      for (const def of LEVELS) {
+        if (!def.bossButtons && !def.altarButtons && !(def.exitAfterBoss && !def.waves)) continue;
+        for (let s = 0; s < 4; s++) {
+          Game.startFromSelect(def.id, s);
+          const boss = Game.monsters.find((m) => m.def.boss);
+          if (!boss) { out.missing.push(`${def.id} на «${SKILL_NAMES[s]}»`); continue; }
+          if (boss.maxHealth) (out.hp[boss.type] = out.hp[boss.type] || []).push(boss.maxHealth);
+          const py = Game.monsters.filter((m) => m.type === 'pylon').length;
+          if (def.id === 'e3m6' && py !== 3) out.pylons.push(`${SKILL_NAMES[s]}: ${py}`);
+        }
+      }
+      return out;
+    });
+    check(!sk.missing.length, 'нет босса: ' + sk.missing.join(', '));
+    for (const [type, hp] of Object.entries(sk.hp)) check(hp[0] < hp[1] && hp[1] < hp[2] && hp[2] < hp[3], `здоровье ${type} не растёт со сложностью: ${hp.join(' → ')}`);
+    check(!sk.pylons.length, 'у Вестника не три кристалла: ' + sk.pylons.join(', '));
+
+    // Весь финал E4M6 на «Лёгком»: Древний появляется, алтари снимают барьер, гибель, выход.
+    const easy = await page.evaluate(() => {
+      const step = (n) => { for (let i = 0; i < n; i++) Game.update(1 / 60); };
+      const o = {};
+      Game.startFromSelect('e4m6', 0); Game.god = true;
+      const p = Game.player, lv = Game.level;
+      const boss = Game.monsters.find((m) => m.type === 'elder');
+      o.dormant = boss && boss.state;
+      const zone = Game.levelDef.bossIntro;
+      p.x = zone[0] * 16 + 8; p.y = (zone[3] + 1) * 16 - p.h; p.vx = p.vy = 0;
+      step(10);
+      o.cine = !!Game.cine;
+      step(60 * 5);
+      o.active = boss.state;
+      for (const b of lv.buttons) {
+        let n = 0;
+        while (!b.lit && n++ < 60 * 8) { Game.monsters = Game.monsters.filter((m) => !m.minion); p.x = b.x + 6 - p.w / 2; p.y = b.y + 14 - p.h; p.vx = p.vy = 0; step(1); }
+      }
+      o.lit = lv.buttons.filter((b) => b.lit).length;
+      o.barrier = boss.elderShielded();
+      boss.takeDamage(boss.maxHealth * 0.45, p, 'rocket');
+      for (const b of lv.buttons) {
+        let n = 0;
+        while (!b.lit && n++ < 60 * 8) { Game.monsters = Game.monsters.filter((m) => !m.minion); p.x = b.x + 6 - p.w / 2; p.y = b.y + 14 - p.h; p.vx = p.vy = 0; step(1); }
+      }
+      boss.takeDamage(99999, p, 'rocket');
+      step(60 * 8);
+      o.dead = !boss.alive;
+      o.exits = lv.exits.filter((e) => !e.hidden).length;
+      // отладочная панель: клавиша ~ включает, строки описывают босса и выход
+      Game.debugOn = false;
+      Input.pressed.add('Backquote'); step(1);
+      o.debugToggled = Game.debugOn;
+      o.debug = Game.debugLines();
+      Game.render();
+      Input.pressed.add('Backquote'); step(1);
+      o.debugOff = !Game.debugOn;
+      Game.startFromSelect('e4m6', 0);
+      Game.monsters = Game.monsters.filter((m) => m.type !== 'elder');
+      o.debugMissing = Game.debugLines().some((l) => /ОШИБКА/.test(l));
+      return o;
+    });
+    check(easy.dormant === 'dormant' && easy.cine && easy.active === 'active', 'на «Лёгком» Древний не появился: ' + JSON.stringify(easy));
+    check(easy.lit === 4 && !easy.barrier, 'на «Лёгком» алтари не сняли барьер');
+    check(easy.dead && easy.exits > 0, 'на «Лёгком» Древний не погиб или выход закрыт');
+    check(easy.debugToggled && easy.debugOff, 'клавиша ~ не переключает отладочную панель');
+    check(easy.debug.some((l) => /босс: elder/.test(l)) && easy.debug.some((l) => /алтари: зажжено/.test(l)) && easy.debug.some((l) => /выходы: открыто 1/.test(l)), 'отладочная панель неполная:\n' + easy.debug.join('\n'));
+    check(easy.debugMissing, 'отладочная панель не сообщает о пропавшем боссе');
     noPageErrors(page);
     await page.close();
-    return `лава до ${Math.round(r.cFlood.maxH)} px, кровь ${r.sGate.need}, молний ${r.hBolts}`;
+    return `лава до ${Math.round(r.cFlood.maxH)} px, кровь ${r.sGate.need}, молний ${r.hBolts}; Древний на «Лёгком»: ${sk.hp.elder[0]} → «Кошмар» ${sk.hp.elder[3]}`;
   },
 };
