@@ -66,9 +66,16 @@ module.exports = {
     // повторное назначение той же клавиши не теряет запасные
     check(await page.evaluate(() => { Input.rebind('jump', 'KeyK'); return Input.binds.jump.join(); }) === 'KeyK,ArrowUp', 'повторное назначение потеряло запасную клавишу');
     await frames(page, 30);
+    // скорость меряем на каждом шаге игры: на медленной машине за четыре кадра
+    // проходит до 24 шагов, и прыжок успевает дойти до вершины
+    await page.evaluate(() => {
+      window.__minVy = 0;
+      const update = Game.update;
+      Game.update = function (dt) { update.call(this, dt); window.__minVy = Math.min(window.__minVy, Game.player.vy); };
+    });
     await page.keyboard.down('KeyK');
     await frames(page, 4);
-    const vy = await page.evaluate(() => Game.player.vy);
+    const vy = await page.evaluate(() => window.__minVy);
     await page.keyboard.up('KeyK');
     check(vy < -50, 'K не прыгает, vy=' + vy);
     const help = await page.evaluate(() => helpLines().map((l) => l.join(' ')).join('\n'));
@@ -85,9 +92,9 @@ module.exports = {
     check(Math.abs(pad.aim + Math.PI / 2) < 0.2, 'правый стик не целит вверх: ' + pad.aim);
     await page.evaluate(() => { window.__pad.axes = [0, 0, 0, 0]; });
     await frames(page, 30);
-    await page.evaluate(() => { window.__pad.buttons[0].pressed = true; });
+    await page.evaluate(() => { window.__minVy = 0; window.__pad.buttons[0].pressed = true; });
     await frames(page, 4);
-    const vy2 = await page.evaluate(() => Game.player.vy);
+    const vy2 = await page.evaluate(() => window.__minVy);
     await page.evaluate(() => { window.__pad.buttons[0].pressed = false; });
     check(vy2 < -50, 'кнопка A не прыгает, vy=' + vy2);
     await page.evaluate(() => { window.__pad.buttons[9].pressed = true; });
