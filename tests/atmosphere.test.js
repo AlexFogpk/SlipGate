@@ -1,5 +1,5 @@
 'use strict';
-// Атмосфера: силуэты на горизонте у каждой темы неба и музыка эпизодов
+// Атмосфера: силуэты на горизонте, столбы света, дымка, передний план и музыка эпизодов
 // с боевым слоем, который вступает, когда рядом встревоженные монстры.
 const { openGame, check, noPageErrors } = require('./lib');
 
@@ -31,6 +31,21 @@ module.exports = {
     const hz = await page.evaluate(() => LEVELS.filter((d) => new Level(d).hasSky).map((d) => { const lv = new Level(d); return [d.id, lv.horizon, lv.h * TILE]; }));
     for (const [id, h, max] of hz) check(h > 0 && h <= max, `${id}: горизонт вне карты (${h})`);
 
+    // живая атмосфера: столбы света, дымка над жидкостями, силуэты переднего плана
+    const amb = await page.evaluate(() => {
+      let shafts = 0, lavaFog = 0, fg = 0, drips = 0, levels = 0;
+      for (const d of LEVELS) {
+        const lv = new Level(d); lv.bake();
+        shafts += lv.amb.shafts.length; fg += lv.amb.fg.length; drips += lv.amb.drips.length;
+        lavaFog += lv.amb.fogs.filter((f) => f.kind === 'lava').length;
+        levels++;
+      }
+      Game.startFromSelect('e3m3', 1);
+      for (let i = 0; i < 30; i++) { Game.update(1 / 60); Game.render(); }
+      return { shafts, lavaFog, fg, drips, levels };
+    });
+    check(amb.shafts > 10 && amb.lavaFog > 5 && amb.fg > 100 && amb.drips > 20, 'мало атмосферы: ' + JSON.stringify(amb));
+
     // музыка: стиль эпизода и боевой слой
     await page.mouse.click(480, 270);
     const music = await page.evaluate(async () => {
@@ -55,6 +70,6 @@ module.exports = {
     check(music.fight > 0.5, 'боевой слой не вступил в бою: ' + music.fight.toFixed(2));
     check(music.menuStyle === 'menu' && music.menuIntensity === 0, 'в меню осталась боевая музыка');
     noPageErrors(page);
-    return `${Object.keys(sky).length} тем неба, ${hz.length} уровней с горизонтом, бой ${music.fight.toFixed(2)}`;
+    return `столбов света ${amb.shafts}, силуэтов ${amb.fg}, ${Object.keys(sky).length} тем неба, ${hz.length} уровней с горизонтом, бой ${music.fight.toFixed(2)}`;
   },
 };

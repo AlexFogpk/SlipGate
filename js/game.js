@@ -724,6 +724,7 @@ const Game = {
     if (this.items.some((it) => it.taken)) this.items = this.items.filter((it) => !it.taken);
     if (this.monsters.some((m) => m.gibbed && !m.def.boss)) this.monsters = this.monsters.filter((m) => !m.gibbed || m.def.boss);
     FX.update(dt);
+    updateAmbience(this.level, dt, this.cam, this.viewW, this.viewH);
     const c = this.cameraTarget();
     const k = 1 - Math.exp(-dt * 9);
     this.cam.x = lerp(this.cam.x, c.x, k);
@@ -1110,11 +1111,14 @@ const Game = {
     // самосветящееся
     lv.drawLiquids(ctx, cam, vw, vh, t, 'lava');
     lv.drawVoid(ctx, cam, vw, vh, t);
+    drawFog(ctx, lv, cam, vw, vh, t);
+    drawShafts(ctx, lv, cam, vw, vh, t);
     lv.drawPortals(ctx, cam, t, true);
     lv.drawDecorBright(ctx, cam, t);
     for (const pr of this.projectiles) pr.draw(ctx, cam, true);
     for (const m of this.monsters) m.drawBright(ctx, cam);
     FX.drawBright(ctx, cam, t);
+    drawForeground(ctx, lv, cam, vw, vh, t);
 
     // экранные оттенки
     const p = this.player;
@@ -1129,6 +1133,7 @@ const Game = {
       tint('#ffffff', this.whiteFlash);
       if (!p.alive) tint('#400000', Math.min(0.45, p.deadT * 0.4));
     }
+    drawVignette(ctx, vw, vh);
   },
 
   renderFinale(ctx, W, H, u) {

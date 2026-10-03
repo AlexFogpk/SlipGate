@@ -860,6 +860,7 @@ class Level {
       }
     }
     dressLevel(this, ctx);
+    prepareAmbience(this);
     for (const d of this.decor) {
       if (d.kind === 'checkpoint') {
         ctx.fillStyle = '#2a2622'; ctx.fillRect(d.x - 6, d.y - 5, 12, 5);
@@ -1194,6 +1195,16 @@ class Level {
 
   drawDecorBright(ctx, cam, t) {
     drawGlyphs(ctx, cam, this.glyphs, t);
+    if (this.amb && this.amb.strips) {
+      for (const s of this.amb.strips) {
+        const x = Math.round(s.x - cam.x), y = Math.round(s.y - cam.y);
+        if (x < -20 || x > 2000 || y < -20 || y > 2000) continue;
+        const fl = hash2(s.x, Math.floor(t * 8), 7) < 0.03 ? 0.3 : 1;   // изредка мигает
+        ctx.globalAlpha = 0.25 * fl; ctx.fillStyle = '#c8e8ff'; ctx.fillRect(x - 2, y - 2, 18, 7);
+        ctx.globalAlpha = fl; ctx.fillStyle = '#e8f6ff'; ctx.fillRect(x + 1, y + 1, 12, 1);
+        ctx.globalAlpha = 1;
+      }
+    }
     drawLiftLights(ctx, this.lifts, this.liftButtons, cam, t);
     if (this.def.altarButtons) {
       for (const b of this.buttons) {

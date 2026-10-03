@@ -4,14 +4,15 @@
 // Всё фоновое рисуется в запечённый слой один раз при загрузке и не влияет на столкновения.
 
 const DRESS = {
-  base: { pipes: 0.16, vents: 0.05, screens: 0.035, cables: 0.12 },
-  castle: { banners: 0.1, windows: 0.06, chains: 0.05, webs: 0.25 },
-  crypt: { webs: 0.35, chains: 0.06, skulls: 0.05, roots: 0.05, niches: 0.05 },
-  cave: { stalactites: 0.3, rocks: 0.14, roots: 0.12 },
-  rune: { chains: 0.05, glyphs: 0.02, webs: 0.12 },
-  nether: { stalactites: 0.18, glyphs: 0.03, skulls: 0.04, chains: 0.05 },
-  void: { glyphs: 0.03, chains: 0.04, stalactites: 0.08 },
-  elder: { stalactites: 0.2, skulls: 0.05, glyphs: 0.03, chains: 0.05 },
+  // pilasters — шаг колонн вдоль стен в клетках; band — стиль цоколя и фриза
+  base: { pipes: 0.16, vents: 0.05, screens: 0.035, cables: 0.12, girders: 0.07, hazard: 1, strips: 0.05, pilasters: 14, band: 'metal' },
+  castle: { banners: 0.1, windows: 0.06, chains: 0.05, webs: 0.25, rafters: 0.08, cages: 0.03, pilasters: 11, band: 'stone' },
+  crypt: { webs: 0.35, chains: 0.06, skulls: 0.05, roots: 0.05, niches: 0.05, rafters: 0.06, cages: 0.035, chained: 0.03, drips: 0.35, pilasters: 13, band: 'skulls' },
+  cave: { stalactites: 0.3, rocks: 0.14, roots: 0.12, drips: 0.25 },
+  rune: { chains: 0.05, glyphs: 0.02, webs: 0.12, pilasters: 10, cages: 0.02, band: 'rune' },
+  nether: { stalactites: 0.18, glyphs: 0.03, skulls: 0.04, chains: 0.05, spikes: 0.05, cages: 0.03, pilasters: 12, band: 'stone' },
+  void: { glyphs: 0.03, chains: 0.04, stalactites: 0.08, band: 'rune' },
+  elder: { stalactites: 0.2, skulls: 0.05, glyphs: 0.03, chains: 0.05, spikes: 0.05, cages: 0.025, chained: 0.02, pilasters: 12, band: 'stone' },
 };
 const DRESS_COL = {
   base: { rock: '#4e4a42', glyph: '#60d0ff' },
@@ -27,6 +28,8 @@ const DRESS_COL = {
 function dressLevel(lv, ctx) {
   const theme = lv.theme, D = DRESS[theme] || {}, col = DRESS_COL[theme] || DRESS_COL.base;
   lv.glyphs = [];
+  // точки для живой атмосферы: капли со сталактитов, пар из решёток, окна, лампы-полосы
+  lv.amb = { drips: [], vents: [], windows: [], strips: [] };
   const open = (x, y) => lv.tile(x, y) === T.EMPTY && !lv.skyBack(x, y);
   const solid = (x, y) => lv.tileSolid(x, y);
   // клетки рядом с выходами, кнопками, факелами, лифтами — без украшений
@@ -54,11 +57,62 @@ function dressLevel(lv, ctx) {
     return true;
   };
 
+  // пролёт под потолком: клетки свободны, над ними потолок, под ними ещё две пустых
+  const span = (x, y, n) => {
+    for (let i = 0; i < n; i++) if (!free(x + i, y) || !solid(x + i, y - 1) || !open(x + i, y + 1) || !open(x + i, y + 2)) return false;
+    return true;
+  };
+  // архитектурный ритм: цоколь вдоль пола и фриз под потолком в каждом помещении
+  if (D.band) {
+    const rk = ramp(shade(col.rock, 1.15));
+    for (let y = 1; y < lv.h - 1; y++) {
+      for (let x = 1; x < lv.w - 1; x++) {
+        if (!open(x, y)) continue;
+        const px = x * TILE, py = y * TILE;
+        if (solid(x, y + 1)) drawWainscot(ctx, px, py + TILE, x, D.band, rk);
+        if (solid(x, y - 1) && !solid(x, y + 1)) drawFrieze(ctx, px, py, x, D.band, rk);
+      }
+    }
+  }
   for (let y = 1; y < lv.h - 1; y++) {
     for (let x = 1; x < lv.w - 1; x++) {
       if (!free(x, y)) continue;
       const px = x * TILE, py = y * TILE;
       const ceil = solid(x, y - 1), floor = solid(x, y + 1);
+      // стальные балки (база) и деревянные стропила (замок, склеп) под потолком
+      if ((D.girders || D.rafters) && ceil && chance(x, y, 50, D.girders || D.rafters)) {
+        const n = 5 + Math.floor(hash2(x, y, 51) * 4);
+        if (span(x, y, n) && spaced('beam', x, y, 14, 4, 30)) {
+          if (D.girders) drawGirder(ctx, px, py, n * TILE); else drawRafter(ctx, px, py, n * TILE);
+          for (let i = 0; i < n; i++) take(x + i, y);
+          continue;
+        }
+      }
+      // клетка со скелетом на цепи
+      if (D.cages && ceil && open(x, y + 1) && open(x, y + 2) && free(x, y + 1) && chance(x, y, 53, D.cages) && spaced('cage', x, y, 12, 6, 10)) {
+        drawCage(ctx, px + 8, py, 4 + Math.floor(hash2(x, y, 54) * 12), hash2(x, y, 55));
+        take(x, y); take(x, y + 1);
+        continue;
+      }
+      // пилястры (на базе — стальные стойки) с ровным шагом вдоль стен
+      if (D.pilasters && floor && x % D.pilasters === lv.w % D.pilasters) {
+        let top = y;
+        while (top > 0 && free(x, top - 1)) top--;
+        if (solid(x, top - 1) && y - top >= 2 && y - top <= 11 && spaced('pilaster', x, y, D.pilasters - 2, 30, 80)) {
+          if (D.band === 'metal') drawSteelColumn(ctx, px + 4, top * TILE, py + TILE);
+          else drawPilaster(ctx, px + 5, top * TILE, py + TILE, col.rock);
+          for (let k = top; k <= y; k++) take(x, k);
+          continue;
+        }
+      }
+      // полосы «осторожно» у края пола над провалом
+      if (D.hazard && floor) {
+        for (const d of [-1, 1]) {
+          if (open(x + d, y) && open(x + d, y + 1) && !solid(x + d, y + 1) && lv.tile(x + d, y + 1) !== T.PLAT) drawHazard(ctx, d > 0 ? px + TILE - 8 : px, py + TILE, 8);
+        }
+      }
+      // шипы у стен
+      if (D.spikes && floor && (solid(x - 1, y) || solid(x + 1, y)) && chance(x, y, 57, D.spikes)) drawSpikes(ctx, px, py + TILE, hash2(x, y, 58), col.rock);
       // трубы от пола до потолка
       if (D.pipes && floor && chance(x, y, 1, D.pipes)) {
         let top = y;
@@ -90,7 +144,9 @@ function dressLevel(lv, ctx) {
         const n = 1 + Math.floor(hash2(x, y, 14) * 3);
         for (let i = 0; i < n; i++) {
           const h = 4 + Math.floor(hash2(x, y, 20 + i) * (free(x, y + 1) ? 13 : 7));
-          drawStalactite(ctx, px + 2 + Math.floor(hash2(x, y, 30 + i) * 12), py, 3 + Math.floor(hash2(x, y, 40 + i) * 4), h, col.rock);
+          const sx = px + 2 + Math.floor(hash2(x, y, 30 + i) * 12);
+          drawStalactite(ctx, sx, py, 3 + Math.floor(hash2(x, y, 40 + i) * 4), h, col.rock);
+          if (D.drips && i === 0 && hash2(x, y, 59) < D.drips) lv.amb.drips.push({ x: sx, y: py + h });
         }
       }
       if (D.roots && ceil && chance(x, y, 15, D.roots)) drawRoots(ctx, px, py, hash2(x, y, 16));
@@ -99,16 +155,150 @@ function dressLevel(lv, ctx) {
       // настенные: окна, ниши, пульты, решётки, руны — на высоте, не у потолка и не у пола
       const midWall = !ceil && !floor && free(x, y + 1) && open(x, y - 1);
       if (!midWall) continue;
-      if (D.windows && free(x, y - 1) && chance(x, y, 23, D.windows) && spaced('window', x, y, 5, 4)) { drawWindow(ctx, px + 2, py - 8); take(x, y); take(x, y - 1); continue; }
+      if (D.windows && free(x, y - 1) && chance(x, y, 23, D.windows) && spaced('window', x, y, 5, 4)) { drawWindow(ctx, px + 2, py - 8); lv.amb.windows.push({ x: px + 8, y: py + 4 }); take(x, y); take(x, y - 1); continue; }
+      if (D.chained && free(x, y - 1) && chance(x, y, 60, D.chained) && spaced('chained', x, y, 12, 6, 6)) { drawChainedSkeleton(ctx, px + 8, py - 10); take(x, y); take(x, y - 1); continue; }
+      if (D.strips && chance(x, y, 61, D.strips) && spaced('strip', x, y, 7, 4, 40)) { drawStripHousing(ctx, px + 1, py + 5); lv.amb.strips.push({ x: px + 1, y: py + 5 }); take(x, y); continue; }
       if (D.niches && chance(x, y, 24, D.niches) && spaced('niche', x, y, 3, 2)) { drawNiche(ctx, px + 3, py + 2); take(x, y); continue; }
       if (D.screens && chance(x, y, 25, D.screens) && spaced('screen', x, y, 4, 3)) { drawScreen(ctx, px + 2, py + 3, hash2(x, y, 26)); take(x, y); continue; }
-      if (D.vents && chance(x, y, 27, D.vents) && spaced('vent', x, y, 3, 2)) { drawVent(ctx, px + 3, py + 4); take(x, y); continue; }
+      if (D.vents && chance(x, y, 27, D.vents) && spaced('vent', x, y, 3, 2)) { drawVent(ctx, px + 3, py + 4); lv.amb.vents.push({ x: px + 8, y: py + 4 }); take(x, y); continue; }
       if (D.glyphs && chance(x, y, 28, D.glyphs) && spaced('glyph', x, y, 6, 4, 30)) { lv.glyphs.push(drawTablet(ctx, px + 3, py + 2, col.glyph, hash2(x, y, 29))); take(x, y); continue; }
     }
   }
 }
 
 // --- фоновые украшения (в запечённый слой) ---
+// Цоколь вдоль пола: металлическая панель с болтами или каменный плинтус из блоков.
+function drawWainscot(ctx, px, bottom, x, style, rk) {
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  if (style === 'metal') {
+    f(px, bottom - 7, 16, 7, '#2c2924');
+    f(px, bottom - 7, 16, 1, '#7a7466'); f(px, bottom - 6, 16, 1, '#4a463e');
+    if (x % 2 === 0) { f(px + 2, bottom - 4, 1, 1, '#8a8474'); f(px + 13, bottom - 4, 1, 1, '#8a8474'); }
+    if (x % 4 === 3) f(px + 15, bottom - 7, 1, 7, '#1a1814');
+    return;
+  }
+  f(px, bottom - 8, 16, 8, rk[1]);
+  f(px, bottom - 8, 16, 1, rk[3]); f(px, bottom - 7, 16, 1, rk[2]);
+  f(px, bottom - 1, 16, 1, rk[0]);
+  if (x % 2 === 1) f(px + 15, bottom - 7, 1, 6, rk[0]);
+  if (style === 'rune' && x % 3 === 0) f(px + 7, bottom - 5, 2, 2, rk[0]);
+}
+// Фриз под потолком: зубчики, ряд черепов, кабель-канал.
+function drawFrieze(ctx, px, top, x, style, rk) {
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  if (style === 'metal') {
+    f(px, top, 16, 4, '#34312a'); f(px, top + 4, 16, 1, '#1a1814'); f(px, top + 1, 16, 1, '#5a564c');
+    if (x % 3 === 0) f(px + 7, top + 2, 2, 1, '#8a8474');
+    return;
+  }
+  f(px, top, 16, 2, rk[1]); f(px, top + 2, 16, 1, rk[3]);
+  if (style === 'skulls' && x % 2 === 0) {
+    f(px + 6, top + 3, 4, 3, '#9a927c'); f(px + 6, top + 3, 4, 1, '#b4ac94'); f(px + 7, top + 4, 1, 1, '#1a1612'); f(px + 9, top + 4, 1, 1, '#1a1612');
+  } else {
+    for (let i = 1; i < 16; i += 4) { f(px + i, top + 3, 2, 2, rk[2]); f(px + i, top + 5, 2, 1, rk[0]); }
+  }
+}
+// Стальная стойка-двутавр от пола до потолка (база).
+function drawSteelColumn(ctx, x, top, bottom) {
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  f(x, top, 8, bottom - top, '#3a362e');
+  f(x, top, 1, bottom - top, '#8a8474'); f(x + 1, top, 1, bottom - top, '#5e5a4e');
+  f(x + 6, top, 1, bottom - top, '#26231e'); f(x + 7, top, 1, bottom - top, '#5e5a4e');
+  f(x + 3, top, 2, bottom - top, '#2c2924');
+  for (let y = top + 6; y < bottom - 4; y += 12) { f(x + 1, y, 6, 1, '#6a6456'); f(x + 2, y + 2, 1, 1, '#8a8474'); f(x + 5, y + 2, 1, 1, '#8a8474'); }
+  f(x - 2, top, 12, 3, '#4a463e'); f(x - 2, top, 12, 1, '#8a8474');
+  f(x - 2, bottom - 3, 12, 3, '#4a463e'); f(x - 2, bottom - 3, 12, 1, '#8a8474');
+  for (let y = bottom - 12; y < bottom - 3; y++) f(x + ((y >> 1) & 1 ? 1 : 3), y, 4, 1, (y >> 1) & 1 ? '#c89a28' : '#1a1610');
+}
+// Стальная двутавровая балка с заклёпками на подвесах.
+function drawGirder(ctx, x, y, len) {
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  for (let i = 6; i < len - 4; i += 40) { f(x + i, y, 1, 4, '#2a2620'); f(x + i + 1, y, 1, 4, '#5a5448'); }
+  f(x, y + 4, len, 1, '#9a9484'); f(x, y + 5, len, 1, '#6a6456');
+  f(x, y + 6, len, 4, '#3e3a32');
+  f(x, y + 10, len, 1, '#6a6456'); f(x, y + 11, len, 1, '#24211c');
+  for (let i = 3; i < len - 2; i += 6) f(x + i, y + 8, 1, 1, '#8a8474');
+  // раскосы
+  for (let i = 0; i + 10 < len; i += 12) for (let k = 0; k < 4; k++) f(x + i + k * 2 + 1, y + 6 + k, 2, 1, '#2c2924');
+}
+// Деревянное стропило с железными скобами и упорами.
+function drawRafter(ctx, x, y, len) {
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  f(x, y + 1, len, 6, '#4a2e16');
+  f(x, y + 1, len, 1, '#82542a'); f(x, y + 2, len, 1, '#6a4422');
+  f(x, y + 6, len, 1, '#28160a');
+  for (let i = 2; i < len; i += 9) f(x + i, y + 3 + (i % 2), 3, 1, '#5a3a1c');
+  for (let i = 8; i < len - 4; i += 32) { f(x + i, y, 4, 8, '#1e1c1a'); f(x + i, y, 4, 1, '#5a5448'); f(x + i + 1, y + 3, 1, 1, '#8a8474'); }
+  for (const [ex, d] of [[x + 1, 1], [x + len - 2, -1]]) for (let k = 0; k < 6; k++) f(ex + d * k, y + 7 + k, 2, 1, '#3a2412');
+}
+// Клетка на цепи со скелетом внутри.
+function drawCage(ctx, cx, top, chainLen, k) {
+  drawChain(ctx, cx - 1, top, chainLen);
+  const y0 = top + chainLen + 1;
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  f(cx - 3, y0, 7, 1, '#3a3630'); f(cx - 5, y0 + 1, 11, 2, '#2a2620'); f(cx - 5, y0 + 1, 11, 1, '#6a645a');
+  // скелет: череп, рёбра, свисающая кость
+  f(cx - 2, y0 + 4, 4, 3, '#a89e84'); f(cx - 2, y0 + 4, 4, 1, '#c8bea4'); f(cx - 1, y0 + 5, 1, 1, '#1a1612'); f(cx + 1, y0 + 5, 1, 1, '#1a1612');
+  f(cx - 1, y0 + 7, 2, 6, '#8a8270');
+  for (let i = 0; i < 3; i++) f(cx - 3, y0 + 8 + i * 2, 6, 1, '#9a927c');
+  if (k > 0.5) { f(cx + 4, y0 + 9, 1, 7, '#9a927c'); f(cx + 4, y0 + 16, 2, 1, '#b4ac94'); }
+  for (let bx = cx - 5; bx <= cx + 5; bx += 2) f(bx, y0 + 3, 1, 12, '#3a3630');
+  f(cx - 5, y0 + 3, 1, 12, '#6a645a');
+  f(cx - 5, y0 + 15, 11, 2, '#2a2620'); f(cx - 4, y0 + 15, 9, 1, '#5a544a');
+}
+// Пилястра: капитель, ствол со светотенью, база.
+function drawPilaster(ctx, x, top, bottom, rock) {
+  const r = ramp(shade(rock, 1.25));
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  f(x, top, 6, bottom - top, r[2]);
+  f(x, top, 1, bottom - top, r[3]); f(x + 1, top, 1, bottom - top, r[4]);
+  f(x + 4, top, 1, bottom - top, r[1]); f(x + 5, top, 1, bottom - top, r[0]);
+  f(x + 6, top, 1, bottom - top, 'rgba(0,0,0,0.35)');
+  for (let yy = top + 12; yy < bottom - 6; yy += 16) f(x, yy, 6, 1, r[1]);
+  f(x - 2, top, 10, 3, r[3]); f(x - 2, top + 2, 10, 1, r[0]); f(x - 1, top + 3, 8, 1, r[1]);
+  f(x - 2, bottom - 3, 10, 3, r[2]); f(x - 2, bottom - 3, 10, 1, r[4]); f(x - 1, bottom - 4, 8, 1, r[3]);
+}
+// Полоса «осторожно» на кромке пола у провала.
+function drawHazard(ctx, x, y, w) {
+  for (let i = 0; i < w; i++) {
+    for (let r = 0; r < 2; r++) {
+      ctx.fillStyle = (((x + i + r) >> 1) & 1) ? '#c89a28' : '#1a1610';
+      ctx.fillRect(x + i, y + r, 1, 1);
+    }
+  }
+}
+// Шипы у стены: железные или костяные.
+function drawSpikes(ctx, x, bottom, k, rock) {
+  const r = ramp(shade(rock, 1.1));
+  const n = 3 + Math.floor(k * 3);
+  for (let i = 0; i < n; i++) {
+    const sx = x + 2 + Math.floor((i / n) * 12), h = 4 + Math.floor(((k * 17 + i * 3.1) % 1) * 5);
+    for (let r2 = 0; r2 < h; r2++) {
+      const half = Math.round((1 - r2 / h) * 1.5);
+      ctx.fillStyle = r2 > h - 2 ? r[4] : r[2];
+      ctx.fillRect(sx - half, bottom - 1 - r2, half * 2 + 1, 1);
+      ctx.fillStyle = r[1]; ctx.fillRect(sx + half, bottom - 1 - r2, 1, 1);
+    }
+  }
+}
+// Лампа-полоса на стене (трубка светится в ярком проходе).
+function drawStripHousing(ctx, x, y) {
+  ctx.fillStyle = '#1a1814'; ctx.fillRect(x - 1, y - 1, 16, 5);
+  ctx.fillStyle = '#5e5a50'; ctx.fillRect(x - 1, y - 1, 16, 1);
+  ctx.fillStyle = '#a8b8c0'; ctx.fillRect(x + 1, y + 1, 12, 1);
+  ctx.fillStyle = '#2a2620'; ctx.fillRect(x - 1, y + 3, 16, 1);
+}
+// Скелет, прикованный к стене за руки.
+function drawChainedSkeleton(ctx, cx, y) {
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  for (const sx of [cx - 7, cx + 6]) { f(sx, y, 2, 3, '#2a2620'); f(sx, y, 2, 1, '#6a645a'); }
+  for (let i = 0; i < 4; i++) { f(cx - 6 + i, y + 3 + i, 1, 1, '#9a927c'); f(cx + 6 - i, y + 3 + i, 1, 1, '#9a927c'); }
+  f(cx - 2, y + 5, 4, 4, '#b4ac94'); f(cx - 2, y + 5, 4, 1, '#cec6ac'); f(cx - 1, y + 6, 1, 1, '#1a1612'); f(cx + 1, y + 6, 1, 1, '#1a1612'); f(cx - 1, y + 8, 2, 1, '#5a5244');
+  f(cx, y + 9, 1, 9, '#8a8270');
+  for (let i = 0; i < 3; i++) f(cx - 2, y + 10 + i * 2, 5, 1, '#9a927c');
+  f(cx - 2, y + 17, 5, 1, '#8a8270');
+  f(cx - 2, y + 18, 1, 6, '#8a8270'); f(cx + 2, y + 18, 1, 5, '#8a8270');
+}
 function drawPipe(ctx, x, top, bottom, twin) {
   const shadeCols = ['#2c2a26', '#8c8676', '#6a6456', '#46423a'];
   const pipe = (px, w) => {
