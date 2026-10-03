@@ -286,6 +286,7 @@ const Game = {
     this.mapOpen = false;
     this.revealT = 0;
     this.trail = [];
+    this.exitHint = false;
     this.attract = !!opts.attract;
     let start = { cx: 40, bottom: 40 };
     for (const s of this.level.spawns) {
@@ -316,12 +317,13 @@ const Game = {
     Music.start(def.music || 55, this.musicStyle());
   },
 
-  // Тайник снабжения у входа: оружие из стартового набора уровня, которое герой
-  // где-то пропустил, и патроны, если их меньше половины от набора.
+  // Тайник снабжения у входа — только оружие из стартового набора уровня, которое
+  // герой где-то пропустил (без него дальше не пройти). Патроны у входа не кладём:
+  // их хватает на карте, а если не осталось совсем — тихо пополняем до минимума.
   spawnSupplyCache(def, p, start) {
+    p.ensureAmmoReserve();
     const want = [];
     for (const n of def.kit.weapons) if (n >= 3 && !p.weapons[n]) want.push(String(n));
-    for (const [t, amt] of Object.entries(def.kit.ammo || {})) if ((p.ammo[t] || 0) < amt * 0.5) want.push(AMMO_ITEM[t]);
     if (!want.length) return;
     const lv = this.level;
     const tx0 = Math.floor(start.cx / TILE), ty = Math.floor((start.bottom - 1) / TILE);
@@ -343,7 +345,7 @@ const Game = {
       const tx = spots[i % spots.length], shift = i >= spots.length ? 5 : 0;
       this.items.push(new Item(ch, tx * TILE + 8 + shift, (ty + 1) * TILE));
     });
-    this.later(1.2, () => HUD.message('У входа тайник снабжения: то, что вы пропустили раньше'));
+    this.later(1.2, () => HUD.message('У входа тайник: оружие, которое вы пропустили раньше'));
   },
 
   nextLevel() {
@@ -441,7 +443,7 @@ const Game = {
     Sound.play('secret', b.x, b.y);
     if (lit < total) HUD.center('Руна зажжена: ' + lit + '/' + total, 2);
     else {
-      HUD.center('Барьер Древнего пал!', 2.5);
+      HUD.center('Барьер Древнего пал!\nТеперь его можно ранить — стреляйте!', 4);
       Sound.play('roar');
       this.shake(b.x, b.y, 8);
       const boss = this.monsters.find((m) => m.type === 'elder' && m.alive);
@@ -456,8 +458,9 @@ const Game = {
       e.hidden = false;
       FX.teleport(e.cx, e.bottom - 16);
     }
-    HUD.center('Путь к руне открыт', 3);
+    HUD.center('Путь к руне открыт —\nслипгейт отмечен стрелкой', 4);
     Sound.play('secret');
+    this.exitHint = true;
   },
 
   bossStrike(button) {
@@ -505,11 +508,18 @@ const Game = {
     this.kickY = -Math.sin(this.player.aim) * a;
   },
 
+  // Шум выстрела или взрыва: его слышат спящие монстры, до которых звук доходит
+  // по открытому пространству (не сквозь стены), и идут проверить, откуда он.
   noise(x, y, r) {
     const p = this.player;
     if (!p || !p.alive) return;
+    let reach = null;
+    const lv = this.level;
     for (const m of this.monsters) {
-      if (m.alive && m.state === 'idle' && dist(m.cx, m.cy, x, y) < r) m.alert(p);
+      if (!m.alive || m.state !== 'idle' || m.def.static || m.def.boss || dist(m.cx, m.cy, x, y) > r) continue;
+      reach = reach || lv.soundReach(x, y, r * 1.15);
+      const tx = clamp(Math.floor(m.cx / TILE), 0, lv.w - 1), ty = clamp(Math.floor(m.cy / TILE), 0, lv.h - 1);
+      if (reach[ty * lv.w + tx] >= 0) m.alert(p, true, { x, y });
     }
   },
 
@@ -829,6 +839,7 @@ const Game = {
         } else if (!Input.touchMode) {
           HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u);
         }
+        if (this.exitHint && p.alive) this.drawExitPointer(ctx, W, H, u);
         if (Input.touchMode) HUD.drawTouch(ctx, W, H, u);
         if (this.showStats) this.drawAutomap(ctx, W, H, u);
       }
@@ -837,6 +848,45 @@ const Game = {
     if (this.state === 'menu' || this.state === 'paused') Menu.draw(ctx, W, H, u, t);
     if (H > W * 1.15) HUD.text(ctx, 'Поверните устройство горизонтально', W / 2, this.offY - 16 * u, 6 * u, '#c8a060', 'center');
     if (this.state !== 'playing' && !Input.touchMode && !Input.padMode) HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u * 0.8);
+  },
+
+  // После победы над боссом: стрелка у края экрана к открывшемуся слипгейту,
+  // а когда он в кадре — прыгающий маркер над ним.
+  drawExitPointer(ctx, W, H, u) {
+    const p = this.player;
+    let best = null;
+    for (const e of this.level.exits) {
+      if (e.hidden) continue;
+      const d = dist(e.cx, e.bottom, p.cx, p.cy);
+      if (!best || d < best.d) best = { e, d };
+    }
+    if (!best) return;
+    const e = best.e;
+    const sx = this.offX + (e.cx - this.cam.x) * this.scale;
+    const sy = this.offY + (e.bottom - 30 - this.cam.y) * this.scale;
+    const m = 26 * u, bottom = H - HUD_BAR * u - 22 * u;
+    const inside = sx > m && sx < W - m && sy > m && sy < bottom;
+    const bob = Math.sin(this.time * 6) * 3 * u;
+    ctx.save();
+    if (inside) {
+      ctx.translate(sx, sy - 14 * u + bob);
+      ctx.rotate(Math.PI / 2);
+    } else {
+      const cx = W / 2, cy = (bottom + m) / 2;
+      const a = Math.atan2(sy - cy, sx - cx);
+      // точка на краю прямоугольника экрана в сторону выхода
+      const k = Math.min((W / 2 - m) / Math.max(1e-6, Math.abs(Math.cos(a))), ((bottom - m) / 2) / Math.max(1e-6, Math.abs(Math.sin(a))));
+      ctx.translate(cx + Math.cos(a) * (k - bob), cy + Math.sin(a) * (k - bob));
+      // подпись чуть ближе к центру экрана, стрелка смотрит на выход
+      HUD.text(ctx, 'ВЫХОД', -Math.cos(a) * 22 * u, -Math.sin(a) * 16 * u - 3 * u, 5 * u, '#c8b0ff', 'center');
+      ctx.rotate(a);
+    }
+    const s = u * 1.6;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.beginPath(); ctx.moveTo(8 * s, 0); ctx.lineTo(-5 * s, -6.5 * s); ctx.lineTo(-2 * s, 0); ctx.lineTo(-5 * s, 6.5 * s); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = Math.floor(this.time * 4) % 2 ? '#d0b8ff' : '#9a7aff';
+    ctx.beginPath(); ctx.moveTo(6.5 * s, 0); ctx.lineTo(-4 * s, -5 * s); ctx.lineTo(-1.5 * s, 0); ctx.lineTo(-4 * s, 5 * s); ctx.closePath(); ctx.fill();
+    ctx.restore();
   },
 
   drawLevelStats(ctx, W, H, u, footer) {

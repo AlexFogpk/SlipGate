@@ -11,6 +11,7 @@
 """
 import json, os, sys
 from ldtools import trap, floor_secret, wall_secret, add_near
+from supply_moves import SUPPLY_MOVES
 
 class M:
     def __init__(self, w, h):
@@ -137,6 +138,12 @@ LEVELS = []
 
 def level(meta, m):
     meta = dict(meta)
+    # припасы от старта — на маршрут (см. supply_moves.py)
+    for fx, fy, ch, tx, ty, back in SUPPLY_MOVES.get(meta['id'], []):
+        assert m.g[fy][fx] == ch, (meta['id'], fx, fy, ch, m.g[fy][fx])
+        assert m.g[ty][tx] in ' ,', (meta['id'], tx, ty, m.g[ty][tx])
+        m.g[fy][fx] = back
+        m.g[ty][tx] = ch
     meta['map'] = m.rows()
     LEVELS.append(meta)
 

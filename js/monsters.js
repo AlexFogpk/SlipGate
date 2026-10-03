@@ -92,6 +92,8 @@ class Monster {
     this.navT = 0; this.goal = null; this.lastSeenT = 0;
     this.dodgeCd = 0; this.strafe = 0; this.strafeT = rand(0.5, 1.5);
     this.fleeT = 0; this.fled = false; this.gapJump = false;
+    // память: где героя видели или слышали в последний раз, сколько ищем, насторожен ли
+    this.lastKnown = null; this.memT = 0; this.searchT = 0; this.wary = 0;
   }
 
   get cx() { return this.x + this.w / 2; }
@@ -113,10 +115,16 @@ class Monster {
     return lv.los(e.x, e.y, t.cx, t.cy) || lv.los(e.x, e.y, t.cx, t.y + 3);
   }
 
-  alert(target, loud = true) {
+  // Тревога. at — откуда пришёл шум (монстр героя не видел и идёт проверить);
+  // без at монстр видит цель сам.
+  alert(target, loud = true, at = null) {
     if (!this.alive || this.def.boss || this.def.static) return;
     const wasIdle = this.state === 'idle';
     this.target = target;
+    this.lastKnown = at ? { x: at.x, y: at.y } : { x: target.cx, y: target.y + target.h };
+    this.memT = 0; this.searchT = 0;
+    if (!at) this.lastSeenT = 0;
+    else if (wasIdle) this.lastSeenT = 99;
     if (wasIdle) {
       this.state = 'chase';
       this.cd = Math.max(this.cd, rand(0.3, 0.8));
@@ -128,7 +136,7 @@ class Monster {
       // будим соседей
       for (const m of Game.monsters) {
         if (m === this || !m.alive || m.state !== 'idle') continue;
-        if (dist(m.cx, m.cy, this.cx, this.cy) < 170 && Game.level.los(m.cx, m.cy, this.cx, this.cy)) m.alert(target, false);
+        if (dist(m.cx, m.cy, this.cx, this.cy) < 170 && Game.level.los(m.cx, m.cy, this.cx, this.cy)) m.alert(target, false, this.lastKnown);
       }
     }
   }
@@ -141,7 +149,8 @@ class Monster {
     if (d > range) return;
     // угорь чует всплеск: замечает героя в воде с любой стороны
     const splash = this.def.swim && p.waterLevel > 0 && d < 300;
-    const inFront = splash || sign(p.cx - this.cx) === this.facing || d < 110;
+    // насторожённый после поисков монстр смотрит в обе стороны
+    const inFront = splash || sign(p.cx - this.cx) === this.facing || d < 110 || (this.wary > 0 && d < 260);
     if (!inFront) return;
     if (this.canSeeEntity(p)) this.alert(p);
   }
@@ -170,7 +179,9 @@ class Monster {
       this.seeT -= dt;
       if (this.seeT <= 0) { this.seeT = 0.15; this.canSee = this.canSeeEntity(this.target); }
       this.lastSeenT = this.canSee ? 0 : this.lastSeenT + dt;
+      if (this.canSee) { this.lastKnown = { x: this.target.cx, y: this.target.y + this.target.h }; this.memT = 0; this.searchT = 0; }
     }
+    this.wary = Math.max(0, this.wary - dt);
     this.dodgeCd -= dt;
     if (this.state === 'chase') this.checkDodge();
 
@@ -190,7 +201,7 @@ class Monster {
         if (this.stateT <= 0) this.state = this.target ? 'chase' : 'idle';
         break;
       case 'chase':
-        if (this.def.blink && this.blinkCd <= 0 && this.target && (!this.canSee || this.stuckT > 2)) {
+        if (this.def.blink && this.blinkCd <= 0 && this.target && this.lastSeenT < 4 && (!this.canSee || this.stuckT > 2)) {
           this.lostT = (this.lostT || 0) + dt;
           if (this.lostT > 1.5 && this.blinkNear(this.target)) this.lostT = 0;
         } else this.lostT = 0;
@@ -263,20 +274,45 @@ class Monster {
   chase(dt) {
     const t = this.target;
     if (!t) { this.state = 'idle'; return; }
-    this.faceTarget();
-    // цель не видна — идём по следу героя к ближайшей видимой точке пути
-    let gx = t.cx, gy = t.y + t.h;
-    if (!this.canSee && this.lastSeenT > 0.5 && t.isPlayer) {
-      this.navT -= dt;
-      if (this.navT <= 0) { this.navT = 0.35; this.goal = this.trailGoal(); }
-      if (this.goal) { gx = this.goal.x; gy = this.goal.y; }
-    } else this.goal = null;
+    let gx = t.cx, gy = t.y + t.h, searching = false;
+    if (this.canSee || !t.isPlayer) {
+      this.faceTarget();
+      this.goal = null;
+    } else {
+      // героя не видно. Недавно видели — идём по его следу; иначе — туда, где
+      // видели или слышали в последний раз, и там осматриваемся. Не нашли — успокаиваемся.
+      this.memT += dt;
+      if (this.lastSeenT < 10) {
+        this.navT -= dt;
+        if (this.navT <= 0) { this.navT = 0.35; this.goal = this.trailGoal(); }
+      } else this.goal = null;
+      if (this.goal) {
+        gx = this.goal.x; gy = this.goal.y; this.searchT = 0;
+        this.lastKnown = { x: gx, y: gy };   // герой ушёл туда — там и искать
+      }
+      else if (this.lastKnown) {
+        gx = this.lastKnown.x; gy = this.lastKnown.y;
+        const there = Math.abs(gx - this.cx) < 14 && Math.abs(gy - (this.y + this.h)) < 40;
+        if (there || this.stuckT > 2.5 || (this.def.swim && !Game.level.liquidAt(gx, gy - 4))) this.searchT += dt;
+      } else this.searchT += dt;
+      if (this.searchT > 0) {
+        searching = true;
+        if (this.searchT > 4.5 || this.memT > 15) { this.giveUp(); return; }
+        // оглядывается по сторонам
+        if (Math.floor(this.searchT / 1.1) !== Math.floor((this.searchT - dt) / 1.1)) this.facing = -this.facing;
+      } else if (Math.abs(gx - this.cx) > 4) this.facing = gx > this.cx ? 1 : -1;
+    }
+    if (searching) {
+      this.vx = approach(this.vx, 0, 600 * dt);
+      if (this.def.fly || this.def.swim) this.vy = approach(this.vy, Math.sin(this.anim * 1.5 + this.seed) * 10, 300 * dt);
+      return;
+    }
     const dx = gx - this.cx;
     const adx = Math.abs(dx);
     const feet = this.y + this.h;
     const speed = this.def.speed * (this.waterLevel >= 2 ? 0.6 : 1);
     if (this.def.swim) {
-      const ddx = t.cx - this.cx, ddy = t.cy - this.cy;
+      const ddx = gx - this.cx, ddy = gy - this.h / 2 - this.cy;
       const d = Math.hypot(ddx, ddy) || 1;
       this.vx = approach(this.vx, ddx / d * speed, 300 * dt);
       this.vy = approach(this.vy, ddy / d * speed, 300 * dt);
@@ -286,10 +322,11 @@ class Monster {
       if (this.blockedX) this.seed += Math.PI * 0.5;   // упёрлись — облетаем с другой стороны
       let tx = t.cx + Math.sin(this.anim * 0.7 + this.seed) * 50;
       let ty = t.y - 34 + Math.sin(this.anim * 1.3 + this.seed) * 16;
-      if (this.goal) { tx = gx; ty = gy - 30; }
+      const unseen = !this.canSee && t.isPlayer;
+      if (unseen) { tx = gx; ty = gy - 30; }
       const ddx = tx - this.cx, ddy = ty - this.cy;
       const d = Math.hypot(ddx, ddy) || 1;
-      const keep = this.goal ? 0 : 70;
+      const keep = unseen ? 0 : 70;
       const k = d > keep ? 1 : -0.4;
       this.vx = approach(this.vx, ddx / d * speed * k, 260 * dt);
       this.vy = approach(this.vy, ddy / d * speed * (d > keep ? 1 : 0.3), 260 * dt);
@@ -351,6 +388,18 @@ class Monster {
       this.vx = sign(dx) * speed;
       this.jumpCd = 0.9;
     }
+  }
+
+  // Героя так и не нашли: монстр успокаивается, но ещё какое-то время насторожен.
+  giveUp() {
+    this.state = 'idle';
+    this.target = null;
+    this.goal = null;
+    this.lastKnown = null;
+    this.searchT = 0; this.memT = 0;
+    this.wary = 10;
+    this.turnT = rand(1.5, 3);
+    this.vx = 0;
   }
 
   // Самая свежая точка следа героя, которую монстр видит отсюда и до которой
@@ -670,6 +719,9 @@ class Monster {
   retarget(attacker) {
     if (!attacker || attacker === this || !attacker.alive) return;
     if (attacker.isPlayer) {
+      // урон выдаёт, откуда стреляли
+      this.lastKnown = { x: attacker.cx, y: attacker.y + attacker.h };
+      this.memT = 0; this.searchT = 0;
       if (this.target !== attacker) { this.target = attacker; if (this.state === 'idle') this.state = 'chase'; }
     } else if (attacker.isMonster && attacker.type !== this.type && !attacker.def.boss) {
       // междоусобица, как в Quake
@@ -1038,9 +1090,11 @@ class Monster {
     HUD.center('Древний пробудился!', 2.5);
   }
 
+  // Барьер пал: Древний оглушён и на несколько секунд опускается к герою — бить его.
   elderBarrierDown() {
     this.elderWake();
-    this.cd = Math.min(this.cd, 1);
+    this.stunT = 3.5;
+    this.cd = Math.max(this.cd, 3.8);
     this.shieldFlash = 0.6;
   }
 
@@ -1124,11 +1178,14 @@ class Monster {
       return;
     }
     const shielded = this.elderShielded();
-    // парит над героем, чтобы оставаться в кадре
-    const tx = clamp(p ? p.cx + Math.sin(this.anim * 0.4) * 170 : this.homeX, this.homeX - 560, this.homeX + 560);
-    const ty = clamp((p ? p.cy - 175 : this.homeY) + Math.sin(this.anim * 0.7) * 22, this.homeY, this.homeY + 320);
+    this.stunT = Math.max(0, (this.stunT || 0) - dt);
+    if (this.stunT > 0) this.hurtFlash = Math.max(this.hurtFlash, Math.sin(this.stunT * 20) > 0 ? 0.05 : 0);
+    // парит над героем, чтобы оставаться в кадре; оглушённый — низко и рядом
+    const stun = this.stunT > 0;
+    const tx = clamp(p ? p.cx + (stun ? p.facing * 90 : Math.sin(this.anim * 0.4) * 170) : this.homeX, this.homeX - 560, this.homeX + 560);
+    const ty = clamp((p ? p.cy - (stun ? 70 : 175) : this.homeY) + Math.sin(this.anim * 0.7) * 22, this.homeY, this.homeY + 420);
     const dx = tx - this.cx, dy = ty - this.cy, d = Math.hypot(dx, dy) || 1;
-    const sp = this.def.speed * (1 + this.rage * 0.25);
+    const sp = this.def.speed * (1 + this.rage * 0.25) * (stun ? 2.4 : 1);
     this.vx = approach(this.vx, dx / d * sp * Math.min(1, d / 60), 180 * dt);
     this.vy = approach(this.vy, dy / d * sp * Math.min(1, d / 60), 180 * dt);
     this.x += this.vx * dt; this.y += this.vy * dt;

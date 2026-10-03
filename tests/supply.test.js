@@ -1,7 +1,7 @@
 'use strict';
 // Снабжение без тупиков: что подобрано после контрольной точки, переживает гибель;
-// тайник снабжения у входа полон и достижим; голодающему герою монстры роняют рюкзак;
-// новый эпизод начинается со стартовым набором.
+// пропущенное оружие ждёт у входа, патронов не меньше минимума, а куч у старта нет;
+// голодающему герою монстры роняют рюкзак; новый эпизод начинается со стартовым набором.
 const { openGame, check, noPageErrors } = require('./lib');
 
 module.exports = {
@@ -37,9 +37,13 @@ module.exports = {
         const bare = new Player(0, 0); bare.ammo = { shells: 0, nails: 0, rockets: 0, cells: 0 };
         const before = def.map.join('').split('').filter((c) => '+HMAYRUNKCQXVW()3456789'.includes(c)).length;
         Game.loadLevel(def.id, { inv: bare.inventory() });
-        const want = def.kit.weapons.filter((n) => n >= 3).length + Object.keys(def.kit.ammo || {}).length;
+        const want = def.kit.weapons.filter((n) => n >= 3).length;
         const got = Game.items.length - before;
         const pl = Game.player;
+        const reserveOk = AMMO_RESERVE.every(([t, ws, min]) => !ws.some((n) => pl.weapons[n]) || pl.ammo[t] >= min);
+        // у старта нет кучи патронов: в пределах 16 клеток — не больше одной коробки
+        const sx = pl.cx, sy = pl.y + pl.h;
+        const pile = Game.items.slice(0, before).filter((it) => 'UNKC'.includes(it.ch) && Math.abs(it.cx - sx) < 16 * TILE && Math.abs(it.y + it.h - sy) < 5 * TILE).length;
         let picked = 0;
         for (const it of Game.items.slice(before)) {
           pl.x = it.cx - pl.w / 2; pl.y = it.y + it.h - pl.h; pl.vx = pl.vy = 0;
@@ -47,7 +51,7 @@ module.exports = {
           step(3);
           if (it.taken) picked++;
         }
-        cache.push({ id: def.id, got, want, picked });
+        cache.push({ id: def.id, got, want, picked, reserveOk, pile });
       }
       out.cache = cache;
       Game.startFromSelect('e1m2', 1);
@@ -76,6 +80,10 @@ module.exports = {
     check(rs.shellsAfter > 0, 'после гибели нет даже резерва патронов');
     const badCache = r.cache.filter((c) => c.got < c.want || c.picked < c.got);
     check(!badCache.length, 'тайник снабжения неполон или недостижим: ' + badCache.map((c) => `${c.id} ${c.picked}/${c.got}/${c.want}`).join(', '));
+    const noReserve = r.cache.filter((c) => !c.reserveOk);
+    check(!noReserve.length, 'без патронов даже на минимум: ' + noReserve.map((c) => c.id).join(', '));
+    const piles = r.cache.filter((c) => c.pile > 1);
+    check(!piles.length, 'у старта куча патронов: ' + piles.map((c) => `${c.id} (${c.pile})`).join(', '));
     check(r.pack, 'голодающему герою не выпал рюкзак');
     check(r.fedNoPack, 'рюкзак выпал, хотя патроны есть');
     check(r.episodeStart.level === 'e3m1' && r.episodeStart.weapons >= 4, 'эпизод 3 начался без стартового набора');

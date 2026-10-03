@@ -20,6 +20,9 @@ module.exports = {
       // провал в три клетки, глубже, чем монстр решится спрыгнуть
       gap: room(40, 18, (f) => { f(1, 8, 38, 16, '#'); f(15, 8, 17, 16, ' '); f(30, 7, 30, 7, 'P'); }),
       flat: room(40, 10, (f) => { f(1, 8, 38, 8, '#'); f(4, 7, 4, 7, 'P'); }),
+      // две комнаты за глухой стеной и те же комнаты с проходом внизу
+      walled: room(40, 12, (f) => { f(1, 10, 38, 10, '#'); f(20, 1, 20, 9, '#'); f(8, 9, 8, 9, 'P'); }),
+      doorway: room(40, 12, (f) => { f(1, 10, 38, 10, '#'); f(20, 1, 20, 7, '#'); f(8, 9, 8, 9, 'P'); }),
     };
     const res = await page.evaluate((maps) => {
       const out = {};
@@ -93,6 +96,22 @@ module.exports = {
       out.allyBlocked = shooter.allyInLine();
       ally.x = 30 * TILE;
       out.allyClear = !shooter.allyInLine();
+
+      // 7. слух: выстрел за глухой стеной не слышен, через проход — слышен
+      const sleeper = (id) => { load(id); const m = new Monster('grunt', 30 * TILE + 8, 10 * TILE); m.facing = 1; Game.monsters.push(m); return m; };
+      let m = sleeper('walled');
+      Game.noise(Game.player.cx, Game.player.cy, 520);
+      run(0.5);
+      out.wallHeard = m.state !== 'idle';
+      m = sleeper('doorway');
+      Game.noise(Game.player.cx, Game.player.cy, 520);
+      out.doorHeard = m.state !== 'idle' && m.lastKnown && Math.abs(m.lastKnown.x - Game.player.cx) < 1;
+      // 8. урон будит даже за стеной; не найдя героя, монстр успокаивается
+      m = sleeper('walled');
+      applyDamage(m, 5, Game.player, 'bullet');
+      out.hurtWakes = m.state !== 'idle' && m.target === Game.player;
+      out.giveUp = run(25, () => m.state === 'idle');
+      out.facesAway = true;
       return out;
     }, maps);
     check(res.stairs >= 0, 'монстр не нашёл обход по лестнице к герою на карнизе');
@@ -103,7 +122,11 @@ module.exports = {
     check(res.leadEasy < 1e-6, 'на «Лёгком» упреждения быть не должно');
     check(res.backoff[1] >= 50, `стрелок не отступил: ${res.backoff.map(Math.round).join(' → ')}`);
     check(res.allyBlocked && res.allyClear, 'проверка союзника на линии огня неверна');
+    check(!res.wallHeard, 'монстр услышал выстрел сквозь глухую стену');
+    check(res.doorHeard, 'монстр не услышал выстрел через проход');
+    check(res.hurtWakes, 'урон не разбудил монстра');
+    check(res.giveUp >= 0, 'монстр за стеной не успокоился, а продолжает ломиться к герою');
     noPageErrors(page);
-    return `обход ${res.stairs.toFixed(1)} с, провал ${res.gap.toFixed(1)} с, упреждение ${res.lead.toFixed(2)} рад, отступ ${res.backoff.map(Math.round).join('→')} px`;
+    return `успокоился за ${res.giveUp.toFixed(1)} с, обход ${res.stairs.toFixed(1)} с, провал ${res.gap.toFixed(1)} с, упреждение ${res.lead.toFixed(2)} рад, отступ ${res.backoff.map(Math.round).join('→')} px`;
   },
 };

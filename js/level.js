@@ -403,6 +403,41 @@ class Level {
   tileSolid(tx, ty) { return isSolidType(this.tile(tx, ty)); }
   tileAtPx(x, y) { return this.tile(Math.floor(x / TILE), Math.floor(y / TILE)); }
 
+  // Куда доходит звук из точки (x, y): обход по открытым клеткам на r пикселей пути.
+  // Сквозь стены и закрытые двери звук не идёт, зато огибает углы и проходит
+  // коридорами. Возвращает массив расстояний в клетках (-1 — не слышно).
+  soundReach(x, y, r) {
+    const w = this.w, h = this.h, n = w * h;
+    const tx = clamp(Math.floor(x / TILE), 0, w - 1), ty = clamp(Math.floor(y / TILE), 0, h - 1);
+    const steps = Math.ceil(r / TILE);
+    const key = ty * w + tx + ':' + steps;
+    if (this.sound && this.sound.key === key && Game.time - this.sound.t < 0.25) return this.sound.dist;
+    if (!this.sound) this.sound = { dist: new Int16Array(n), block: new Uint8Array(n), queue: new Int32Array(n) };
+    const S = this.sound, dist = S.dist, block = S.block, q = S.queue;
+    dist.fill(-1);
+    block.fill(0);
+    for (const m of this.movers) {
+      if (m.open > 0.5) continue;
+      for (let yy = Math.floor(m.y / TILE); yy < Math.ceil((m.y + m.h) / TILE); yy++) {
+        for (let xx = Math.floor(m.x / TILE); xx < Math.ceil((m.x + m.w) / TILE); xx++) if (xx >= 0 && yy >= 0 && xx < w && yy < h) block[yy * w + xx] = 1;
+      }
+    }
+    let head = 0, tail = 0;
+    const start = ty * w + tx;
+    dist[start] = 0; q[tail++] = start;
+    while (head < tail) {
+      const i = q[head++], d = dist[i];
+      if (d >= steps) continue;
+      const cx = i % w;
+      for (const j of [cx > 0 ? i - 1 : -1, cx < w - 1 ? i + 1 : -1, i - w, i + w]) {
+        if (j < 0 || j >= n || dist[j] >= 0 || block[j] || isSolidType(this.tiles[j])) continue;
+        dist[j] = d + 1; q[tail++] = j;
+      }
+    }
+    S.key = key; S.t = Game.time;
+    return dist;
+  }
+
   solidAt(x, y) {
     if (this.tileSolid(Math.floor(x / TILE), Math.floor(y / TILE))) return true;
     for (const s of this.solids) {

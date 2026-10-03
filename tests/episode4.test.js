@@ -52,6 +52,8 @@ module.exports = {
       }
       out.altars = lit;
       out.shieldedAfter = boss.elderShielded();
+      out.stunned = boss.stunT > 0;
+      out.hint = HUD.centerText;
       const hp1 = boss.health;
       boss.takeDamage(200, p, 'rocket');
       out.damaged = hp1 - boss.health;
@@ -62,6 +64,8 @@ module.exports = {
       step(60 * 5);
       out.bossGone = !boss.alive;
       out.exits = Game.level.exits.filter((e) => !e.hidden).length;
+      out.exitHint = Game.exitHint;
+      Game.render();
       Game.startFromSelect('e4m6', 1);
       const b0 = Game.level.buttons[0];
       Game.level.pressButton(b0);
@@ -80,9 +84,11 @@ module.exports = {
     check(r.shieldHold, 'барьер Древнего пропустил урон до алтарей');
     check(r.altars.join() === '1,2,3,4', 'алтари зажигаются неправильно: ' + r.altars.join());
     check(!r.shieldedAfter && r.damaged > 0, 'барьер не снят после всех алтарей');
+    check(r.stunned && /можно ранить/.test(r.hint), 'после алтарей нет оглушения Древнего и подсказки: ' + r.hint);
     check(r.rage, 'Древний не впал в ярость');
     check(r.dying === 'dying' && r.bossGone, 'Древний не погиб');
     check(r.exits >= 1, 'после победы не открылся выход');
+    check(r.exitHint, 'после победы нет стрелки к выходу');
     check(!r.shotAltar, 'алтарь зажёгся выстрелом');
     check(r.afterE3 === 'e4m1', 'после финала E3 не начался E4: ' + r.afterE3);
     noPageErrors(page);
