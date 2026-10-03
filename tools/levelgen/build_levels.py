@@ -10,7 +10,7 @@
 общие приёмы (засады, тайники) — в ldtools.py.
 """
 import json, os, sys
-from ldtools import trap, floor_secret, wall_secret
+from ldtools import trap, floor_secret, wall_secret, add_near
 
 class M:
     def __init__(self, w, h):
@@ -258,6 +258,8 @@ def e1m1():
     m.put(126, 20, 'R'); m.put(127, 20, 'K')
     m.put(140, 23, 'g'); m.put(138, 31, 'd')
     m.put(132, 31, 'U'); m.put(148, 30, 'H')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 84, 32, 'YU')
     level({
         'id': 'e1m1', 'name': 'E1M1', 'title': 'Шлюзовой комплекс', 'theme': 'base', 'episode': 1, 'next': 'e1m2', 'music': 49,
         'kit': {'weapons': [1, 2], 'ammo': {'shells': 25}},
@@ -355,6 +357,8 @@ def e1m2():
     m.plat(148, 153, 21)
     m.put(151, 20, 'g'); m.put(155, 24, 'k'); m.put(157, 23, 'g'); m.put(150, 12, 's')
     m.put(143, 17, 'H'); m.put(144, 17, 'U')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    wall_secret(m, 99, 30, 96, 98, '7K')
     level({
         'id': 'e1m2', 'name': 'E1M2', 'title': 'Замок проклятых', 'theme': 'castle', 'episode': 1, 'next': 'e1m3', 'music': 46.25,
         'kit': {'weapons': [1, 2, 3], 'ammo': {'shells': 40}},
@@ -434,6 +438,8 @@ def e1m3():
     m.put(166, 29, 'k'); m.put(169, 29, 'o'); m.put(163, 29, 'U')
     m.columns(164, 175, 21, 28, step=5, w=1)
     m.deco(142, 26, 160, 26)
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 123, 40, 'MN')
     level({
         'id': 'e1m3', 'name': 'E1M3', 'title': 'Некрополь', 'theme': 'crypt', 'episode': 1, 'next': 'e1m4', 'music': 41.2,
         'kit': {'weapons': [1, 2, 3, 4, 6], 'ammo': {'shells': 40, 'nails': 60, 'rockets': 10}},
@@ -501,6 +507,8 @@ def e1m4():
     m.roughen(46, 10, 95, 26, seed=12, ceil=3, walls=2)
     m.roughen(140, 14, 185, 26, seed=13, ceil=3, walls=1, floor_bumps=0.08)
     m.roughen(140, 2, 185, 12, seed=14, ceil=2, walls=1, floor_bumps=0.06)
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    wall_secret(m, 107, 35, 104, 106, 'VK')
     level({
         'id': 'e1m4', 'name': 'E1M4', 'title': 'Жуткий грот', 'theme': 'cave', 'episode': 1, 'next': 'e1m5', 'music': 43.65,
         'kit': {'weapons': [1, 2, 3, 4, 6, 7], 'ammo': {'shells': 50, 'nails': 80, 'rockets': 15}, 'armor': 100},
@@ -518,7 +526,7 @@ def e1m5():
     m.fill(1, 40, 26, 50, ' ')
     m.put(3, 50, 'P'); m.put(8, 44, 'L'); m.put(20, 44, 'L')
     m.put(10, 50, 'U'); m.put(12, 50, 'N'); m.put(14, 50, 'K')
-    m.put(22, 50, 'n')
+    m.put(22, 50, 'k')
     m.fill(27, 48, 27, 50, 'D')
     # B: лавовая река
     m.fill(28, 36, 80, 50, ' ')
@@ -556,7 +564,7 @@ def e1m5():
     wall_secret(m, 92, 50, 93, 98, 'QK', h=2)
     for (x, y) in ((85, 30), (100, 26), (132, 26), (148, 30), (116, 20), (88, 44), (145, 44)):
         m.put(x, y, 'L')
-    m.put(100, 44, 'v'); m.put(133, 44, 'v'); m.put(110, 38, 'n'); m.put(122, 38, 'n')
+    m.put(100, 44, 'o'); m.put(133, 44, 'o'); m.put(110, 38, 'n'); m.put(122, 38, 'k')
     m.put(144, 50, 'm'); m.put(88, 50, 'k'); m.put(95, 47, 'e'); m.put(138, 47, 'e')
     m.put(84, 50, 'H'); m.put(104, 41, 'U'); m.put(128, 41, 'N')
     m.fill(151, 48, 151, 50, ']')
@@ -576,17 +584,22 @@ def e1m5():
     # E: выход за золотой дверью
     m.fill(152, 42, 175, 50, ' ')
     m.put(172, 50, 'E'); m.put(156, 45, 'L'); m.put(170, 45, 'L')
-    m.put(160, 50, 'n'); m.put(166, 50, 'v'); m.put(154, 50, 'H')
+    m.put(160, 50, 'n'); m.put(166, 50, 'o'); m.put(154, 50, 'H')
     m.fill(176, 49, 176, 50, '$')
     m.fill(177, 47, 181, 50, ' ')
     m.put(179, 50, 'R'); m.put(180, 50, 'C')
+    # снабжение: патронов и лечения не хватало на всех монстров
+    add_near(m, 104, 41, 'K'); add_near(m, 154, 50, 'U')
+    add_near(m, 84, 50, 'H'); add_near(m, 128, 41, 'H')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 126, 42, 'MK')
     level({
         'id': 'e1m5', 'name': 'E1M5', 'title': 'Древний мир', 'theme': 'elder', 'episode': 1, 'next': 'e1m6', 'music': 38.9,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7], 'ammo': {'shells': 60, 'nails': 120, 'rockets': 20}, 'armor': 100},
         'traps': [
             trap(107, 36, 125, 38, [(90, 50, 'k'), (143, 50, 'k'), (94, 29, 's'), (138, 29, 's')]),
             trap(189, 18, 195, 20, [(160, 20, 'n'), (168, 20, 'e'), (184, 20, 'k')], 'Засада!'),
-            trap(166, 48, 170, 50, [(156, 50, 'n'), (174, 47, 'v')]),
+            trap(166, 48, 170, 50, [(156, 50, 'n'), (174, 47, 'o')]),
         ],
     }, m)
 

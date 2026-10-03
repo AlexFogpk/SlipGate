@@ -24,3 +24,27 @@ def wall_secret(m, wall_x, y_floor, x0, x1, items, h=3):
     m.fill(x0, y_floor - h + 1, x1, y_floor, ' ')
     for i, c in enumerate(items):
         m.put(x0 + 1 + i, y_floor, c)
+
+
+BLOCKING = set('#%D[]=$')   # стены, двери, решётки, тайные стены
+SUPPORT = set('#%-')         # на чём можно стоять
+
+
+def add_near(m, x, y, items, span=10):
+    """Положить предметы на тот же пол рядом с (x, y): в пустые клетки (в том числе под небом) над опорой,
+    по очереди справа и слева от точки, не проходя сквозь стены и не перепрыгивая ям.
+    Так добавка к снабжению всегда лежит там, куда герой и так приходит."""
+    order = [x]
+    for d in range(1, span + 1):
+        order += [x + d, x - d]
+    for c in items:
+        for cx in order:
+            if not (0 <= cx < m.w) or m.g[y][cx] not in ' ,' or m.g[y + 1][cx] not in SUPPORT:
+                continue
+            lo, hi = sorted((x, cx))
+            if any(m.g[y][xx] in BLOCKING or m.g[y + 1][xx] not in SUPPORT for xx in range(lo, hi + 1)):
+                continue
+            m.g[y][cx] = c
+            break
+        else:
+            raise ValueError(f'add_near({x},{y}): нет места для {c!r}')

@@ -1,5 +1,5 @@
 """Эпизод 3: «Нижний мир» — прыжковые площадки, давилки, угри, Вестник Бездны."""
-from ldtools import trap, floor_secret, wall_secret
+from ldtools import trap, floor_secret, wall_secret, add_near
 
 ALL = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
@@ -77,6 +77,8 @@ def e3m1(M, level):
     m.put(262, 14, 'L'); m.put(282, 11, 'L')
     m.columns(274, 296, 9, 16, step=7, w=1)
     m.arches(272, 296, 8, step=7)
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 191, 51, 'MC')
     level({
         'id': 'e3m1', 'name': 'E3M1', 'title': 'Врата Преисподней', 'theme': 'nether', 'episode': 3, 'next': 'e3m2', 'music': 43.65,
         'kit': {'weapons': [1, 2, 3, 4, 6], 'ammo': {'shells': 50, 'nails': 80, 'rockets': 10}},
@@ -172,6 +174,8 @@ def e3m2(M, level):
                       (45, L2, 'H'), (70, L2, 'U'), (110, L2, 'N'), (182, L2, '7'), (276, L3, '8'), (160, L2, 'K'), (200, L2, 'H'), (260, L2, 'C'), (295, L2, 'U'),
                       (105, L3, 'H'), (130, L3, 'N'), (165, L3, 'K'), (188, 69, 'N'), (219, 69, 'H'), (265, L3, 'H'), (280, L3, 'K'), (295, L3, 'Y')):
         m.put(x, y, c)
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 211, 21, 'VK')
     level({
         'id': 'e3m2', 'name': 'E3M2', 'title': 'Кровавые Шахты', 'theme': 'cave', 'episode': 3, 'next': 'e3m3', 'music': 41.2,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 9], 'ammo': {'shells': 50, 'nails': 100, 'rockets': 10, 'cells': 30}, 'armor': 100},
@@ -260,6 +264,11 @@ def e3m3(M, level):
     m.put(314, 31, 'E'); m.put(305, 31, 'v'); m.put(302, 31, 'H')
     m.put(309, 24, 'L')
     m.columns(303, 317, 21, 30, step=5, w=1)
+    # снабжение: патронов не хватало на всех монстров цитадели
+    add_near(m, 44, 45, 'U'); add_near(m, 165, 31, 'K'); add_near(m, 195, 45, 'C')
+    add_near(m, 210, 45, 'K'); add_near(m, 228, 31, 'C'); add_near(m, 115, 31, 'N')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 153, 46, 'RK')
     level({
         'id': 'e3m3', 'name': 'E3M3', 'title': 'Цитадель Пепла', 'theme': 'elder', 'episode': 3, 'next': 'e3m4', 'music': 38.9,
         'kit': {'weapons': ALL, 'ammo': {'shells': 60, 'nails': 120, 'rockets': 20, 'cells': 40}, 'armor': 100},
@@ -340,6 +349,10 @@ def e3m4(M, level):
     m.fill(187, 75, 197, 75, '#')
     m.put(195, 74, 'E'); m.put(190, 74, 'H')
     m.put(192, 66, 'L')
+    # снабжение
+    add_near(m, 185, 42, 'K'); add_near(m, 44, 37, 'U')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 106, 46, 'MC')
     level({
         'id': 'e3m4', 'name': 'E3M4', 'title': 'Бездонные Колодцы', 'theme': 'nether', 'episode': 3, 'next': 'e3m5', 'music': 36.7,
         'kit': {'weapons': ALL, 'ammo': {'shells': 60, 'nails': 120, 'rockets': 20, 'cells': 50}, 'armor': 150},
@@ -430,6 +443,11 @@ def e3m5(M, level):
     m.columns(265, 317, 21, 29, step=13, w=2)
     m.arches(263, 317, 20, step=13)
     m.fill(310, 29, 317, 30, '#')
+    # снабжение: патронов не хватало на всех монстров храма
+    add_near(m, 116, 55, 'K'); add_near(m, 132, 55, 'C'); add_near(m, 84, 55, 'U'); add_near(m, 202, 55, 'K')
+    add_near(m, 240, 30, 'KU'); add_near(m, 285, 30, 'C')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 175, 31, 'XK')
     level({
         'id': 'e3m5', 'name': 'E3M5', 'title': 'Храм Вестника', 'theme': 'rune', 'episode': 3, 'next': 'e3m6', 'music': 41.2,
         'kit': {'weapons': ALL, 'ammo': {'shells': 70, 'nails': 150, 'rockets': 25, 'cells': 60}, 'armor': 150},

@@ -1,6 +1,6 @@
 """Эпизод 4: «Измерение Древних» — пустота, фантомы, стражи, алтари и Древний."""
 
-from ldtools import trap, floor_secret, wall_secret
+from ldtools import trap, floor_secret, wall_secret, add_near
 
 ALL = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
@@ -79,7 +79,7 @@ def e4m1(M, level):
     m.fill(251, 24, 251, 26, '[')
     m.fill(252, 16, 297, 26, ' ')
     m.plat(262, 268, 24)
-    puts(m, [(264, 23, 'Q'), (266, 23, 'R')])
+    puts(m, [(264, 23, 'X'), (266, 23, 'R')])
     puts(m, [(266, 26, 'q'), (278, 26, 'n'), (285, 26, 'p'), (290, 26, 'e'), (270, 26, 'H'), (282, 26, 'C')])
     m.fill(292, 25, 297, 26, ' ')
     m.put(295, 26, 'E')
@@ -97,6 +97,8 @@ def e4m1(M, level):
     m.columns(256, 290, 17, 25, step=10, w=2)
     m.arches(253, 296, 16, step=10)
     floor_secret(m, 275, 27, 'MK')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 182, 41, 'MC')
     level({
         'id': 'e4m1', 'name': 'E4M1', 'title': 'Мост через Пустоту', 'theme': 'void', 'episode': 4, 'next': 'e4m2', 'music': 38.9,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6], 'ammo': {'shells': 50, 'nails': 100, 'rockets': 10}, 'armor': 50},
@@ -207,6 +209,10 @@ def e4m2(M, level):
     m.deco(46, 12, 47, 29); m.deco(143, 12, 144, 29)
     m.fill(41, 22, 45, 29, '#')
     wall_secret(m, 45, 29, 42, 44, 'MR')
+    # снабжение
+    add_near(m, 85, 57, 'K'); add_near(m, 135, 85, 'K')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 104, 100, 'VK')
     level({
         'id': 'e4m2', 'name': 'E4M2', 'title': 'Обсерватория', 'theme': 'rune', 'skyTheme': 'void', 'episode': 4, 'next': 'e4m3', 'music': 41.2,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7], 'ammo': {'shells': 60, 'nails': 120, 'rockets': 15, 'cells': 20}, 'armor': 100},
@@ -301,6 +307,10 @@ def e4m3(M, level):
         m.deco(x - 1, y + 1, x + 1, y + 1, over=',')
     m.columns(266, 316, 19, 28, step=10, w=2)
     m.arches(263, 317, 18, step=10)
+    # снабжение
+    add_near(m, 170, 49, 'K'); add_near(m, 88, 49, 'K')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 189, 50, 'RC')
     level({
         'id': 'e4m3', 'name': 'E4M3', 'title': 'Кристальные Копи', 'theme': 'cave', 'skyTheme': 'void', 'episode': 4, 'next': 'e4m4', 'music': 43.65,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7, 9], 'ammo': {'shells': 60, 'nails': 120, 'rockets': 20, 'cells': 40}, 'armor': 100},
@@ -390,6 +400,11 @@ def e4m4(M, level):
     m.columns(286, 303, 27, 48, step=9, w=2)
     m.arches(283, 316, 26, step=9)
     m.arches(62, 99, 36, step=9)
+    # снабжение: патронов не хватало на стражей и фантомов
+    add_near(m, 66, 49, 'U'); add_near(m, 115, 49, 'K'); add_near(m, 153, 49, 'C'); add_near(m, 205, 49, 'K')
+    add_near(m, 220, 49, 'C'); add_near(m, 245, 49, 'U'); add_near(m, 300, 49, 'K')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 168, 50, 'MK')
     level({
         'id': 'e4m4', 'name': 'E4M4', 'title': 'Цитадель Стражей', 'theme': 'castle', 'skyTheme': 'void', 'episode': 4, 'next': 'e4m5', 'music': 38.9,
         'kit': {'weapons': ALL, 'ammo': {'shells': 60, 'nails': 140, 'rockets': 25, 'cells': 50}, 'armor': 150},
@@ -469,6 +484,10 @@ def e4m5(M, level):
     m.columns(16, 84, 9, 20, step=12, w=2)
     m.arches(12, 99, 8, step=12)
     floor_secret(m, 10, 110, 'YK')
+    # снабжение
+    add_near(m, 74, 49, 'K'); add_near(m, 113, 69, 'U')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 19, 110, 'XC')
     level({
         'id': 'e4m5', 'name': 'E4M5', 'title': 'Лестница в Небо', 'theme': 'void', 'episode': 4, 'next': 'e4m6', 'music': 36.7,
         'kit': {'weapons': ALL, 'ammo': {'shells': 70, 'nails': 150, 'rockets': 25, 'cells': 60}, 'armor': 150},

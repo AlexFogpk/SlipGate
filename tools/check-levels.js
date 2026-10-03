@@ -238,7 +238,7 @@ function analyze(def, show) {
     const out = g.map((r, y) => r.split('').map((c, x) => (reach.has(y * w + x) && (c === ' ' || c === ',') ? '·' : c)).join(''));
     console.log(out.join('\n'));
   }
-  return { errors, warnings, stats };
+  return { errors, warnings, stats, reach, grid: g, w, h };
 }
 
 function countRuns(runs) {
@@ -287,6 +287,9 @@ function supplyWarnings() {
   }
   return out;
 }
+module.exports = { analyze };
+if (require.main !== module) return;
+
 const SUPPLY = supplyWarnings();
 
 const args = process.argv.slice(2);

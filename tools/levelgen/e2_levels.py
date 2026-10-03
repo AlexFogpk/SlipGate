@@ -1,5 +1,5 @@
 """Эпизод 2: «Царство Чёрной Магии» — большие уровни."""
-from ldtools import trap, floor_secret, wall_secret
+from ldtools import trap, floor_secret, wall_secret, add_near
 
 
 def e2m1(M, level):
@@ -31,7 +31,7 @@ def e2m1(M, level):
     m.fill(55, 22, 55, 22, '#')
     m.lift(52, 43, 3, ey=22)
     m.put(90, 21, 'b')
-    m.put(70, 12, 'a'); m.put(88, 10, 'a'); m.put(80, 15, 's'); m.put(75, 21, 'k')
+    m.put(70, 12, 'a'); m.put(88, 10, 's'); m.put(80, 15, 's'); m.put(75, 21, 'k')
     m.put(97, 21, '4'); m.put(99, 21, 'N'); m.put(64, 21, 'H')
     # зубцы стены и своды надвратного прохода
     for x in range(57, 100, 4):
@@ -100,9 +100,9 @@ def e2m1(M, level):
     m.fill(272, 10, 290, 30, '#')
     m.fill(273, 14, 289, 23, ' ')
     m.fill(272, 21, 272, 23, 'D')
-    m.put(285, 23, 'E'); m.put(280, 23, 'n'); m.put(278, 17, 'a'); m.put(286, 16, 'a')
+    m.put(285, 23, 'E'); m.put(280, 23, 'n'); m.put(278, 17, 'a')
     m.put(276, 17, 'L'); m.put(287, 17, 'L')
-    m.put(245, 15, 'a'); m.put(258, 12, 'a'); m.put(252, 18, 's')
+    m.put(245, 15, 'a'); m.put(258, 12, 's'); m.put(252, 18, 's')
     m.put(250, 30, 'd'); m.put(260, 30, 'd'); m.put(240, 30, 'K'); m.put(255, 30, 'H')
     m.plat(266, 269, 28)
     m.plat(262, 265, 26)
@@ -110,6 +110,8 @@ def e2m1(M, level):
     for x in (240, 250, 260):
         m.deco(x, 25, x + 1, 29, over=',')
         m.deco(x - 1, 25, x + 2, 25, over=',')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 192, 44, 'RK')
     level({
         'id': 'e2m1', 'name': 'E2M1', 'title': 'Застава у Врат', 'theme': 'castle', 'episode': 2, 'next': 'e2m2', 'music': 51.9,
         'kit': {'weapons': [1, 2, 3], 'ammo': {'shells': 40}},
@@ -212,6 +214,8 @@ def e2m2(M, level):
     m.fill(253, 16, 261, 17, '#')
     m.put(256, 15, 'E')
     m.put(260, 15, 'v')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 143, 22, 'VC')
     level({
         'id': 'e2m2', 'name': 'E2M2', 'title': 'Затонувший храм', 'theme': 'rune', 'episode': 2, 'next': 'e2m3', 'music': 46.25,
         'kit': {'weapons': [1, 2, 3, 4, 6], 'ammo': {'shells': 40, 'nails': 80, 'rockets': 10}},
@@ -254,7 +258,7 @@ def e2m3(M, level):
     m.put(66, 45, '8'); m.put(68, 45, 'C'); m.put(71, 45, 'o'); m.put(64, 45, 't'); m.put(74, 45, 't')
     m.put(116, 45, '('); m.put(110, 45, 'm'); m.put(103, 45, 'H'); m.put(105, 45, 'K')
     m.put(90, 30, 'e'); m.put(115, 30, 'e'); m.put(121, 30, 'n')
-    m.put(70, 20, 'a'); m.put(95, 16, 'a'); m.put(115, 20, 'a')
+    m.put(70, 20, 'a'); m.put(95, 16, 's'); m.put(115, 20, 'a')
     m.put(86, 30, 'N'); m.put(108, 30, 'U'); m.put(123, 30, 'H')
     for (x, y) in ((52, 24), (75, 18), (100, 22), (125, 18), (88, 40), (65, 40)):
         m.put(x, y, 'L')
@@ -314,9 +318,13 @@ def e2m3(M, level):
     m.arches(214, 315, 6, step=14)
     m.ledge(298, 304, 26)
     m.put(301, 25, 'n')
-    m.put(250, 15, 'a'); m.put(265, 12, 'a'); m.put(280, 16, 'a'); m.put(270, 20, 's')
+    m.put(250, 15, 'a'); m.put(265, 12, 's'); m.put(280, 16, 'a'); m.put(270, 20, 's')
     for (x, y) in ((218, 20), (240, 14), (262, 10), (285, 14), (305, 20)):
         m.put(x, y, 'L')
+    # аптечки: лечения было меньше всех в эпизоде
+    add_near(m, 123, 30, 'H'); add_near(m, 220, 30, 'H'); add_near(m, 103, 45, 'H')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 184, 31, 'MK')
     level({
         'id': 'e2m3', 'name': 'E2M3', 'title': 'Кузни Тени', 'theme': 'elder', 'episode': 2, 'next': 'e2m4', 'music': 43.65,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7], 'ammo': {'shells': 50, 'nails': 100, 'rockets': 15}, 'armor': 100},
@@ -433,12 +441,14 @@ def e2m4(M, level):
                        (8, F3, 'N'), (50, F3, 'H'), (75, F3, 'C'), (110, F3, 'K'),
                        (40, F4, 'U'), (60, F4, 'H'), (75, F4, 'Y'),
                        (95, F4, 'N'), (130, F4, 'H'), (165, F4, 'K'),
-                       (70, F2, 'Q'), (90, F2, 'H'), (120, F2, 'C'), (145, F2, 'K'),
+                       (70, F2, 'V'), (90, F2, 'H'), (120, F2, 'C'), (145, F2, 'K'),
                        (135, F3, 'H'), (150, F3, 'N'), (190, F3, 'C'), (215, F3, 'U'),
                        (178, F4, 'H'), (220, F4, 'K'), (240, F4, 'N'),
                        (185, F5, 'H'), (200, F5, 'C'), (235, F5, 'K'), (260, F5, 'H'), (285, F5, 'N'),
                        (245, F2, 'H'), (290, F2, 'C'), (210, F1, 'H'), (230, F1, 'K'), (268, F1, 'H')):
         m.put(x, st, c)
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 144, 61, 'XK')
     level({
         'id': 'e2m4', 'name': 'E2M4', 'title': 'Лабиринт Костей', 'theme': 'crypt', 'episode': 2, 'next': 'e2m5', 'music': 38.9,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7, 8], 'ammo': {'shells': 50, 'nails': 120, 'rockets': 20, 'cells': 30}, 'armor': 100},
@@ -532,8 +542,8 @@ def e2m5(M, level):
     # контрольные точки
     m.put(66, 90, '&'); m.put(110, 62, '&'); m.put(70, 34, '&')
     # монстры: снаружи
-    for (x, y, c) in ((20, 105, 'd'), (35, 105, 'd'), (48, 105, 'k'), (30, 80, 'a'), (45, 60, 'a'), (25, 40, 'a'),
-                      (170, 70, 'a'), (180, 40, 'a'), (40, 90, 's'), (175, 90, 's'), (40, 45, 'a'), (170, 15, 'a'), (185, 25, 's')):
+    for (x, y, c) in ((20, 105, 'd'), (35, 105, 'd'), (48, 105, 'k'), (30, 80, 'a'), (45, 60, 's'), (25, 40, 'a'),
+                      (170, 70, 'a'), (180, 40, 's'), (40, 90, 's'), (175, 90, 's'), (170, 15, 'a'), (185, 25, 's')):
         m.put(x, y, c)
     # монстры и предметы по этажам
     floors = {
@@ -562,6 +572,11 @@ def e2m5(M, level):
     for st, its in items.items():
         for (c, x) in its:
             m.put(x, st, c)
+    # снабжение: патронов не хватало на всех монстров башни
+    add_near(m, 90, 20, 'K'); add_near(m, 146, 34, 'U'); add_near(m, 70, 48, 'C'); add_near(m, 125, 62, 'U')
+    add_near(m, 130, 76, 'K'); add_near(m, 135, 90, 'N'); add_near(m, 100, 62, 'H'); add_near(m, 72, 90, 'H')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 117, 105, 'RC')
     level({
         'id': 'e2m5', 'name': 'E2M5', 'title': 'Шпиль Колдуна', 'theme': 'rune', 'episode': 2, 'next': 'e2m6', 'music': 41.2,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7, 8], 'ammo': {'shells': 60, 'nails': 150, 'rockets': 25, 'cells': 40}, 'armor': 150},
