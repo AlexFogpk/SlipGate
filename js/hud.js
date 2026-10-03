@@ -232,9 +232,7 @@ const HUD = {
       const kind = p.armorType >= 0.8 ? 'R' : p.armorType >= 0.6 ? 'Y' : 'A';
       this.icon(ctx, itemImg(kind), x + 11 * u, py + ph / 2 - u, 16 * u, 15 * u, u * 1.15, p.armor > 0 ? 1 : 0.22);
       const jx = this.flash.armor && this.flash.armor.t > 0 && !this.flash.armor.up ? Math.round(Math.sin(t * 90) * u) : 0;
-      this.num(ctx, p.armor, x + 22 * u + jx, py + 2.5 * u, ps, this.digitPal('armor', false));
-      const col = { A: '#4aa03a', Y: '#d8b030', R: '#c83028' }[kind];
-      this.bar(ctx, x + 22 * u, py + ph - 4.5 * u, w - 26 * u, 2 * u, p.armor / 200, col, u);
+      this.num(ctx, p.armor, x + 22 * u + jx, py + 3.5 * u, ps, this.digitPal('armor', false));
     }
     // лицо и здоровье
     {
@@ -243,10 +241,7 @@ const HUD = {
       this.inset(ctx, x, py, w, ph, u, low && Math.floor(t * 4) % 2 ? 'rgba(90,10,6,0.6)' : null);
       drawFace(ctx, x + 3 * u, py + 3 * u, u, p, t);
       const jx = this.flash.health && this.flash.health.t > 0 && !this.flash.health.up ? Math.round(Math.sin(t * 90) * u) : 0;
-      this.num(ctx, p.health, x + 22 * u + jx, py + 2.5 * u, ps, this.digitPal('health', low));
-      const bx = x + 22 * u, bw = w - 26 * u;
-      this.bar(ctx, bx, py + ph - 4.5 * u, bw, 2 * u, p.health / 100, low ? '#e03020' : '#c84030', u);
-      if (p.health > 100) { ctx.fillStyle = '#6a8cff'; ctx.fillRect(bx, py + ph - 4.5 * u, Math.round(bw * clamp((p.health - 100) / 100, 0, 1)), 2 * u); }
+      this.num(ctx, p.health, x + 22 * u + jx, py + 3.5 * u, ps, this.digitPal('health', low));
     }
     // патроны текущего оружия
     {
@@ -256,8 +251,7 @@ const HUD = {
       if (wd.ammo) {
         const v = p.ammo[wd.ammo];
         this.icon(ctx, itemImg(AMMO_ITEM[wd.ammo]), x + 11 * u, py + ph / 2 - u, 16 * u, 15 * u, u * 1.1);
-        this.num(ctx, v, x + 22 * u, py + 2.5 * u, ps, this.digitPal('ammo', v === 0));
-        this.bar(ctx, x + 22 * u, py + ph - 4.5 * u, w - 26 * u, 2 * u, v / AMMO_MAX[wd.ammo], '#d8a040', u);
+        this.num(ctx, v, x + 22 * u, py + 3.5 * u, ps, this.digitPal('ammo', v === 0));
       } else {
         this.icon(ctx, gunImg(1), x + 11 * u, py + ph / 2, 16 * u, 14 * u, u * 1.2);
         this.text(ctx, 'ТОПОР', x + 22 * u, py + 6 * u, 6 * u, '#c8a060', 'left', false);
