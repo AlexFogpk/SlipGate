@@ -775,8 +775,7 @@ const Game = {
   // Пульт на арене Хтона заряжает электрод на своей стороне; разряд — когда заряжены оба.
   bossStrike(button) {
     const boss = this.monsters.find((m) => m.type === 'chthon' && m.alive);
-    Sound.play('zap', button.x, button.y);
-    if (!boss || !boss.chthonReady()) { HUD.center('Электроды молчат...', 1.5); return; }
+    if (!boss || !boss.chthonReady()) { Sound.play('zap', button.x, button.y, { gap: 1 }); HUD.center('Электроды молчат...', 1.5); return; }
     boss.chargeElectrode(button);
   },
 

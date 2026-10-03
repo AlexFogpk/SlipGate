@@ -960,6 +960,7 @@ class Monster {
     if (!e) return;
     if (e.est === 'charging' || e.est === 'ready') return;
     e.est = 'charging'; e.et = 0;
+    Sound.play('zap', button.x, button.y);
     Sound.play('charge', e.x, e.y - 30, { p: 0.6 });
     FX.beam(button.x + 6, button.y + 6, e.x, e.y - 34, '#c8d8ff', 0.3, 2);
   }
