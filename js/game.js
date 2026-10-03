@@ -273,6 +273,8 @@ const Game = {
     this.levelDef = def;
     this.level = new Level(def);
     this.level.bake();
+    Ambient.setLevel(this.level);
+    this.roomT = 0;
     this.monsters = []; this.items = []; this.projectiles = []; this.timers = [];
     FX.clear();
     HUD.reset();
@@ -287,7 +289,7 @@ const Game = {
     this.revealT = 0;
     this.trail = [];
     this.exitHint = false;
-    this.cine = null; this.introDone = false; this.slowT = 0; this.whiteFlash = 0;
+    this.cine = null; this.introDone = false; this.slowT = 0; this.whiteFlash = 0; this.hitstop = 0;
     this.attract = !!opts.attract;
     let start = { cx: 40, bottom: 40 };
     for (const s of this.level.spawns) {
@@ -507,6 +509,14 @@ const Game = {
     return clamp(n / 4, 0, 1);
   },
 
+  hitstop: 0,
+  // Герой попал: звук попадания, отметка на прицеле; мощный удар — короткий стоп-кадр.
+  onPlayerHit(m, dmg, killed) {
+    HUD.hitMark = { t: killed ? 0.32 : 0.14, kill: killed };
+    Sound.play(killed ? 'kill' : 'hit', null, null, { gap: 0.05, p: clamp(1.3 - dmg / 100, 0.6, 1.3), vol: killed ? 0.9 : 0.55 });
+    if (dmg >= 55 || (killed && (dmg >= 30 || m.def.hp >= 200))) this.hitstop = Math.max(this.hitstop, dmg >= 100 || m.def.hp >= 300 ? 0.075 : 0.045);
+  },
+
   // --- вспомогательное для сущностей ---
   later(delay, fn) { this.timers.push({ t: delay, fn }); },
 
@@ -619,6 +629,8 @@ const Game = {
 
   // --- обновление ---
   update(dt) {
+    // стоп-кадр: мир замирает на долю секунды, ввод копится до следующего кадра
+    if (this.hitstop > 0 && this.state === 'playing') { this.hitstop -= dt; return; }
     this.time += dt;
     Input.pollPad();
     HUD.update(dt);
@@ -647,7 +659,42 @@ const Game = {
         break;
       default: break;
     }
+    this.soundscape(dt);
     Input.endFrame();
+  },
+
+  // Звуковая среда: каждые четверть секунды — эхо по размеру помещения, ветер под
+  // открытым небом, глухой звук под водой и ближайшие фоновые источники.
+  soundscape(dt) {
+    this.roomT -= dt;
+    if (this.roomT > 0) return;
+    this.roomT = 0.25;
+    const p = this.player;
+    if (this.state !== 'playing' || !p || this.attract) {
+      Sound.setUnderwater(false);
+      Ambient.update(0, 0, true);
+      return;
+    }
+    const r = this.measureRoom(p.cx, p.cy - 6);
+    Sound.setRoom(r.size, r.outdoor);
+    Sound.setUnderwater(p.alive && p.waterLevel === 3);
+    Ambient.update(p.cx, p.cy, false);
+  },
+
+  // Двенадцать лучей во все стороны: средняя дальность — размер помещения,
+  // доля лучей, ушедших в небо или Пустоту, — насколько вокруг открыто.
+  measureRoom(x, y) {
+    const lv = this.level, N = 12, R = 420;
+    let sum = 0, open = 0;
+    for (let i = 0; i < N; i++) {
+      const a = (i + 0.5) / N * TAU, dx = Math.cos(a) * R, dy = Math.sin(a) * R;
+      const h = lv.rayCast(x, y, x + dx, y + dy, true);
+      sum += h.t * R;
+      for (let s = 24; s < h.t * R; s += 24) {
+        if (skyLike(lv.tile(Math.floor((x + dx * s / R) / TILE), Math.floor((y + dy * s / R) / TILE)))) { open++; break; }
+      }
+    }
+    return { size: clamp((sum / N - 70) / 260, 0, 1), outdoor: clamp(open / N * 1.6, 0, 1) };
   },
 
   anyKey() {

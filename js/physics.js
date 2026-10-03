@@ -128,7 +128,14 @@ function computeWaterLevel(e) {
 }
 
 function applyDamage(target, dmg, attacker, kind, kx = 0, ky = 0) {
-  if (target && target.takeDamage && dmg > 0) target.takeDamage(dmg, attacker, kind, kx, ky);
+  if (!target || !target.takeDamage || dmg <= 0) return;
+  const alive = target.alive, hp = target.health, st = target.state;
+  target.takeDamage(dmg, attacker, kind, kx, ky);
+  // отдача попадания герою: звук, отметка на прицеле, стоп-кадр на мощном ударе
+  if (attacker && attacker.isPlayer && target.isMonster && alive && (hp !== target.health || !target.alive)) {
+    const killed = !target.alive || (target.state !== st && (target.state === 'down' || target.state === 'dying'));
+    Game.onPlayerHit(target, dmg, killed);
+  }
 }
 
 function explode(x, y, dmg, radius, attacker, ignore, opts = {}) {

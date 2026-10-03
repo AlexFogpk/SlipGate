@@ -60,6 +60,7 @@ const HUD = {
     this.centerT -= dt;
     this.hitT -= dt;
     this.weaponT -= dt;
+    if (this.hitMark) this.hitMark.t -= dt;
     for (const k in this.flash) this.flash[k].t -= dt;
   },
 
@@ -366,6 +367,17 @@ const HUD = {
     ctx.fillRect(x, y - 4 * s, s, 3 * s); ctx.fillRect(x, y + 2 * s, s, 3 * s);
     ctx.fillStyle = '#ff5030';
     ctx.fillRect(x, y, s, s);
+    // отметка попадания: косые штрихи, красные — при убийстве
+    const hm = this.hitMark;
+    if (hm && hm.t > 0) {
+      const k = Math.min(1, hm.t / 0.1), r = (hm.kill ? 5 : 4) * s + (1 - k) * 2 * s;
+      ctx.globalAlpha = k;
+      ctx.fillStyle = hm.kill ? '#ff3020' : '#ffffff';
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        for (let i = 0; i < 3; i++) ctx.fillRect(x + dx * (r + i * s) - (dx < 0 ? s : 0), y + dy * (r + i * s) - (dy < 0 ? s : 0), s, s);
+      }
+      ctx.globalAlpha = 1;
+    }
   },
 
   layoutTouch(W, H, u) {

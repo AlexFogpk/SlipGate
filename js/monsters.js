@@ -40,6 +40,27 @@ const GAP_JUMPERS = new Set(['grunt', 'dog', 'enforcer', 'knight', 'hknight', 'f
 const CAREFUL = new Set(['grunt', 'enforcer', 'guardian', 'hknight']);
 const COWARDS = new Set(['grunt', 'enforcer']);
 
+// Подготовка атаки: свечение там, откуда полетит выстрел или удар, растёт до
+// мгновения атаки — по нему видно, когда уворачиваться. t — время до выстрела,
+// melee — до удара, at — откуда (ствол, голова, хвост).
+const TELLS = {
+  grunt: { t: 0.4, col: '#ffe080', r: 2 },
+  enforcer: { t: 0.35, col: '#ff4020', r: 3 },
+  knight: { melee: 0.25, col: '#ffffff', r: 2 },
+  hknight: { t: 0.45, melee: 0.3, col: '#ff8020', r: 4 },
+  ogre: { t: 0.4, melee: 0.15, col: '#ffb040', r: 3 },
+  zombie: { t: 0.5, col: '#e04030', r: 3, at: 'head' },
+  fiend: { melee: 0.2, col: '#ffffff', r: 2 },
+  dog: { melee: 0.15, col: '#ffffff', r: 2 },
+  scrag: { t: 0.3, col: '#80ff60', r: 3, at: 'head' },
+  vore: { t: 0.6, col: '#c060ff', r: 5, at: 'head' },
+  shambler: { t: 0.8, melee: 0.4, col: '#c0d8ff', r: 6, at: 'head' },
+  phantom: { t: 0.35, col: '#c080ff', r: 3 },
+  guardian: { t: 0.5, melee: 0.5, col: '#60e0ff', r: 4 },
+  scorpion: { t: 0.25, melee: 0.2, col: '#ffd060', r: 3, at: 'tail' },
+  eel: { t: 0.25, col: '#a0e0ff', r: 4, at: 'head' },
+};
+
 class Monster {
   constructor(type, cx, bottom) {
     const d = MONSTER_DEFS[type];
@@ -1403,10 +1424,41 @@ class Monster {
     drawMonsterSprite(ctx, x, y, this);
   }
 
+  // Свечение подготовки атаки (см. TELLS).
+  drawTell(ctx, cam) {
+    const tl = TELLS[this.type];
+    if (!tl || this.state !== 'attack') return;
+    const melee = this.attackKind === 'melee';
+    const T = melee ? tl.melee : tl.t;
+    if (!T || this.stateT > T + 0.03) return;
+    if (!melee && this.fired > (this.type === 'shambler' ? 1 : 0)) return;
+    const k = clamp(this.stateT / T, 0, 1);
+    let px, py;
+    if (melee) { px = this.cx + this.facing * (this.w / 2 + 3); py = this.cy - 2; }
+    else if (tl.at === 'head') { px = this.cx + this.facing * 3; py = this.y + 5; }
+    else if (tl.at === 'tail') { px = this.cx - this.facing * (this.w / 2 - 2); py = this.y + 1; }
+    else { const s = this.shootPoint(); px = s.x + this.facing * 6; py = s.y; }
+    const x = Math.round(px - cam.x), y = Math.round(py - cam.y);
+    const r = tl.r * (0.4 + k * 0.8);
+    ctx.globalAlpha = 0.2 + k * 0.35;
+    ctx.fillStyle = tl.col;
+    ctx.beginPath(); ctx.arc(x, y, r + 2, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 0.5 + k * 0.5;
+    ctx.beginPath(); ctx.arc(x, y, Math.max(1, r * 0.6), 0, TAU); ctx.fill();
+    if (k > 0.65) {
+      // перед самым выстрелом — короткие лучи
+      ctx.fillStyle = '#ffffff';
+      const L = Math.round(r + 2 + (k - 0.65) * 10);
+      ctx.fillRect(x - L, y, L * 2 + 1, 1); ctx.fillRect(x, y - L, 1, L * 2 + 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   drawBright(ctx, cam) {
     if (!this.alive || this.state === 'dormant') return;
     const x = Math.round(this.cx - cam.x), y = Math.round(this.y - cam.y);
     drawGlows(ctx, x, y + this.h, this.facing, this.glows, this.type === 'phantom' ? 0.8 : 1);
+    this.drawTell(ctx, cam);
     if (this.type === 'shambler' && this.state === 'attack' && this.attackKind === 'ranged' && this.stateT < 0.8) {
       const hx = x + this.facing * 4, hy = y - 10;
       drawLightning(ctx, hx - 6, hy + rand(-2, 2), hx + 6, hy + rand(-2, 2), '#c8d8ff', 1, 0.9);

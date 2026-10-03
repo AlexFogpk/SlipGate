@@ -308,9 +308,15 @@ class Player {
     const mul = this.quad > 0 ? 4 : 1;
     const cos = Math.cos(ang), sin = Math.sin(ang);
     const m = this.muzzle();
-    const flash = () => {
+    const flash = (col = '#ffe8a0', size = 6) => {
       FX.light(m.x, m.y, 90, [1, 0.8, 0.5], 1.0, 0.07);
-      FX.add({ kind: 'spark', x: m.x, y: m.y, vx: cos * 30, vy: sin * 30, life: 0.05, max: 0.05, size: 3, col: '#ffe8a0', grav: 0, bright: true });
+      FX.flash(m.x, m.y, ang, col, size);
+    };
+    // гильзы вылетают назад-вверх и скачут по полу
+    const shells = (n) => {
+      for (let i = 0; i < n; i++) {
+        FX.add({ kind: 'shell', x: s.x - cos * 3, y: s.y - 2, vx: -cos * rand(40, 80) + rand(-20, 20), vy: rand(-150, -90), life: rand(0.9, 1.4), max: 1.4, size: 2, col: i % 2 ? '#c8a040' : '#b02818', grav: 700, collide: true });
+      }
     };
     if (this.weapon !== 1) Game.noise(this.cx, this.cy, 520);
     if (this.quad > 0 && this.weapon !== 1) FX.light(this.cx, this.cy, 80, [0.3, 0.4, 1], 0.8, 0.12);
@@ -318,11 +324,11 @@ class Player {
       case 1: this.axe(s, ang, mul); break;
       case 2:
         hitscan(this, s.x, s.y, ang, 6, 4 * mul, 0.045);
-        Sound.play('shotgun'); flash(); Game.kick(1.5);
+        Sound.play('shotgun'); flash('#ffe8a0', 7); shells(1); Game.kick(1.5);
         break;
       case 3:
         hitscan(this, s.x, s.y, ang, 14, 4 * mul, 0.12);
-        Sound.play('sshotgun'); flash(); Game.kick(3);
+        Sound.play('sshotgun'); flash('#fff0b0', 10); shells(2); Game.kick(3);
         this.vx -= cos * 30;
         break;
       case 4:
@@ -333,16 +339,16 @@ class Player {
         const big = this.weapon === 5;
         spawnProjectile('nail', this, px, py, ang + rand(-0.01, 0.01), { dmg: big ? 18 : 9, mul });
         Sound.play('nail', null, null, { p: big ? 0.8 : 1, gap: 0.05 });
-        flash();
+        flash('#ffb060', big ? 5 : 4);
         break;
       }
       case 6:
         spawnProjectile('grenade', this, s.x, s.y, ang, { vx: this.vx * 0.3, vy: -70, mul });
-        Sound.play('grenade'); Game.kick(1);
+        Sound.play('grenade'); flash('#ffa040', 5); Game.kick(1);
         break;
       case 7:
         spawnProjectile('rocket', this, s.x, s.y, ang, { mul });
-        Sound.play('rocket'); flash(); Game.kick(2);
+        Sound.play('rocket'); flash('#ff9030', 9); Game.kick(2);
         break;
       case 8:
         if (this.waterLevel >= 2) { this.discharge(); break; }
@@ -354,6 +360,7 @@ class Player {
         spawnProjectile('bolt', this, s.x, s.y, ang + rand(-0.015, 0.015), { mul });
         Sound.play('laser', null, null, { gap: 0.05 });
         FX.light(m.x, m.y, 70, [1, 0.35, 0.2], 0.9, 0.06);
+        FX.flash(m.x, m.y, ang, '#ff6040', 5);
         break;
       default: break;
     }

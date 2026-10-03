@@ -26,12 +26,29 @@ const Sound = {
     comp.threshold.value = -14;
     comp.ratio.value = 4;
     comp.connect(ctx.destination);
+    // шины → master → фильтр «под водой» → компрессор → выход
+    this.water = ctx.createBiquadFilter();
+    this.water.type = 'lowpass'; this.water.frequency.value = 20000; this.water.Q.value = 0.7;
+    this.water.connect(comp);
     this.master = ctx.createGain();
-    this.master.connect(comp);
+    this.master.connect(this.water);
     this.sfxBus = ctx.createGain();
     this.sfxBus.connect(this.master);
     this.musicBus = ctx.createGain();
     this.musicBus.connect(this.master);
+    this.ambBus = ctx.createGain();
+    this.ambBus.connect(this.master);
+    // эхо: посылка с шины эффектов в две свёртки — малое помещение и большой зал
+    this.verbSend = ctx.createGain();
+    this.sfxBus.connect(this.verbSend);
+    this.ambBus.connect(this.verbSend);
+    this.wetSmall = ctx.createGain(); this.wetSmall.gain.value = 0.1;
+    this.wetLarge = ctx.createGain(); this.wetLarge.gain.value = 0;
+    for (const [dur, decay, wet] of [[0.7, 3.2, this.wetSmall], [2.6, 2.2, this.wetLarge]]) {
+      const cv = ctx.createConvolver();
+      cv.buffer = this.impulse(dur, decay);
+      this.verbSend.connect(cv); cv.connect(wet); wet.connect(this.master);
+    }
     this.applyVolumes();
     const len = ctx.sampleRate * 2;
     this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -44,6 +61,35 @@ const Sound = {
     if (!this.ctx) return;
     this.sfxBus.gain.value = this.volume;
     this.musicBus.gain.value = this.musicVolume * 0.6;
+    this.ambBus.gain.value = this.volume * 0.7;
+  },
+
+  // Отклик помещения: шум, затухающий по степени, с короткой паузой и разными каналами.
+  impulse(dur, decay) {
+    const ctx = this.ctx, n = Math.floor(ctx.sampleRate * dur), pre = Math.floor(ctx.sampleRate * 0.012);
+    const b = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = b.getChannelData(c);
+      for (let i = pre; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay);
+    }
+    return b;
+  },
+
+  // Размер помещения вокруг героя (0 — тесный коридор, 1 — огромный зал) и доля открытого неба.
+  setRoom(size, outdoor) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const open = 1 - outdoor * 0.85;
+    this.wetSmall.gain.setTargetAtTime((1 - size) * 0.2 * open, t, 0.4);
+    this.wetLarge.gain.setTargetAtTime(size * 0.34 * open, t, 0.4);
+    Ambient.outdoor = outdoor;
+  },
+
+  // Под водой звук глухой.
+  setUnderwater(on) {
+    if (!this.ctx || this.underwater === on) return;
+    this.underwater = on;
+    this.water.frequency.setTargetAtTime(on ? 480 : 20000, this.ctx.currentTime, 0.08);
   },
 
   setVolume(v) { this.volume = clamp(v, 0, 1); Store.set('volume', this.volume); this.applyVolumes(); },
@@ -154,6 +200,11 @@ const SFX = {
     S.osc(o, 'sawtooth', 200, 40, t, 0.6, 0.5 * v);
   },
   axe(S, o, t, v) { S.noise(o, t, 0.16, 0.45 * v, 'bandpass', 1800, 500, 1.2, 0.03); },
+  drip(S, o, t, v, p) {
+    const f = rand(1400, 2200) * p;
+    S.osc(o, 'sine', f, f * 0.55, t, 0.09, 0.16 * v, 0.002);
+    S.osc(o, 'sine', f * 1.5, f * 0.9, t + 0.01, 0.05, 0.05 * v, 0.002);
+  },
   axehit(S, o, t, v) {
     S.osc(o, 'square', 170, 70, t, 0.1, 0.35 * v);
     S.noise(o, t, 0.1, 0.5 * v, 'lowpass', 1800, 300, 1);
@@ -250,6 +301,17 @@ const SFX = {
   bark(S, o, t, v) {
     S.noise(o, t, 0.1, 0.5 * v, 'bandpass', 900, 500, 3);
     S.noise(o, t + 0.16, 0.1, 0.5 * v, 'bandpass', 900, 500, 3);
+  },
+  // попадание по врагу: глухой шлепок, тон выше у слабых попаданий
+  hit(S, o, t, v, p) {
+    S.noise(o, t, 0.06, 0.45 * v, 'bandpass', 1500 * p, 600, 2);
+    S.osc(o, 'sine', 170 * p, 80, t, 0.07, 0.3 * v);
+  },
+  // убийство: короткий двойной щелчок
+  kill(S, o, t, v) {
+    S.osc(o, 'square', 330, 330, t, 0.04, 0.1 * v);
+    S.osc(o, 'square', 520, 520, t + 0.045, 0.07, 0.1 * v);
+    S.noise(o, t, 0.12, 0.3 * v, 'lowpass', 900, 200, 1);
   },
   mpain(S, o, t, v, p) { S.osc(o, 'sawtooth', 220 * p, 120 * p, t, 0.18, 0.28 * v); },
   mdeath(S, o, t, v, p) {
@@ -648,5 +710,130 @@ const Music = {
       out.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
     }
     setTimeout(() => nodes.forEach((n) => { try { n.stop(); } catch (e) { /* уже остановлен */ } }), 1400);
+  },
+};
+
+// Фоновые звуки уровня: петли рядом с героем (факелы, лава, слизь, вода, машины,
+// Пустота, слипгейты) и ветер под открытым небом. Звучат не больше восьми ближайших,
+// громкость падает с расстоянием, панорама — по положению источника.
+const Ambient = {
+  buffers: null,
+  srcs: [],
+  active: new Map(),
+  wind: null,
+  outdoor: 0,
+  MAX: 8,
+
+  // Петли собираются кодом один раз: шум, всплески, гул; края сведены, чтобы не щёлкало.
+  makeBuffers() {
+    const ctx = Sound.ctx, sr = ctx.sampleRate;
+    const loop = (sec, fn) => {
+      const n = Math.floor(sr * sec), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
+      fn(d, n, sr);
+      const fade = Math.floor(sr * 0.25);
+      for (let i = 0; i < fade; i++) { const k = i / fade; d[i] = d[i] * k + d[n - fade + i] * (1 - k); }
+      return b;
+    };
+    const brown = (d, n, amp) => { let v = 0; for (let i = 0; i < n; i++) { v = (v + (Math.random() * 2 - 1) * 0.02) * 0.995; d[i] += v * amp * 3; } };
+    const burst = (d, sr, at, len, amp, tone) => {
+      const s0 = Math.floor(at * sr), L = Math.floor(len * sr);
+      for (let i = 0; i < L && s0 + i < d.length; i++) {
+        const e = Math.pow(1 - i / L, 3);
+        d[s0 + i] += (tone ? Math.sin(i / sr * TAU * tone * (1 + i / L * 0.8)) : Math.random() * 2 - 1) * e * amp;
+      }
+    };
+    return {
+      crackle: loop(3, (d, n, sr) => { brown(d, n, 0.25); for (let k = 0; k < 55; k++) burst(d, sr, Math.random() * 2.9, rand(0.002, 0.008), rand(0.2, 0.7), 0); }),
+      lava: loop(4, (d, n, sr) => { brown(d, n, 0.6); for (let k = 0; k < 14; k++) burst(d, sr, Math.random() * 3.8, rand(0.06, 0.14), rand(0.25, 0.5), rand(70, 160)); }),
+      slime: loop(4, (d, n, sr) => { brown(d, n, 0.25); for (let k = 0; k < 18; k++) burst(d, sr, Math.random() * 3.8, rand(0.04, 0.09), rand(0.2, 0.35), rand(180, 360)); }),
+      water: loop(4, (d, n, sr) => { let a = 0, b = 0; for (let i = 0; i < n; i++) { a = a * 0.97 + (Math.random() * 2 - 1) * 0.03; b = b * 0.6 + a * 0.4; d[i] = b * (0.6 + 0.4 * Math.sin(i / sr * TAU * 0.5)) * 1.6; } }),
+      hum: loop(2, (d, n, sr) => { for (let i = 0; i < n; i++) { const t = i / sr; d[i] = (Math.sin(t * TAU * 55) * 0.35 + Math.sin(t * TAU * 110) * 0.2 + Math.sin(t * TAU * 165) * 0.08) * (0.85 + 0.15 * Math.sin(t * TAU * 2)) + (Math.random() * 2 - 1) * 0.03; } }),
+      void: loop(4, (d, n, sr) => { for (let i = 0; i < n; i++) { const t = i / sr; d[i] = (Math.sin(t * TAU * 110) + Math.sin(t * TAU * 165) * 0.7 + Math.sin(t * TAU * 220.25) * 0.5) * 0.12 * (0.6 + 0.4 * Math.sin(t * TAU * 0.25)); } }),
+      wind: loop(6, (d, n, sr) => { let lp = 0, bp = 0; for (let i = 0; i < n; i++) { const t = i / sr; const k = 0.02 + 0.05 * (0.5 + 0.5 * Math.sin(t * TAU / 6)); lp += k * ((Math.random() * 2 - 1) - lp); bp = bp * 0.9 + lp * 0.1; d[i] = (lp - bp) * 2.2 * (0.5 + 0.5 * Math.sin(t * TAU / 3 + 1)); } }),
+    };
+  },
+
+  // Источники нового уровня (вызывается при загрузке).
+  setLevel(lv) {
+    this.stopAll();
+    const srcs = [];
+    const add = (kind, x, y, r, vol) => srcs.push({ kind, x, y, r, vol, id: srcs.length });
+    for (const d of lv.decor) if (d.kind === 'torch') add('crackle', d.x, d.y, 240, 0.55);
+    const amb = lv.amb || {};
+    for (const f of amb.fogs || []) {
+      const kind = f.kind === 'lava' ? 'lava' : f.kind === 'slime' ? 'slime' : 'void';
+      const step = kind === 'void' ? 220 : 140;
+      for (let x = f.x0 + 40; x < f.x1; x += step) add(kind, x, f.y, kind === 'lava' ? 360 : 300, kind === 'lava' ? 0.9 : kind === 'void' ? 0.45 : 0.5);
+    }
+    for (const v of amb.vents || []) if (lv.theme === 'base') add('hum', v.x, v.y, 220, 0.4);
+    for (const s of amb.strips || []) add('hum', s.x + 7, s.y, 110, 0.12);
+    for (const e of lv.exits.concat(lv.teleports)) add('void', e.cx, e.bottom - 20, 220, 0.35);
+    // поверхность воды: тихий плеск
+    for (let y = 1; y < lv.h - 1; y++) {
+      let run = -1;
+      for (let x = 0; x <= lv.w; x++) {
+        const surf = x < lv.w && lv.tile(x, y) === T.WATER && lv.tile(x, y - 1) !== T.WATER && !lv.tileSolid(x, y - 1);
+        if (surf && run < 0) run = x;
+        if (!surf && run >= 0) { for (let xx = run; xx < x; xx += 10) add('water', xx * TILE + 8, y * TILE, 230, 0.35); run = -1; }
+      }
+    }
+    this.srcs = srcs;
+    this.outdoor = 0;
+  },
+
+  stopAll() {
+    for (const a of this.active.values()) this.fadeOut(a);
+    this.active.clear();
+    if (this.wind) { this.fadeOut(this.wind); this.wind = null; }
+  },
+
+  fadeOut(a) {
+    const t = Sound.ctx.currentTime;
+    a.gain.gain.cancelScheduledValues(t);
+    a.gain.gain.setTargetAtTime(0, t, 0.15);
+    try { a.node.stop(t + 0.8); } catch (e) { /* уже остановлен */ }
+  },
+
+  start(kind) {
+    const ctx = Sound.ctx;
+    const node = ctx.createBufferSource();
+    node.buffer = this.buffers[kind];
+    node.loop = true;
+    const gain = ctx.createGain(); gain.gain.value = 0;
+    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    node.connect(gain);
+    if (pan) { gain.connect(pan); pan.connect(Sound.ambBus); } else gain.connect(Sound.ambBus);
+    node.start(0, Math.random() * node.buffer.duration);
+    return { node, gain, pan };
+  },
+
+  // Раз в долю секунды: оставить восемь ближайших источников, обновить громкость и панораму.
+  update(lx, ly, paused) {
+    const ctx = Sound.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    if (!this.buffers) this.buffers = this.makeBuffers();
+    const t = ctx.currentTime;
+    const near = [];
+    if (!paused) {
+      for (const s of this.srcs) {
+        const d = dist(s.x, s.y, lx, ly);
+        if (d < s.r) near.push({ s, d });
+      }
+      near.sort((a, b) => a.d / a.s.r - b.d / b.s.r);
+      near.length = Math.min(near.length, this.MAX);
+    }
+    const keep = new Set(near.map((n) => n.s));
+    for (const [s, a] of this.active) if (!keep.has(s)) { this.fadeOut(a); this.active.delete(s); }
+    for (const { s, d } of near) {
+      let a = this.active.get(s);
+      if (!a) { a = this.start(s.kind); this.active.set(s, a); }
+      const v = s.vol * Math.pow(1 - d / s.r, 1.6);
+      a.gain.gain.setTargetAtTime(v, t, 0.25);
+      if (a.pan) a.pan.pan.setTargetAtTime(clamp((s.x - lx) / 300, -1, 1) * 0.8, t, 0.2);
+    }
+    // ветер под открытым небом
+    const wv = paused ? 0 : this.outdoor * 0.32;
+    if (wv > 0.01 && !this.wind) this.wind = this.start('wind');
+    if (this.wind) this.wind.gain.gain.setTargetAtTime(wv, t, 0.6);
   },
 };

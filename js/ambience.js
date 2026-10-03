@@ -99,8 +99,9 @@ function updateAmbience(lv, dt, cam, vw, vh) {
     d.t -= dt;
     if (d.t > 0) continue;
     d.t = 1.6 + hash2(d.x, Math.floor(Game.time), 5) * 3;
-    const fall = d.floor - d.y;
-    FX.add({ kind: 'spark', x: d.x, y: d.y, vx: 0, vy: 0, life: Math.sqrt(2 * fall / 600), max: 3, size: 1, col: '#9ac8e0', grav: 600 });
+    const fall = d.floor - d.y, life = Math.sqrt(2 * fall / 600);
+    FX.add({ kind: 'spark', x: d.x, y: d.y, vx: 0, vy: 0, life, max: 3, size: 1, col: '#9ac8e0', grav: 600 });
+    Game.later(life, () => Sound.play('drip', d.x, d.floor, { vol: 0.6, gap: 0.04, p: d.floor - d.y > 120 ? 0.85 : 1.1 }));
   }
   if (lv.theme === 'base') {
     for (const v of amb.vents) {
