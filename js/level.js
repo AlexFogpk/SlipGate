@@ -709,7 +709,7 @@ class Level {
       return;
     }
     if (this.def.bossButtons) {
-      b.resetT = 6;
+      b.resetT = 1.5;
       Game.bossStrike(b);
       return;
     }
@@ -1183,6 +1183,19 @@ class Level {
         else { ctx.moveTo(x - 9, y - 2); ctx.lineTo(x - 9, y - 34); ctx.arc(x, y - 34, 9, Math.PI, 0); ctx.lineTo(x + 9, y - 2); ctx.closePath(); }
         ctx.clip();
         const tele = Tex.liquidAnim.tele;
+        if (e.sealed) {
+          // спящий телепорт: тёмный, с кровавым заполнением снизу по мере заряда
+          const g = Game.shubGate, k = g ? g.have / g.need : 0;
+          ctx.globalAlpha = 0.18;
+          ctx.drawImage(tele, (t * 5) % 32, 0, 32, 64, x - 9, y - 44, 18, 43);
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = 0.45 + Math.sin(t * 3) * 0.1;
+          ctx.fillStyle = '#a02040';
+          const hh = Math.round(41 * k);
+          ctx.fillRect(x - 9, y - 2 - hh, 18, hh);
+          ctx.restore();
+          continue;
+        }
         ctx.drawImage(tele, (t * 20) % 32, 0, 32, 64, x - 9, y - 44, 18, 43);
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = 0.25 + Math.sin(t * 4) * 0.1;
@@ -1249,7 +1262,7 @@ class Level {
       if (d.kind === 'torch') drawTorchFlame(ctx, x, y, t, d.x * 0.37 + d.y * 0.11);
       else if (d.kind === 'lamp') drawLampLight(ctx, x, y, t);
       else if (d.kind === 'electrode') {
-        drawElectrode(ctx, x, y, t, Game.bossFx);
+        drawElectrode(ctx, x, y, t, Game.bossFx, d);
       } else if (d.kind === 'checkpoint') {
         const pulse = 0.6 + Math.sin(t * 3) * 0.4;
         ctx.fillStyle = d.active ? '#60e0ff' : '#8a2a14';
@@ -1352,12 +1365,19 @@ function drawBox(ctx, x, y) {
   ctx.fillRect(x + 4, y + 9, 1, 2); ctx.fillRect(x + 7, y + 9, 1, 2); ctx.fillRect(x + 10, y + 9, 1, 2);
 }
 
-function drawElectrode(ctx, x, y, t, fx) {
+function drawElectrode(ctx, x, y, t, fx, d) {
   ctx.fillStyle = '#3a3a44'; ctx.fillRect(x - 3, y - 30, 6, 30);
   ctx.fillStyle = '#6a6a7a'; ctx.fillRect(x - 3, y - 30, 1, 30);
-  ctx.fillStyle = '#2a2a30';
-  for (let i = 0; i < 5; i++) ctx.fillRect(x - 5, y - 26 + i * 5, 10, 2);
-  ctx.fillStyle = '#9ab0ff'; ctx.fillRect(x - 2, y - 34, 4, 4);
+  // кольца загораются снизу вверх по мере заряда; заряженный электрод искрит
+  const st = d && d.est, lit = st === 'ready' ? 5 : st === 'charging' ? Math.floor(clamp(d.et / 1.6, 0, 1) * 5) : 0;
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = 4 - i < lit ? (st === 'ready' && d.et < 4 && Math.floor(t * 8) % 2 ? '#6a7ab0' : '#b8c8ff') : '#2a2a30';
+    ctx.fillRect(x - 5, y - 26 + i * 5, 10, 2);
+  }
+  ctx.fillStyle = st === 'ready' ? '#f0f4ff' : '#9ab0ff'; ctx.fillRect(x - 2, y - 34, 4, 4);
+  if (st === 'ready') {
+    for (let i = 0; i < 2; i++) drawLightning(ctx, x, y - 32, x + randInt(-12, 12), y - 40 - randInt(0, 12), '#c8d8ff', 1, 0.5 + Math.random() * 0.4);
+  }
   if ((fx && fx > 0) || Math.sin(t * 17 + x) > 0.9) {
     ctx.fillStyle = '#e0e8ff';
     ctx.fillRect(x - 1 + randInt(-2, 2), y - 38 + randInt(-2, 1), 2, 2);

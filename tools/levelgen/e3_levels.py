@@ -500,6 +500,7 @@ def e3m6(M, level):
     level({
         'id': 'e3m6', 'name': 'E3M6', 'title': 'Трон Бездны', 'theme': 'nether', 'episode': 3, 'next': 'e4m1', 'finale': 'e3', 'music': 32.7,
         'exitAfterBoss': True,
+        'bossIntro': [52, 44, 58, 50],
         'traps': [
             trap(40, 45, 48, 50, [(20, 50, 'r'), (10, 50, 'k'), (28, 44, 'a')]),
         ],

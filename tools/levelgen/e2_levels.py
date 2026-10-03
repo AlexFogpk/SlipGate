@@ -639,6 +639,7 @@ def e2m6(M, level):
     level({
         'id': 'e2m6', 'name': 'E2M6', 'title': 'Чрево Матери', 'theme': 'elder', 'episode': 2, 'next': 'e3m1', 'finale': 'e2', 'music': 34.6,
         'exitAfterBoss': True,
+        'bossIntro': [62, 34, 68, 40],
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7, 8], 'ammo': {'shells': 80, 'nails': 150, 'rockets': 30, 'cells': 60}, 'armor': 150},
         'traps': [
             trap(36, 38, 40, 40, [(20, 40, 'k'), (8, 40, 'k'), (24, 34, 's')]),

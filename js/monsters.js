@@ -669,6 +669,7 @@ class Monster {
     if (wl.level > 0 && wl.type === T.VOID) {
       // пустота поглощает без следа
       this.alive = false; this.gibbed = true;
+      if (this.minion) Game.onMinionDeath(this);
       if (this.counted) Game.kills++;
       Sound.play('mdeath', this.cx, this.cy, { p: this.def.voice });
       FX.teleport(this.cx, this.cy);
@@ -690,15 +691,14 @@ class Monster {
     if (this.def.boss) {
       if (this.type === 'shub' && kind === 'telefrag' && this.alive && this.state !== 'dying') {
         this.state = 'dying'; this.stateT = 0;
-        HUD.center('Шуб-Ниггурат разорвана изнутри!', 3);
-        Sound.play('roar'); Sound.play('gib');
-        for (const m of Game.monsters) if (m.minion && m.alive) applyDamage(m, 5000, attacker, 'telefrag');
+        Game.bossDeath(this, attacker, 'Шуб-Ниггурат разорвана изнутри!');
+        Sound.play('gib');
         return;
       }
       this.hurtFlash = 0.05;
       if (attacker && attacker.isPlayer && !Game.bossHintShown) {
         Game.bossHintShown = true;
-        HUD.center(this.type === 'shub' ? 'Её плоть не берёт оружие!\nПроникните внутрь...' : 'Оружие бессильно против Хтона!\nИщите иной способ...', 3);
+        HUD.center(this.type === 'shub' ? 'Её плоть не берёт оружие!\nКровь её отродий пробудит телепорт' : 'Оружие бессильно против Хтона!\nЗарядите электроды пультами', 3);
       }
       return;
     }
@@ -777,6 +777,7 @@ class Monster {
     this.alive = false;
     this.deathT = 0;
     this.state = 'dead';
+    if (this.minion) Game.onMinionDeath(this);
     if (this.type === 'pylon') {
       this.gibbed = true;
       FX.explosion(this.cx, this.cy, 0.7);
@@ -838,7 +839,7 @@ class Monster {
     switch (this.state) {
       case 'idle':
         this.y = hidden;
-        if (p && p.alive && Math.abs(p.cx - this.cx) < 430) {
+        if (!this.introWait && p && p.alive && Math.abs(p.cx - this.cx) < 430) {
           this.state = 'rise'; this.stateT = 0;
           Sound.play('roar'); Game.shake(this.cx, this.cy, 10);
           HUD.center('Хтон пробуждается!', 2.5);
@@ -846,42 +847,63 @@ class Monster {
         break;
       case 'rise':
         this.y = lerp(hidden, rest, clamp(this.stateT / 2.5, 0, 1));
-        if (Math.random() < 0.4) FX.sparks(this.cx + rand(-30, 30), rest + 70, 2, '#ff8030', 120);
-        if (this.stateT > 2.5) { this.state = 'active'; this.stateT = 0; this.cd = 1; }
+        if (Math.random() < 0.6) FX.sparks(this.cx + rand(-30, 30), rest + 70, 3, '#ff8030', 160);
+        if (this.stateT > 2.5 && !this.introRoar) { this.introRoar = true; Sound.play('roar'); Game.shake(this.cx, this.cy, 12); }
+        if (this.stateT > 2.5) {
+          this.state = 'active'; this.stateT = 0; this.cd = 1.5;
+          // подсказка — когда кончится сцена появления (таймеры в ней стоят)
+          if (Game.levelDef.bossIntro) Game.later(0.2, () => HUD.center('Оружие его не берёт!\nЗарядите оба электрода пультами\nпо разные стороны озера', 4.5));
+        }
         break;
       case 'active':
         this.y = rest + Math.sin(this.anim * 1.2) * 3;
         if (p) this.facing = p.cx >= this.cx ? 1 : -1;
+        this.updateElectrodes(dt);
         this.cd -= dt;
-        if (this.cd <= 0 && p && p.alive) {
-          this.cd = rand(...this.def.cd) * Game.skillCdScale();
+        if (this.cd <= 0 && p && p.alive && !Game.cine) {
+          // чем больше ран, тем чаще бросает и тем шире залп
+          this.cd = rand(...this.def.cd) * Game.skillCdScale() * (this.hits >= 2 ? 0.7 : this.hits >= 1 ? 0.85 : 1);
           this.throwT = 0.6;
+          const volley = this.hits >= 2 ? [-70, 0, 70] : [0];
           Game.later(0.3, () => {
-            if (!this.alive || !Game.player) return;
+            if (!this.alive || !Game.player || this.state === 'dying') return;
             const sx = this.cx + this.facing * 34, sy = this.y + 24;
             const tp = Game.player;
             const lead = tp.vx * 0.4;
             const g = PROJ.lavaball.grav;
-            // скорость подбирается под дальность, иначе шар не долетит до дальних уступов
-            const dx = Math.abs(tp.cx + lead - sx), rise = Math.max(0, sy - tp.cy);
-            const speed = Math.max(300, Math.sqrt(g * (dx + rise * 1.5)) * 1.12);
-            const ang = lobAngle(sx, sy, tp.cx + lead, tp.cy, speed, g);
-            spawnProjectile('lavaball', this, sx, sy, ang, { speed });
+            for (const off of volley) {
+              // скорость подбирается под дальность, иначе шар не долетит до дальних уступов
+              const tx = tp.cx + lead + off;
+              const dx = Math.abs(tx - sx), rise = Math.max(0, sy - tp.cy);
+              const speed = Math.max(300, Math.sqrt(g * (dx + rise * 1.5)) * 1.12);
+              spawnProjectile('lavaball', this, sx, sy, lobAngle(sx, sy, tx, tp.cy, speed, g), { speed });
+            }
             Sound.play('fireball', sx, sy);
           });
         }
         break;
       case 'pain':
         this.y = rest + Math.sin(this.stateT * 40) * 2;
+        this.updateElectrodes(dt);
         if (this.stateT > 1.4) { this.state = 'active'; this.stateT = 0; this.cd = 0.8; }
         break;
       case 'dying':
         this.y = lerp(rest, hidden + 20, clamp(this.stateT / 3.5, 0, 1));
         if (Math.random() < 0.6) FX.sparks(this.cx + rand(-30, 30), rest + rand(20, 70), 3, '#ff8030', 160);
+        this.shubBoomT = (this.shubBoomT || 0) - dt;
+        if (this.shubBoomT <= 0) {
+          this.shubBoomT = 0.2;
+          const x = this.x + rand(0, this.w), y = Math.min(rest + 60, this.y + rand(0, this.h));
+          FX.explosion(x, y, 0.7); Sound.play('explode', x, y); Game.shake(x, y, 5);
+        }
         if (this.stateT > 3.5) {
           this.alive = false;
           this.gibbed = true;
           Game.kills++;
+          Game.bossBurst(this, '#ffc060');
+          // озеро выплёскивается последний раз
+          for (let i = 0; i < 40; i++) FX.add({ kind: 'spark', x: this.cx + rand(-60, 60), y: rest + 70, vx: rand(-200, 200), vy: rand(-520, -220), life: 1.4, max: 1.4, size: 2, col: pick(['#ffb040', '#ff7020', '#ffe080']), grav: 600, bright: true });
+          FX.explosion(this.cx, rest + 50, 2.2);
           Game.onBossDefeated();
         }
         break;
@@ -890,16 +912,90 @@ class Monster {
   }
 
   bossHit() {
-    if (!this.alive || (this.state !== 'active' && this.state !== 'pain')) return false;
+    if (!this.chthonReady()) return false;
     this.hits++;
     this.hurtFlash = 0.3;
     Sound.play('roar');
     Game.shake(this.cx, this.cy, 12);
+    Game.hitstop = Math.max(Game.hitstop, 0.08);
     if (this.hits >= this.def.hp) {
       this.state = 'dying'; this.stateT = 0;
-      HUD.center('Хтон повержен!', 3);
-    } else { this.state = 'pain'; this.stateT = 0; }
+      Game.bossDeath(this, Game.player, 'Хтон повержен!');
+    } else {
+      this.state = 'pain'; this.stateT = 0;
+      // раненый Хтон поднимает лаву озера на берега
+      Game.startFlood(this.hits);
+      HUD.center(this.hits === 1 ? 'Хтон ранен!\nОн поднимает лаву — держитесь уступов' : 'Хтон в ярости!\nЕщё один разряд!', 3.5);
+    }
     return true;
+  }
+
+  // --- появление боссов: до входа героя на арену босс ждёт, затем выходит под табличку ---
+  bossDormant() {
+    this.introWait = true;
+    if (this.type === 'elder') { this.elderDormant(); return; }
+    if (this.type === 'herald') { this.state = 'dormant'; this.y = this.homeY - 220; this.vx = this.vy = 0; }
+  }
+
+  bossIntro() {
+    this.introWait = false;
+    if (this.type === 'elder') { this.elderIntro(); return; }
+    this.state = this.type === 'chthon' ? 'rise' : 'intro';
+    this.stateT = 0;
+    this.introFrom = this.y;
+    this.introRoar = false;
+    Sound.play('roar');
+    Game.shake(this.cx, this.cy, 8);
+    if (this.type === 'herald') FX.teleport(this.cx, this.cy);
+  }
+
+  // --- Хтон: бьют его только разряды двух электродов; заряжают их пульты по разные стороны озера ---
+  chthonReady() { return this.alive && (this.state === 'active' || this.state === 'pain'); }
+
+  electrodes() { return Game.level.decor.filter((d) => d.kind === 'electrode'); }
+
+  chargeElectrode(button) {
+    let e = null;
+    for (const d of this.electrodes()) if (!e || Math.abs(d.x - button.x) < Math.abs(e.x - button.x)) e = d;
+    if (!e) return;
+    if (e.est === 'charging' || e.est === 'ready') return;
+    e.est = 'charging'; e.et = 0;
+    Sound.play('charge', e.x, e.y - 30, { p: 0.6 });
+    FX.beam(button.x + 6, button.y + 6, e.x, e.y - 34, '#c8d8ff', 0.3, 2);
+  }
+
+  updateElectrodes(dt) {
+    const els = this.electrodes();
+    const hold = [24, 16, 13, 11][Game.skill] || 16;
+    for (const e of els) {
+      if (e.est === 'charging') {
+        e.et += dt;
+        if (Math.random() < 0.5) FX.add({ kind: 'spark', x: e.x + rand(-4, 4), y: e.y - 34 + rand(-4, 4), vx: rand(-40, 40), vy: rand(-60, 10), life: 0.3, max: 0.3, size: 1, col: '#e0e8ff', grav: 0, bright: true });
+        if (e.et >= 1.6) {
+          e.est = 'ready'; e.et = hold;
+          Sound.play('zap', e.x, e.y - 34);
+          if (els.some((o) => o !== e && o.est !== 'ready')) HUD.center('Электрод заряжен!\nТеперь второй — на той стороне озера', 3);
+        }
+      } else if (e.est === 'ready') {
+        e.et -= dt;
+        if (e.et <= 0) {
+          e.est = 'off';
+          FX.sparks(e.x, e.y - 34, 10, '#c8d8ff', 120);
+          Sound.play('zapsmall', e.x, e.y - 34);
+          HUD.message('Заряд электрода рассеялся — зарядите снова');
+        }
+      }
+    }
+    if (els.length && els.every((e) => e.est === 'ready') && this.chthonReady()) {
+      for (const e of els) {
+        e.est = 'off';
+        FX.beam(e.x, e.y - 34, this.cx + rand(-10, 10), this.y + rand(20, 60), '#d0e0ff', 0.8, 4);
+        FX.sparks(e.x, e.y - 34, 16, '#c8d8ff', 200);
+      }
+      Game.bossFx = 0.8;
+      Sound.play('lightning', this.cx, this.cy);
+      this.bossHit();
+    }
   }
 
   // --- Шуб-Ниггурат: неподвижна, плюётся шарами и порождает слуг; погибает только от телефрага ---
@@ -909,16 +1005,35 @@ class Monster {
     this.hurtFlash -= dt;
     switch (this.state) {
       case 'idle':
-        if (p && p.alive && dist(p.cx, p.cy, this.cx, this.cy) < 520) {
+        if (!this.introWait && p && p.alive && dist(p.cx, p.cy, this.cx, this.cy) < 520) {
           this.state = 'active'; this.stateT = 0; this.cd = 2; this.spawnCd = 2.5;
           Sound.play('roar'); Game.shake(this.cx, this.cy, 8);
           HUD.center('Шуб-Ниггурат пробудилась!', 2.5);
         }
         break;
+      case 'intro':
+        // пробуждение: плоть вздрагивает, глаза открываются один за другим, рёв и первые отродья
+        if (Math.random() < 0.3) FX.blood(this.x + rand(0, this.w), this.y + rand(10, this.h), 0, -1, 2, 1.5);
+        if (this.stateT > 1.6 && !this.introRoar) { this.introRoar = true; Sound.play('roar'); Game.shake(this.cx, this.cy, 12); }
+        if (this.stateT > 3.6) {
+          this.state = 'active'; this.stateT = 0; this.cd = 2; this.spawnCd = 0.5; this.phase = 1;
+          Game.later(0.2, () => HUD.center('Её плоть не берёт оружие.\nКровь её отродий пробудит телепорт', 4.5));
+          Game.bossHintShown = true;
+        }
+        break;
       case 'active': {
         this.cd -= dt; this.spawnCd -= dt;
+        // щупальца из-под земли — со второй фазы
+        if (this.phase >= 2 && p && p.alive && !Game.cine) {
+          this.tentT -= dt;
+          if (this.tentT <= 0) {
+            this.tentT = (this.phase >= 3 ? rand(2.2, 3.2) : rand(3.5, 5)) * Game.skillCdScale();
+            Game.addStrike(p.cx + p.vx * 0.35, 'tentacle', 0.9);
+            if (this.phase >= 3) Game.addStrike(p.cx + (chance(0.5) ? 1 : -1) * rand(50, 90), 'tentacle', 1.1);
+          }
+        }
         if (this.cd <= 0 && p && p.alive) {
-          this.cd = rand(...this.def.cd) * Game.skillCdScale();
+          this.cd = rand(...this.def.cd) * Game.skillCdScale() * (this.phase >= 3 ? 0.7 : 1);
           const sx = this.cx, sy = this.y + 40;
           if (Game.level.los(sx, sy, p.cx, p.cy)) {
             spawnProjectile('voreball', this, sx, sy, Math.atan2(p.cy - sy, p.cx - sx) - 0.4 + Math.random() * 0.8, { target: p });
@@ -926,9 +1041,11 @@ class Monster {
           }
         }
         if (this.spawnCd <= 0) {
-          this.spawnCd = rand(5, 8) * Game.skillCdScale();
+          // пока телепорт спит, отродья нужны герою — Мать порождает их чаще
+          const gate = Game.shubGate && !Game.shubGate.open;
+          this.spawnCd = (this.phase >= 3 ? rand(2.5, 4) : gate ? rand(3.5, 5.5) : rand(5, 8)) * Game.skillCdScale();
           const alive = Game.monsters.filter((m) => m.minion && m.alive).length;
-          if (alive < 5) this.spawnMinion();
+          if (alive < (this.phase >= 3 ? 6 : 5)) this.spawnMinion();
         }
         break;
       }
@@ -949,6 +1066,7 @@ class Monster {
           for (let i = 0; i < 30; i++) FX.gib(this.x + rand(0, this.w), this.y + rand(0, this.h), rand(-300, 300), rand(-450, -100), pick(['#3a2430', '#5a2a3a', '#7a1a10', '#2a1a20']), randInt(3, 6));
           FX.explosion(this.cx, this.cy, 2);
           Sound.play('gib');
+          Game.bossBurst(this, '#ff80c0');
           Game.onBossDefeated();
         }
         break;
@@ -956,10 +1074,26 @@ class Monster {
     }
   }
 
+  // Половина крови собрана: из-под земли бьют щупальца.
+  shubPhase2() {
+    if (this.phase >= 2) return;
+    this.phase = 2; this.tentT = 1.5;
+    Sound.play('roar'); Game.shake(this.cx, this.cy, 10);
+    HUD.center('Мать чует угрозу —\nиз-под земли рвутся щупальца!', 3);
+  }
+
+  // Телепорт открыт: Шуб-Ниггурат в панике порождает слуг и бьёт чаще.
+  shubPanic() {
+    this.phase = 3; this.tentT = 1;
+    Sound.play('roar'); Game.shake(this.cx, this.cy, 14);
+    for (let i = 0; i < 2; i++) this.spawnMinion();
+  }
+
   // --- Вестник Бездны: летает под сводом, щит держат кристаллы ---
   heraldShielded() { return Game.monsters.some((m) => m.type === 'pylon' && m.alive); }
 
   heraldWake() {
+    if (this.state === 'dormant' && !Game.introDone) { Game.startBossIntro(); return; }
     if (this.state !== 'idle') return;
     this.state = 'active'; this.stateT = 0; this.cd = 1.5; this.pattern = 0;
     Sound.play('roar'); Game.shake(this.cx, this.cy, 8);
@@ -967,7 +1101,7 @@ class Monster {
   }
 
   heraldDamage(dmg, attacker, kind) {
-    if (!this.alive || this.state === 'dying') return;
+    if (!this.alive || this.state === 'dying' || this.state === 'dormant' || this.state === 'intro') return;
     if (attacker && attacker.isPlayer) this.heraldWake();
     if (this.heraldShielded()) {
       this.shieldFlash = 0.25;
@@ -980,12 +1114,37 @@ class Monster {
     }
     this.health -= dmg;
     this.hurtFlash = 0.06;
-    if (this.health <= 0) {
-      this.state = 'dying'; this.stateT = 0;
-      HUD.center('Вестник Бездны повержен!', 3);
-      Sound.play('roar');
-      for (const m of Game.monsters) if (m.minion && m.alive) applyDamage(m, 5000, attacker, 'telefrag');
+    // на сорока процентах — гроза Бездны: молнии бьют с неба вокруг героя
+    if (!this.storm && this.health > 0 && this.health < this.maxHealth * 0.4) {
+      this.storm = true; this.stormT = 1.2;
+      HUD.center('Вестник призывает грозу Бездны!', 2.5);
+      Sound.play('roar'); Sound.play('lightning', this.cx, this.cy);
+      Game.whiteFlash = Math.max(Game.whiteFlash, 0.3);
+      Game.shake(this.cx, this.cy, 10);
     }
+    if (this.health <= 0) {
+      this.state = 'dying'; this.stateT = 0; this.dive = null;
+      Game.bossDeath(this, attacker, 'Вестник Бездны повержен!');
+    }
+  }
+
+  // Рывок: короткая метка-линия, затем бросок сквозь арену к тому месту, где был герой.
+  heraldDive(dt, p) {
+    const d = this.dive;
+    d.t += dt;
+    if (d.t < 0.7) {
+      this.vx = approach(this.vx, 0, 600 * dt); this.vy = approach(this.vy, 0, 600 * dt);
+    } else if (d.t < 1.3) {
+      if (!d.go) { d.go = true; Sound.play('roar', this.cx, this.cy, { p: 1.5, vol: 0.7 }); }
+      this.vx = d.dx * 560; this.vy = d.dy * 560;
+      if (Math.random() < 0.8) FX.add({ kind: 'spark', x: this.cx + rand(-10, 10), y: this.cy + rand(-14, 14), vx: -this.vx * 0.1, vy: -this.vy * 0.1, life: 0.4, max: 0.4, size: 2, col: '#e080ff', grav: 0, bright: true });
+      if (!d.hit && p && p.alive && overlap(this, p)) {
+        d.hit = true;
+        p.takeDamage(25, this, 'melee', d.dx * 340, -220);
+        Game.shake(p.cx, p.cy, 8);
+      }
+    } else { this.dive = null; this.cd = Math.max(this.cd, 0.8); }
+    moveBody(this, dt);
   }
 
   updateHerald(dt) {
@@ -994,6 +1153,22 @@ class Monster {
     this.hurtFlash -= dt;
     this.castT = Math.max(0, (this.castT || 0) - dt);
     this.shieldFlash = (this.shieldFlash || 0) - dt;
+    if (this.state === 'dormant') return;
+    if (this.state === 'intro') {
+      // возникает под сводом и опускается к трону, на исходе — рёв
+      const k = clamp(this.stateT / 3, 0, 1), e = 1 - Math.pow(1 - k, 3);
+      this.y = lerp(this.introFrom, this.homeY, e) + Math.sin(this.anim * 1.2) * 3;
+      this.x = this.homeX;
+      if (Math.random() < 0.6) FX.add({ kind: 'spark', x: this.cx + rand(-26, 26), y: this.cy + rand(-30, 30), vx: rand(-40, 40), vy: rand(-40, 40), life: 0.6, max: 0.6, size: 1, col: pick(['#e080ff', '#c040ff', '#ffffff']), grav: 0, bright: true });
+      if (this.stateT > 1.2 && !this.introTp) { this.introTp = true; FX.teleport(this.cx, this.cy); Sound.play('teleport', this.cx, this.cy); }
+      if (this.stateT > 3 && !this.introRoar) { this.introRoar = true; Sound.play('roar'); Game.shake(this.cx, this.cy, 12); }
+      if (this.stateT > 3.6) {
+        this.state = 'active'; this.stateT = 0; this.cd = 1.5; this.pattern = 0;
+        Game.later(0.2, () => HUD.center('Щит Вестника питают кристаллы —\nразбейте их!', 3.5));
+        Game.bossHintShown = true;
+      }
+      return;
+    }
     if (this.state === 'idle') {
       this.vy = Math.sin(this.anim * 1.2) * 10; this.vx = 0;
       moveBody(this, dt);
@@ -1014,9 +1189,21 @@ class Monster {
         Game.kills++;
         for (let i = 0; i < 24; i++) FX.gib(this.x + rand(0, this.w), this.y + rand(0, this.h), rand(-300, 300), rand(-400, -100), pick(['#2a1a30', '#5a2a6a', '#7a1a10', '#c040ff']), randInt(3, 6));
         FX.explosion(this.cx, this.cy, 2);
+        FX.teleport(this.cx, this.cy);
+        Game.bossBurst(this, '#e0a0ff');
         Game.onBossDefeated();
       }
       return;
+    }
+    if (this.dive) { this.heraldDive(dt, p); return; }
+    // гроза: метки молний вокруг героя
+    if (this.storm && p && p.alive && !Game.cine) {
+      this.stormT -= dt;
+      if (this.stormT <= 0) {
+        this.stormT = rand(2.4, 3.2) * Game.skillCdScale();
+        Game.addStrike(p.cx + p.vx * 0.5, 'bolt', 1);
+        for (const s of [-1, 1]) Game.addStrike(p.cx + s * rand(50, 100), 'bolt', 1.15);
+      }
     }
     // парение: держится над игроком, но в пределах своей арены
     const shielded = this.heraldShielded();
@@ -1034,6 +1221,14 @@ class Monster {
     const sx = this.cx + this.facing * 16, sy = this.y + 20;
     const aim = Math.atan2(p.cy - sy, p.cx - sx);
     this.castT = 0.4;
+    // без щита к атакам добавляется рывок сквозь арену
+    if (!shielded && this.pattern % 5 === 4) {
+      this.pattern++;
+      const tx = p.cx, ty = p.cy - 6, dd = Math.hypot(tx - this.cx, ty - this.cy) || 1;
+      this.dive = { t: 0, tx, ty, dx: (tx - this.cx) / dd, dy: (ty - this.cy) / dd, hit: false, go: false };
+      Sound.play('charge', this.cx, this.cy, { p: 1.3 });
+      return;
+    }
     switch (this.pattern++ % 4) {
       case 0:
         for (let i = -2; i <= 2; i++) spawnProjectile('fireball', this, sx, sy, aim + i * 0.13, { dmg: 12 });
@@ -1405,7 +1600,7 @@ class Monster {
   lights(out) {
     if (this.type === 'chthon' && this.state !== 'idle') out.push({ x: this.cx, y: this.y + 40, r: 180, c: [1, 0.5, 0.2], i: 0.7 });
     if (this.type === 'pylon') out.push({ x: this.cx, y: this.y + 8, r: 70, c: [0.8, 0.3, 1], i: 0.6 + Math.sin(this.anim * 3) * 0.15 });
-    if (this.type === 'herald') out.push({ x: this.cx, y: this.cy, r: 160, c: [0.9, 0.3, 0.8], i: 0.6 });
+    if (this.type === 'herald' && this.state !== 'dormant') out.push({ x: this.cx, y: this.cy, r: 160, c: [0.9, 0.3, 0.8], i: this.storm ? 0.8 : 0.6 });
     if (this.type === 'elder' && this.state !== 'dormant') out.push({ x: this.cx, y: this.cy, r: 190, c: [0.4, 0.85, 1], i: this.state === 'idle' ? 0.4 : 0.7 });
     if (this.type === 'phantom') out.push({ x: this.cx, y: this.y + 6, r: 36, c: [0.7, 0.45, 1], i: 0.35 });
     if (this.type === 'guardian') out.push({ x: this.cx, y: this.y + 6, r: 34, c: [0.4, 0.9, 1], i: 0.3 });
@@ -1464,17 +1659,29 @@ class Monster {
       drawLightning(ctx, hx - 6, hy + rand(-2, 2), hx + 6, hy + rand(-2, 2), '#c8d8ff', 1, 0.9);
     }
     if (this.type === 'shub' && this.state !== 'dying') {
-      for (const [ex, ey] of SHUB_EYES) {
+      // спящая Мать с закрытыми глазами; при пробуждении они открываются один за другим
+      const open = this.state === 'intro' ? this.stateT / 2.4 : this.state === 'idle' && this.introWait ? 0 : 1;
+      for (const [i, [ex, ey]] of SHUB_EYES.entries()) {
+        if (i / SHUB_EYES.length >= open) continue;
         const blink = Math.sin(this.anim * 1.7 + ex) > 0.93;
         ctx.fillStyle = blink ? '#3a2430' : '#ffe060';
         ctx.fillRect(x + ex - 1, y + this.h + ey - 1, 3, 2);
       }
     }
     if (this.type === 'pylon') {
-      const boss = Game.monsters.find((m) => m.type === 'herald' && m.alive);
+      const boss = Game.monsters.find((m) => m.type === 'herald' && m.alive && m.state !== 'dormant');
       if (boss) drawLightning(ctx, x, y + 4, Math.round(boss.cx - cam.x), Math.round(boss.cy - cam.y), '#e080ff', 1, 0.35 + Math.random() * 0.3);
     }
     if (this.type === 'herald') {
+      // метка рывка: пунктир к цели
+      if (this.dive && this.dive.t < 0.7) {
+        const d = this.dive, k = d.t / 0.7;
+        ctx.fillStyle = '#ff60c0';
+        ctx.globalAlpha = 0.3 + k * 0.6;
+        const L = Math.hypot(d.tx - this.cx, d.ty - this.cy);
+        for (let s = 10; s < L; s += 10) ctx.fillRect(Math.round(x + d.dx * s) - 1, Math.round(y + this.h / 2 + d.dy * s) - 1, 3, 3);
+        ctx.globalAlpha = 1;
+      }
       if (this.heraldShielded()) {
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';

@@ -651,6 +651,8 @@ def e1m6():
     level({
         'id': 'e1m6', 'name': 'E1M6', 'title': 'Дом Хтона', 'theme': 'elder', 'episode': 1, 'next': 'e2m1', 'finale': 'e1', 'music': 36.7,
         'bossButtons': True, 'skyTheme': 'elder',
+        # за дверью арены — появление Хтона; лава поднимается по всей арене до решётки зала руны
+        'bossIntro': [42, 26, 50, 35], 'flood': [42, 120, 36],
         'traps': [
             trap(24, 33, 28, 35, [(10, 35, 'k'), (4, 35, 'k'), (16, 35, 'd')]),
         ],

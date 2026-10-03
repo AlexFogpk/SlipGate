@@ -1,6 +1,14 @@
 'use strict';
 // Главный модуль: цикл, загрузка уровней, камера, свет, триггеры, смерть, антракт, финал.
 
+// Табличка босса при его появлении: имя, титул, цвета букв и черты под ними.
+const BOSS_CARDS = {
+  chthon: { name: 'ХТОН', sub: 'Владыка Лавы', cols: ['#fff0c0', '#ff9a30', '#8a2a10'], line: '#ffb040', subCol: '#f0c090', dur: 4.4 },
+  shub: { name: 'ШУБ-НИГГУРАТ', sub: 'Мать Тысячи Отродий', cols: ['#ffe0f0', '#d070a0', '#5a1a3a'], line: '#e080b0', subCol: '#e0b0c8', dur: 4.2 },
+  herald: { name: 'ВЕСТНИК БЕЗДНЫ', sub: 'Глас Нижнего мира', cols: ['#fff0ff', '#d080ff', '#5a2a8a'], line: '#d080ff', subCol: '#d8b8f0', dur: 4.2 },
+  elder: { name: 'ДРЕВНИЙ', sub: 'Пожиратель Измерений', cols: ['#e8fbff', '#70d8ff', '#2a6a9a'], line: '#70d8ff', subCol: '#a8d8f0', dur: 4 },
+};
+
 const OBITS = {
   grunt: 'Вас застрелил солдат', dog: 'Вас загрыз пёс', enforcer: 'Вас поджарил каратель',
   knight: 'Вас зарубил рыцарь', hknight: 'Вас сжёг рыцарь смерти', ogre: 'Вас распилил огр',
@@ -302,7 +310,16 @@ const Game = {
         if (!MONSTER_DEFS[type].static) this.totalKills++;
       } else if (ITEM_CHARS.includes(s.ch)) this.items.push(new Item(s.ch, cx, bottom));
     }
-    if (def.bossIntro) for (const m of this.monsters) if (m.type === 'elder') m.elderDormant();
+    if (def.bossIntro) for (const m of this.monsters) if (m.def.boss && BOSS_CARDS[m.type]) m.bossDormant();
+    // лава, которая поднимается на арене Хтона
+    this.flood = def.flood ? { x0: def.flood[0] * TILE, x1: (def.flood[1] + 1) * TILE, base: def.flood[2] * TILE, h: 0, max: 0, st: 'off', t: 0, hurtT: 0, on: false } : null;
+    this.strikes = [];
+    // телепорт в чрево Шуб-Ниггурат спит, пока его не напитает кровь её отродий
+    this.shubGate = null;
+    if (this.monsters.some((m) => m.type === 'shub')) {
+      this.shubGate = { need: [4, 6, 7, 8][this.skill] || 6, have: 0, open: false };
+      for (const tp of this.level.teleports) tp.sealed = true;
+    }
     if (this.attract) {
       this.player = null;
       this.cam.x = 0;
@@ -461,10 +478,205 @@ const Game = {
   // Появление босса: камера уходит к нему, герой замирает, табличка с именем.
   startBossIntro() {
     this.introDone = true;
-    const boss = this.monsters.find((m) => m.type === 'elder' && m.alive);
+    const boss = this.monsters.find((m) => m.def.boss && m.alive && BOSS_CARDS[m.type]);
     if (!boss) return;
-    this.cine = { t: 0, dur: 4, boss };
-    boss.elderIntro();
+    this.cine = { t: 0, dur: BOSS_CARDS[boss.type].dur, boss };
+    HUD.centerT = 0;
+    boss.bossIntro();
+  },
+
+  // Гибель босса: время замедляется, вспышка, слуги рассыпаются.
+  bossDeath(boss, attacker, text) {
+    HUD.center(text, 3);
+    Sound.play('roar');
+    this.slowT = 2.4;
+    this.whiteFlash = 0.5;
+    this.shake(boss.cx, boss.cy, 14);
+    this.strikes = [];
+    if (this.flood) { this.flood.on = false; if (this.flood.st !== 'off') { this.flood.st = 'fall'; this.flood.t = 0; } }
+    for (const m of this.monsters) if (m.minion && m.alive) applyDamage(m, 5000, attacker, 'telefrag');
+  },
+
+  // Последний миг босса: белая вспышка и кольцо искр.
+  bossBurst(boss, col) {
+    this.whiteFlash = 1;
+    this.shake(boss.cx, boss.cy, 16);
+    Sound.play('explode', boss.cx, boss.cy); Sound.play('roar');
+    for (let i = 0; i < 40; i++) FX.add({ kind: 'spark', x: boss.cx, y: boss.cy, vx: Math.cos(i / 40 * TAU) * 320, vy: Math.sin(i / 40 * TAU) * 320, life: 1.2, max: 1.2, size: 2, col, grav: 0, bright: true });
+  },
+
+  // Слуга погиб: у Шуб-Ниггурат его кровь уходит в спящий телепорт.
+  onMinionDeath(m) {
+    const g = this.shubGate;
+    if (!g || g.open) return;
+    const tp = this.level.teleports[0];
+    if (!tp) return;
+    g.have++;
+    for (let i = 0; i < 10; i++) {
+      const k = i / 10;
+      FX.add({ kind: 'spark', x: lerp(m.cx, tp.cx, k), y: lerp(m.cy, tp.bottom - 20, k) - Math.sin(k * Math.PI) * 60, vx: rand(-20, 20), vy: rand(-20, 20), life: 0.3 + k * 0.6, max: 0.9, size: 2, col: '#e04060', grav: 0, bright: true });
+    }
+    Sound.play('charge', tp.cx, tp.bottom, { p: 0.6 + g.have / g.need, vol: 0.5, gap: 0.05 });
+    const shub = this.monsters.find((x) => x.type === 'shub' && x.alive);
+    if (g.have >= g.need) {
+      g.open = true;
+      for (const t of this.level.teleports) { t.sealed = false; FX.teleport(t.cx, t.bottom - 16); }
+      HUD.center('Телепорт пробуждён!\nВойдите в него — прямо в её чрево', 4);
+      Sound.play('secret');
+      this.exitHint = 'teleport';
+      if (shub) shub.shubPanic();
+    } else {
+      HUD.message(`Кровь отродий питает телепорт: ${g.have}/${g.need}`);
+      if (shub && g.have === Math.ceil(g.need / 2)) shub.shubPhase2();
+    }
+  },
+
+  // --- поднимающаяся лава Хтона ---
+  // Цикл: затишье → предупреждение (пузыри, гул) → подъём → стоит → спадает.
+  startFlood(level) {
+    const f = this.flood;
+    if (!f) return;
+    f.on = true; f.level = level;
+    if (f.st === 'off') { f.st = 'calm'; f.t = level >= 2 ? 1.5 : 3; }
+  },
+
+  updateFlood(dt) {
+    const f = this.flood;
+    if (!f || f.st === 'off') return;
+    const hard = f.level >= 2;
+    f.t -= dt;
+    switch (f.st) {
+      case 'calm':
+        if (f.t <= 0 && f.on) {
+          f.st = 'warn'; f.t = 2;
+          Sound.play('roar', (f.x0 + f.x1) / 2, f.base, { p: 0.6, vol: 0.7 });
+          this.shake((f.x0 + f.x1) / 2, f.base, 5);
+          if (!f.warned) { f.warned = true; HUD.center('Лава поднимается!\nНа уступы!', 2.5); }
+        }
+        break;
+      case 'warn':
+        if (Math.random() < dt * 40) FX.add({ kind: 'spark', x: rand(f.x0, f.x1), y: f.base - 1, vx: rand(-15, 15), vy: rand(-110, -50), life: 0.7, max: 0.7, size: 1, col: pick(['#ffb040', '#ff7020', '#ffe080']), grav: 120, bright: true });
+        if (f.t <= 0) { f.st = 'rise'; f.t = 1; f.max = hard ? 30 : 22; Sound.play('burn', (f.x0 + f.x1) / 2, f.base, { vol: 0.9, p: 0.6 }); }
+        break;
+      case 'rise':
+        f.h = f.max * (1 - Math.max(0, f.t));
+        if (f.t <= 0) { f.st = 'hold'; f.t = hard ? 5 : 4; }
+        break;
+      case 'hold':
+        f.h = f.max + Math.sin(this.time * 3) * 1.5;
+        if (f.t <= 0) { f.st = 'fall'; f.t = 1.5; }
+        break;
+      case 'fall':
+        f.h = Math.max(0, f.h - dt * f.max / 1.5);
+        if (f.h <= 0) { f.h = 0; f.st = f.on ? 'calm' : 'off'; f.t = hard ? 6 : 9; }
+        break;
+      default: break;
+    }
+    // жжёт всех, кто стоит в поднявшейся лаве
+    if (f.h > 2) {
+      const top = f.base - f.h;
+      f.hurtT -= dt;
+      const p = this.player;
+      if (p && p.alive && p.cx > f.x0 && p.cx < f.x1 && p.y + p.h > top + 2 && p.y + p.h <= f.base + 2 && f.hurtT <= 0) {
+        f.hurtT = 0.25;
+        p.takeDamage(p.suit > 0 ? 2 : 9, null, 'lava');
+        FX.sparks(p.cx, top, 4, '#ff8030', 90);
+      }
+    }
+  },
+
+  drawFlood(ctx, cam, t) {
+    const f = this.flood;
+    if (!f || f.h <= 0.5) return;
+    const top = f.base - f.h;
+    const x0 = Math.max(f.x0, cam.x - 4), x1 = Math.min(f.x1, cam.x + this.viewW + 4);
+    if (x1 <= x0) return;
+    const lava = Tex.liquidAnim.lava;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x0 - cam.x, f.base - cam.y);
+    for (let x = x0; x <= x1; x += 4) ctx.lineTo(x - cam.x, top - cam.y + Math.sin(t * 3 + x * 0.07) * 1.5 + Math.sin(t * 5.3 + x * 0.19));
+    ctx.lineTo(x1 - cam.x, f.base - cam.y);
+    ctx.closePath();
+    ctx.clip();
+    for (let x = Math.floor(x0 / 64) * 64; x < x1; x += 64) {
+      for (let y = Math.floor((top - 4) / 64) * 64; y < f.base; y += 64) ctx.drawImage(lava, 0, 0, 64, 64, x - cam.x, y - cam.y, 64, 64);
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'rgba(255,140,40,0.25)';
+    ctx.fillRect(x0 - cam.x, top - cam.y - 3, x1 - x0, 5);
+    ctx.restore();
+  },
+
+  // --- удары из-под земли и с неба: метка, затем удар ---
+  addStrike(x, kind, warn) {
+    const lv = this.level;
+    const p = this.player;
+    // пол под точкой удара
+    let ty = Math.floor(((p ? p.y + p.h : 0) - 4) / TILE);
+    const tx = Math.floor(x / TILE);
+    if (lv.tileSolid(tx, ty)) return;
+    let n = 0;
+    while (n++ < 14 && !lv.tileSolid(tx, ty + 1) && lv.tile(tx, ty + 1) !== T.PLAT) ty++;
+    if (n >= 14 || lv.liquidAt(x, ty * TILE + 8)) return;
+    this.strikes.push({ x, y: (ty + 1) * TILE, kind, t: warn, warn, hit: false, life: 0.5 });
+    Sound.play(kind === 'bolt' ? 'charge' : 'splat', x, (ty + 1) * TILE, { p: kind === 'bolt' ? 1.4 : 0.7, vol: 0.4, gap: 0.05 });
+  },
+
+  updateStrikes(dt) {
+    const p = this.player;
+    for (const s of this.strikes) {
+      s.t -= dt;
+      if (s.t > 0) continue;
+      if (!s.hit) {
+        s.hit = true;
+        const r = s.kind === 'bolt' ? 16 : 18;
+        const tall = s.kind === 'bolt' ? 600 : 44;
+        if (p && p.alive && Math.abs(p.cx - s.x) < r + p.w / 2 && p.y + p.h > s.y - tall && p.y < s.y) {
+          const boss = this.monsters.find((m) => m.def.boss && m.alive);
+          p.takeDamage(s.kind === 'bolt' ? 22 : 25, boss || null, s.kind === 'bolt' ? 'lightning' : 'melee', 0, -380);
+          if (s.kind !== 'bolt') { p.vy = Math.min(p.vy, -330); p.onGround = false; }
+        }
+        if (s.kind === 'bolt') {
+          FX.beam(s.x + rand(-10, 10), s.y - 420, s.x, s.y, '#e0b0ff', 0.35, 3);
+          FX.sparks(s.x, s.y - 2, 14, '#e0c0ff', 200);
+          FX.light(s.x, s.y - 30, 160, [0.8, 0.5, 1], 1.2, 0.25);
+          Sound.play('lightning', s.x, s.y, { gap: 0.04 });
+        } else {
+          FX.blood(s.x, s.y - 10, 0, -1, 10, 1.5);
+          for (let i = 0; i < 6; i++) FX.gib(s.x + rand(-6, 6), s.y - 4, rand(-80, 80), rand(-320, -160), pick(['#5a2a3a', '#7a3a4a', '#3a1a28']), randInt(2, 3), false);
+          Sound.play('gib', s.x, s.y, { vol: 0.6, gap: 0.05 });
+          this.shake(s.x, s.y, 4);
+        }
+      }
+      s.life -= dt;
+    }
+    this.strikes = this.strikes.filter((s) => s.life > 0);
+  },
+
+  drawStrikes(ctx, cam, t) {
+    for (const s of this.strikes) {
+      const x = Math.round(s.x - cam.x), y = Math.round(s.y - cam.y);
+      const bolt = s.kind === 'bolt';
+      if (!s.hit) {
+        const k = 1 - s.t / s.warn;
+        ctx.globalAlpha = 0.35 + k * 0.5 + (Math.floor(t * 14) % 2 ? 0.1 : 0);
+        ctx.fillStyle = bolt ? '#c080ff' : '#e04060';
+        const w = Math.round(10 + k * 12);
+        ctx.fillRect(x - w, y - 2, w * 2, 2);
+        ctx.fillRect(x - Math.round(w * 0.6), y - 4, Math.round(w * 1.2), 2);
+        if (bolt) { ctx.globalAlpha = 0.12 + k * 0.25; ctx.fillRect(x - 1, y - 400, 2, 398); }
+        else if (k > 0.5) { ctx.fillStyle = '#ffd0e0'; ctx.fillRect(x - 1, y - 3 - Math.round((k - 0.5) * 8), 2, 2); }
+      } else if (!bolt) {
+        // щупальце вырывается из земли и опадает
+        const k = clamp(s.life / 0.5, 0, 1), hgt = Math.round(40 * Math.sin(k * Math.PI * 0.5 + 0.4));
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#4a1a2a'; ctx.fillRect(x - 4, y - hgt, 8, hgt);
+        ctx.fillStyle = '#8a3a50'; ctx.fillRect(x - 3, y - hgt, 3, hgt);
+        ctx.fillStyle = '#c86080'; ctx.fillRect(x - 1, y - hgt - 4, 3, 5);
+      }
+    }
+    ctx.globalAlpha = 1;
   },
 
   onBossDefeated() {
@@ -479,18 +691,12 @@ const Game = {
     this.exitHint = true;
   },
 
+  // Пульт на арене Хтона заряжает электрод на своей стороне; разряд — когда заряжены оба.
   bossStrike(button) {
-    const boss = this.monsters.find((m) => m.def.boss && m.alive);
-    const electrodes = this.level.decor.filter((d) => d.kind === 'electrode');
-    this.bossFx = 0.6;
+    const boss = this.monsters.find((m) => m.type === 'chthon' && m.alive);
     Sound.play('zap', button.x, button.y);
-    if (!boss) return;
-    const ok = boss.bossHit();
-    for (const e of electrodes) {
-      FX.beam(e.x, e.y - 34, ok ? boss.cx + rand(-10, 10) : e.x + rand(-40, 40), ok ? boss.y + rand(20, 60) : e.y - 80, '#d0e0ff', 0.6, 3);
-      FX.sparks(e.x, e.y - 34, 12, '#c8d8ff', 160);
-    }
-    if (!ok) HUD.center('Электроды разряжаются впустую...', 1.5);
+    if (!boss || !boss.chthonReady()) { HUD.center('Электроды молчат...', 1.5); return; }
+    boss.chargeElectrode(button);
   },
 
   // Музыка: характер эпизода (у хаба и меню — свой) и накал боя для боевого слоя.
@@ -771,6 +977,8 @@ const Game = {
     if (this.items.some((it) => it.taken)) this.items = this.items.filter((it) => !it.taken);
     if (this.monsters.some((m) => m.gibbed && !m.def.boss)) this.monsters = this.monsters.filter((m) => !m.gibbed || m.def.boss);
     FX.update(dt);
+    this.updateFlood(dt);
+    this.updateStrikes(dt);
     updateAmbience(this.level, dt, this.cam, this.viewW, this.viewH);
     const c = this.cameraTarget();
     const k = 1 - Math.exp(-dt * 9);
@@ -838,7 +1046,7 @@ const Game = {
       }
     }
     for (const tp of lv.teleports) {
-      if (!overlap(p, tp)) continue;
+      if (tp.sealed || !overlap(p, tp)) continue;
       FX.teleport(p.cx, p.cy);
       p.x = tp.dest.x - p.w / 2;
       p.y = tp.dest.y - p.h;
@@ -946,6 +1154,7 @@ const Game = {
   // Табличка с именем босса и киношные полосы во время его появления.
   drawBossCard(ctx, W, H, u) {
     const c = this.cine;
+    const card = BOSS_CARDS[c.boss.type];
     const k = clamp(Math.min(c.t / 0.5, (c.dur - c.t) / 0.5), 0, 1);
     const bar = H * 0.11 * k;
     ctx.fillStyle = '#000';
@@ -953,16 +1162,23 @@ const Game = {
     const a = clamp(Math.min((c.t - 1) / 0.6, (c.dur - 0.3 - c.t) / 0.5), 0, 1);
     if (a <= 0) return;
     ctx.globalAlpha = a;
-    const size = Math.min(34 * u, W / 9);
+    let size = Math.min(34 * u, W / 9);
+    // тёмная полоса под табличкой, чтобы имя читалось на лаве и вспышках
+    const band = ctx.createLinearGradient(0, H * 0.62 - size * 0.4, 0, H * 0.62 + size * 2);
+    band.addColorStop(0, 'rgba(0,0,0,0)'); band.addColorStop(0.35, 'rgba(0,0,0,0.55)'); band.addColorStop(0.75, 'rgba(0,0,0,0.55)'); band.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = band;
+    ctx.fillRect(0, H * 0.62 - size * 0.4, W, size * 2.4);
     ctx.font = `${Math.round(size)}px ${TITLE_FONT}`;
+    const wide = ctx.measureText(card.name).width;
+    if (wide > W * 0.86) { size *= W * 0.86 / wide; ctx.font = `${Math.round(size)}px ${TITLE_FONT}`; }
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     const y = H * 0.62;
-    ctx.fillStyle = '#05080c'; ctx.fillText('ДРЕВНИЙ', W / 2 + size * 0.05, y + size * 0.06);
+    ctx.fillStyle = '#05080c'; ctx.fillText(card.name, W / 2 + size * 0.05, y + size * 0.06);
     const g = ctx.createLinearGradient(0, y, 0, y + size);
-    g.addColorStop(0, '#e8fbff'); g.addColorStop(0.5, '#70d8ff'); g.addColorStop(1, '#2a6a9a');
-    ctx.fillStyle = g; ctx.fillText('ДРЕВНИЙ', W / 2, y);
-    HUD.text(ctx, 'Пожиратель Измерений', W / 2, y + size * 1.15, 7 * u, '#a8d8f0', 'center');
-    ctx.fillStyle = '#70d8ff';
+    g.addColorStop(0, card.cols[0]); g.addColorStop(0.5, card.cols[1]); g.addColorStop(1, card.cols[2]);
+    ctx.fillStyle = g; ctx.fillText(card.name, W / 2, y);
+    HUD.text(ctx, card.sub, W / 2, y + size * 1.15, 7 * u, card.subCol, 'center');
+    ctx.fillStyle = card.line;
     ctx.fillRect(W / 2 - 90 * u * a, y + size * 1.08, 180 * u * a, Math.max(1, u * 0.6));
     ctx.globalAlpha = 1;
   },
@@ -972,8 +1188,9 @@ const Game = {
   drawExitPointer(ctx, W, H, u) {
     const p = this.player;
     let best = null;
-    for (const e of this.level.exits) {
-      if (e.hidden) continue;
+    const tele = this.exitHint === 'teleport';
+    for (const e of tele ? this.level.teleports : this.level.exits) {
+      if (e.hidden || e.sealed) continue;
       const d = dist(e.cx, e.bottom, p.cx, p.cy);
       if (!best || d < best.d) best = { e, d };
     }
@@ -995,7 +1212,7 @@ const Game = {
       const k = Math.min((W / 2 - m) / Math.max(1e-6, Math.abs(Math.cos(a))), ((bottom - m) / 2) / Math.max(1e-6, Math.abs(Math.sin(a))));
       ctx.translate(cx + Math.cos(a) * (k - bob), cy + Math.sin(a) * (k - bob));
       // подпись чуть ближе к центру экрана, стрелка смотрит на выход
-      HUD.text(ctx, 'ВЫХОД', -Math.cos(a) * 22 * u, -Math.sin(a) * 16 * u - 3 * u, 5 * u, '#c8b0ff', 'center');
+      HUD.text(ctx, tele ? 'ТЕЛЕПОРТ' : 'ВЫХОД', -Math.cos(a) * 22 * u, -Math.sin(a) * 16 * u - 3 * u, 5 * u, '#c8b0ff', 'center');
       ctx.rotate(a);
     }
     const s = u * 1.6;
@@ -1091,9 +1308,16 @@ const Game = {
     if (this.levelDef.altarButtons) {
       for (const b of this.level.buttons) out.push({ x: b.x + 6, y: b.y, r: b.lit ? 90 : 40, c: b.lit ? [0.4, 0.9, 1] : [0.6, 0.3, 0.9], i: b.lit ? 0.8 : 0.4 });
     }
-    if (this.bossFx > 0) {
-      for (const d of this.level.decor) if (d.kind === 'electrode') out.push({ x: d.x, y: d.y - 34, r: 160, c: [0.6, 0.7, 1], i: this.bossFx * 1.5 });
+    for (const d of this.level.decor) {
+      if (d.kind !== 'electrode') continue;
+      const i = Math.max(this.bossFx * 1.5, d.est === 'ready' ? 0.6 + Math.sin(this.time * 9) * 0.15 : d.est === 'charging' ? 0.2 + d.et * 0.25 : 0);
+      if (i > 0.01) out.push({ x: d.x, y: d.y - 34, r: 160, c: [0.6, 0.7, 1], i });
     }
+    const f = this.flood;
+    if (f && f.h > 1) {
+      for (let x = Math.max(f.x0, Math.floor(this.cam.x / 80) * 80); x < Math.min(f.x1, this.cam.x + this.viewW + 80); x += 80) out.push({ x, y: f.base - f.h, r: 90, c: [1, 0.5, 0.15], i: 0.25 + f.h / 60 });
+    }
+    for (const s of this.strikes) out.push({ x: s.x, y: s.y - 8, r: 50, c: s.kind === 'bolt' ? [0.7, 0.4, 1] : [0.9, 0.2, 0.35], i: s.hit ? 0.2 : 0.5 });
     return out;
   },
 
@@ -1164,6 +1388,8 @@ const Game = {
     lv.drawDecorBright(ctx, cam, t);
     for (const pr of this.projectiles) pr.draw(ctx, cam, true);
     for (const m of this.monsters) m.drawBright(ctx, cam);
+    this.drawFlood(ctx, cam, t);
+    this.drawStrikes(ctx, cam, t);
     FX.drawBright(ctx, cam, t);
     drawForeground(ctx, lv, cam, vw, vh, t);
 

@@ -307,29 +307,60 @@ const HUD = {
       this.text(ctx, 'ВОЗДУХ', bx - 4 * u, byy - 0.5 * u, 4.5 * u, '#a8d0f0', 'right');
     }
 
-    // полоска здоровья Вестника и Древнего
-    const boss = Game.monsters.find((m) => (m.type === 'herald' || m.type === 'elder') && m.alive && m.state !== 'idle' && m.state !== 'dormant');
+    // полоска босса: здоровье или раны, что держит его защиту, и что делать сейчас
+    const boss = Game.monsters.find((m) => m.def.boss && BOSS_CARDS[m.type] && m.alive && m.state !== 'idle' && m.state !== 'dormant');
     if (boss) {
       const bw = Math.min(W * 0.5, 220 * u), bx = (W - bw) / 2, byy = 8 * u;
-      const elder = boss.type === 'elder';
-      const shielded = elder ? boss.elderShielded() : boss.heraldShielded();
+      const card = BOSS_CARDS[boss.type];
+      let name = Game.levelDef.bossIntro ? card.name + ', ' + card.sub.toUpperCase() : card.name;
+      if (W < 520 * u) name = card.name;
       // при появлении полоска наполняется
-      boss.barFill = boss.state === 'intro' ? clamp(boss.stateT / 3, 0, 1) : Math.min(1, (boss.barFill === undefined ? 1 : boss.barFill) + 0.02);
-      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx - 2 * u, byy - 2 * u, bw + 4 * u, 9 * u);
-      const stun = elder && boss.stunT > 0;
-      ctx.fillStyle = stun ? (Math.floor(t * 8) % 2 ? '#f0f0ff' : '#c03028') : shielded ? (elder ? '#2a5a7a' : '#5a3a7a') : '#b02a20';
-      ctx.fillRect(bx, byy, bw * clamp(boss.health / boss.maxHealth, 0, 1) * boss.barFill, 5 * u);
-      if (elder && Game.levelDef.bossIntro && !boss.drained) { ctx.fillStyle = '#e0f0ff'; ctx.fillRect(bx + bw / 2, byy - u, Math.max(1, u * 0.6), 7 * u); }
-      let label;
-      if (elder) {
-        const lit = Game.level.buttons.filter((b) => b.lit).length;
-        const name = Game.levelDef.bossIntro ? 'ДРЕВНИЙ, ПОЖИРАТЕЛЬ ИЗМЕРЕНИЙ' : 'ДРЕВНИЙ';
-        label = name + (shielded ? '  ·  барьер, руны ' + lit + '/' + Game.level.buttons.length : stun ? '  ·  ОГЛУШЁН — БЕЙТЕ!' : boss.rage >= 2 ? '  ·  ЯРОСТЬ' : '');
-      } else {
-        const pylons = Game.monsters.filter((m) => m.type === 'pylon' && m.alive).length;
-        label = 'ВЕСТНИК БЕЗДНЫ' + (shielded ? '  ·  щит, кристаллов: ' + pylons : '');
+      const intro = boss.state === 'intro' || boss.state === 'rise';
+      boss.barFill = intro ? clamp(boss.stateT / (boss.state === 'rise' ? 2.5 : 3), 0, 1) : Math.min(1, (boss.barFill === undefined ? 1 : boss.barFill) + 0.02);
+      let frac = 1, col = '#b02a20', status = '', ticks = [], sub = null, guard = false;
+      if (boss.type === 'elder' || boss.type === 'herald') {
+        const elder = boss.type === 'elder';
+        guard = elder ? boss.elderShielded() : boss.heraldShielded();
+        frac = boss.health / boss.maxHealth;
+        const stun = elder && boss.stunT > 0;
+        col = stun ? (Math.floor(t * 8) % 2 ? '#f0f0ff' : '#c03028') : guard ? (elder ? '#2a5a7a' : '#5a3a7a') : '#b02a20';
+        if (elder && Game.levelDef.bossIntro && !boss.drained) ticks.push(0.5);
+        if (elder) {
+          const lit = Game.level.buttons.filter((b) => b.lit).length;
+          status = guard ? 'барьер, руны ' + lit + '/' + Game.level.buttons.length : stun ? 'ОГЛУШЁН — БЕЙТЕ!' : boss.rage >= 2 ? 'ЯРОСТЬ' : '';
+        } else {
+          if (Game.levelDef.bossIntro && !boss.storm) ticks.push(0.4);
+          const pylons = Game.monsters.filter((m) => m.type === 'pylon' && m.alive).length;
+          status = guard ? 'щит, кристаллов: ' + pylons : boss.storm ? 'ГРОЗА БЕЗДНЫ' : '';
+        }
+      } else if (boss.type === 'chthon') {
+        frac = 1 - boss.hits / boss.def.hp;
+        col = boss.hurtFlash > 0 ? '#ffffff' : '#c04018';
+        for (let i = 1; i < boss.def.hp; i++) ticks.push(i / boss.def.hp);
+        const els = boss.electrodes(), ready = els.filter((e) => e.est === 'ready').length;
+        const f = Game.flood;
+        status = f && (f.st === 'warn' || f.st === 'rise') ? 'ЛАВА ПОДНИМАЕТСЯ!' : intro ? '' : 'электроды ' + ready + '/' + els.length;
+        guard = true;
+      } else if (boss.type === 'shub') {
+        const g = Game.shubGate;
+        col = '#6a2040';
+        guard = true;
+        if (g) {
+          sub = g.open ? 1 : g.have / g.need;
+          status = g.open ? 'ТЕЛЕПОРТ ОТКРЫТ — ВНУТРЬ!' : 'кровь для телепорта ' + g.have + '/' + g.need;
+        }
       }
-      this.text(ctx, label, W / 2, byy + 8 * u, 5 * u, shielded ? (elder ? '#a0e8ff' : '#d0a0ff') : '#f0c0a0', 'center');
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx - 2 * u, byy - 2 * u, bw + 4 * u, (sub !== null ? 12 : 9) * u);
+      ctx.fillStyle = col;
+      ctx.fillRect(bx, byy, bw * clamp(frac, 0, 1) * boss.barFill, 5 * u);
+      for (const k of ticks) { ctx.fillStyle = '#e0f0ff'; ctx.fillRect(bx + bw * k, byy - u, Math.max(1, u * 0.6), 7 * u); }
+      if (sub !== null) {
+        ctx.fillStyle = sub >= 1 ? (Math.floor(t * 6) % 2 ? '#ff80c0' : '#c04080') : '#a03060';
+        ctx.fillRect(bx, byy + 6 * u, bw * clamp(sub, 0, 1), 2 * u);
+      }
+      const label = name + (status ? '  ·  ' + status : '');
+      const ly = byy + (sub !== null ? 11 : 8) * u;
+      this.text(ctx, label, W / 2, ly, 5 * u, status === status.toUpperCase() && status ? '#ffe0a0' : guard ? (boss.type === 'elder' ? '#a0e8ff' : boss.type === 'chthon' ? '#ffc890' : '#d0a0ff') : '#f0c0a0', 'center');
     }
     // сообщения
     let myy = 6 * u;
