@@ -117,6 +117,38 @@ function groundBelow(x, y, maxDepth) {
   return null;
 }
 
+// Что внизу под точкой до первой опоры (для ИИ): 'safe' — пол, платформа, вода или лифт,
+// 'hazard' — лава, слизь или пустота, 'none' — до самого низа ничего.
+function dropCheck(x, y, maxDepth = 48) {
+  const lv = Game.level;
+  const tx = Math.floor(x / TILE), ty0 = Math.floor(y / TILE);
+  for (let ty = ty0; ty < Math.min(lv.h, ty0 + maxDepth); ty++) {
+    const t = lv.tile(tx, ty);
+    if (t === T.LAVA || t === T.SLIME || t === T.VOID) return 'hazard';
+    if (isSolidType(t) || t === T.PLAT || t === T.WATER) return 'safe';
+    for (const s of lv.solids) {
+      if (!s.solid) continue;
+      const r = s.rect();
+      if (x >= r.x && x < r.x + r.w && r.y >= ty * TILE && r.y < (ty + 1) * TILE) return 'safe';
+    }
+  }
+  return 'none';
+}
+
+// Сдвиг монстра, когда двое стоят вплотную: только в свободное место и не с края.
+function nudgeMonster(m, dx) {
+  if (m.blockedX || !dx) return;
+  const lv = Game.level, nx = m.x + dx;
+  if (!lv.boxFree(nx, m.y, m.w, m.h)) return;
+  if (m.onGround && !m.def.fly) {
+    // ведущий край после сдвига должен стоять на опоре, а не над провалом или лавой
+    const ex = dx > 0 ? nx + m.w - 2 : nx + 2;
+    const g = groundBelow(ex, m.y + m.h + 1, 1);
+    if (g === null || g === -1) return;
+  }
+  m.x = nx;
+}
+
 function computeWaterLevel(e) {
   const lv = Game.level;
   const cx = e.x + e.w / 2;

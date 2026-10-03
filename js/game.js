@@ -1197,9 +1197,10 @@ const Game = {
       for (let j = i + 1; j < ms.length; j++) {
         const b = ms[j];
         if (!b.alive || b.def.boss || !overlap(a, b)) continue;
+        // расталкиваем только в свободное место и не с края — раньше так вдавливало в стены
         const push = (a.cx < b.cx ? -1 : 1) * 60 * dt;
-        if (!a.blockedX) a.x += push;
-        if (!b.blockedX) b.x -= push;
+        nudgeMonster(a, push);
+        nudgeMonster(b, -push);
       }
     }
   },

@@ -227,12 +227,14 @@ class Monster {
           if (this.lostT > 1.5 && this.blinkNear(this.target)) this.lostT = 0;
         } else this.lostT = 0;
         this.chase(dt);
-        if (this.cd <= 0 && this.target && this.fleeT <= 0) this.tryAttack();
+        // посреди прыжка через провал не стреляем — иначе прыжок оборвётся
+        if (this.cd <= 0 && this.target && this.fleeT <= 0 && !this.gapJump) this.tryAttack();
         break;
       case 'attack':
         this.stateT += dt;
         this.faceTarget();
-        this.vx = approach(this.vx, 0, (this.def.fly ? 200 : 900) * dt);
+        // тормозит только на земле: в воздухе атака не гасит прыжок
+        this.vx = approach(this.vx, 0, (this.def.fly ? 200 : this.onGround ? 900 : 60) * dt);
         if (this.def.fly) this.vy = approach(this.vy, 0, 200 * dt);
         ATTACKS[this.type](this, dt);
         break;
@@ -267,6 +269,12 @@ class Monster {
 
     // физика
     if (this.def.fly && this.state !== 'down') {
+      // летуны держатся над лавой, слизью и пустотой: снижаться к ним нельзя, из пике — выход
+      const lv = Game.level, under = lv.liquidAt(this.cx, this.y + this.h + 10);
+      if (under === T.LAVA || under === T.SLIME || under === T.VOID) {
+        this.vy = Math.min(this.vy, -70);
+        if (this.state === 'leap') { this.state = 'chase'; this.vx *= 0.4; this.cd = rand(...this.def.cd) * Game.skillCdScale(); }
+      }
       this.blockedX = moveBody(this, dt).hitX;
     } else if (this.def.swim) {
       // угорь не покидает воду
@@ -383,18 +391,29 @@ class Monster {
       const g = groundBelow(aheadX, feet + 1, 5);
       const targetBelow = gy > feet + 20;
       const flat = g !== null && g !== -1 && g * TILE <= feet + 2;
-      if (!flat && gy < feet - 8 && GAP_JUMPERS.has(this.type) && this.waterLevel < 2) {
-        // край платформы, а цель выше: прыгаем к ней, а не шагаем вниз
-        if (this.jumpCd <= 0) {
-          this.vy = -(this.def.jump || 330);
-          this.vx = want * Math.max(speed, 90);
+      // под краем — лава, слизь или пустота: прыгать наугад нельзя, только точным прыжком
+      const below = flat ? 'safe' : dropCheck(aheadX, feet + 1);
+      if (!flat && gy < feet - 8 && GAP_JUMPERS.has(this.type) && this.waterLevel < 2 && below !== 'hazard') {
+        // край платформы, а цель выше: прыгаем к ней, а не шагаем вниз — если дуга не в лаву
+        const jvx = want * Math.max(speed, 90), jvy = -(this.def.jump || 330);
+        if (this.jumpCd <= 0 && this.leapLandsSafe(jvx, jvy)) {
+          this.vy = jvy;
+          this.vx = jvx;
           this.onGround = false;
           this.gapJump = true;
           this.jumpCd = 0.8;
-        } else want = 0;
-      } else if (g === -1 || (g === null && !targetBelow)) {
+        } else if (this.jumpCd > 0 || !this.tryGapJump(want, speed)) want = 0;
+      } else if (g === -1 || (g === null && (!targetBelow || below === 'hazard'))) {
         if (!this.tryGapJump(want, speed)) want = 0;
       }
+    }
+    // в воздухе не рулим в лаву; если уже над ней — тянемся к безопасному краю
+    if (!this.onGround && !this.gapJump && !this.def.fly && this.waterLevel === 0) {
+      if (dropCheck(this.cx, feet) === 'hazard') {
+        const l = dropCheck(this.cx - 20, feet), r = dropCheck(this.cx + 20, feet);
+        if (r !== 'hazard' && (l === 'hazard' || want > 0)) { want = 1; pace = 1; }
+        else if (l !== 'hazard') { want = -1; pace = 1; }
+      } else if (want !== 0 && dropCheck(this.cx + want * 14, feet) === 'hazard') want = 0;
     }
     // в прыжке через провал скорость не гасим
     if (!this.gapJump) {
@@ -470,9 +489,25 @@ class Monster {
       if (land < feet - TILE || land > feet + TILE * 2) continue;
       const far = groundBelow(lx + dir * this.w, feet - TILE, 3);
       if (far === null || far === -1 || lv.solidAt(lx + dir * this.w, land - this.h + 2)) continue;
+      // целимся в середину опоры (доска-кочка над кислотой бывает узкой), не дальше 4 клеток
+      let span = 0;
+      while (span < 4 * TILE) {
+        const gx = groundBelow(lx + dir * (span + 4), feet - TILE, 3);
+        if (gx === null || gx === -1 || gx !== g) break;
+        span += 4;
+      }
+      if (span < this.w + 4) continue;
       const jump = this.def.jump || 330;
+      // низкий свод над провалом обрежет дугу — тогда не прыгаем
+      const apex = feet - this.h - jump * jump / (2 * GRAVITY) * 0.8;
+      if (lv.solidAt(this.cx, apex) || lv.solidAt(edge, apex) || lv.solidAt(edge + dir * d * 0.5, apex) || lv.solidAt(edge + dir * d * 0.25, apex)) return false;
       const air = (2 * jump) / GRAVITY;
-      this.vx = dir * clamp((d + this.w) / air * 1.15, speed, 210);
+      // время полёта до высоты опоры: прыжок вверх и падение до неё
+      const drop = land - feet;
+      const t = (jump + Math.sqrt(Math.max(0, jump * jump + 2 * GRAVITY * drop))) / GRAVITY;
+      const want = d + Math.min(span, 3 * TILE) / 2 + this.w / 2;
+      if (want / t > 230) continue;
+      this.vx = dir * Math.max(want / t, 40);
       this.vy = -jump;
       this.onGround = false;
       this.gapJump = true;
@@ -634,8 +669,16 @@ class Monster {
         break;
       case 'spawn':
         if (this.onGround) {
-          this.vy = -rand(260, 340);
-          this.vx = sign(t.cx - this.cx) * rand(90, 150);
+          // скачок к герою; если дуга кончается в лаве или слизи — короткий прыжок на месте
+          let vy = -rand(260, 340), vx = sign(t.cx - this.cx) * rand(90, 150);
+          if (!this.leapLandsSafe(vx, vy)) {
+            vy *= 0.7;
+            // короткий скачок — к герою, на месте или прочь от края; если всё опасно — не прыгает
+            const opts = [vx * 0.15, 0, 50, -50].filter((v) => this.leapLandsSafe(v, vy));
+            if (!opts.length) { this.cd = 0.5; break; }
+            vx = opts[0];
+          }
+          this.vy = vy; this.vx = vx;
           this.state = 'leap'; this.stateT = 0; this.leapHit = false;
           Sound.play('splat', this.cx, this.cy, { vol: 0.5 });
         }
@@ -645,6 +688,10 @@ class Monster {
   }
 
   leap(vx, vy) {
+    // прыгает только туда, где под целью пол, и только если дуга не кончается в лаве
+    const t = this.target;
+    if (t && dropCheck(t.cx, t.y + t.h) !== 'safe') return;
+    if (!this.leapLandsSafe(this.facing * vx, -vy)) return;
     this.state = 'leap';
     this.stateT = 0;
     this.leapHit = false;
@@ -652,6 +699,28 @@ class Monster {
     this.vy = -vy;
     this.onGround = false;
     Sound.play('sight', this.cx, this.cy, { p: this.def.voice * 1.2, gap: 0.2 });
+  }
+
+  // Прогон дуги прыжка: где монстр коснётся опоры — пол или лава, слизь, пустота.
+  leapLandsSafe(vx, vy) {
+    const lv = Game.level;
+    let x = this.cx, y = this.y + this.h;
+    const dt = 1 / 30;
+    for (let i = 0; i < 120; i++) {
+      x += vx * dt; vy += GRAVITY * dt; y += vy * dt;
+      // макушка упёрлась в свод: подъём гаснет, дальше — падение
+      if (vy < 0 && lv.solidAt(x, y - this.h)) { y -= vy * dt; vy = 0; }
+      const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+      const tile = lv.tile(tx, ty);
+      if (tile === T.LAVA || tile === T.SLIME || tile === T.VOID) return false;
+      if (isSolidType(tile) && vy <= 0) { x -= vx * dt; vx = 0; continue; }
+      if (vy > 0 && (isSolidType(tile) || tile === T.PLAT || tile === T.WATER)) {
+        // после приземления монстр ещё проскальзывает — край тоже должен быть надёжным
+        const g = groundBelow(x + Math.sign(vx) * 14, ty * TILE - 2, 1);
+        return g !== -1 && g !== null;
+      }
+    }
+    return dropCheck(x, y) === 'safe';
   }
 
   meleeHit(range, dmg, sound) {
