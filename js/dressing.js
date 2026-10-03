@@ -44,6 +44,15 @@ function dressLevel(lv, ctx) {
   const free = (x, y) => open(x, y) && !busy.has(x + ',' + y);
   const take = (x, y) => busy.add(x + ',' + y);
   const chance = (x, y, salt, p) => hash2(x, y, salt) < p;
+  // настенные украшения не ставим кучно: каждое держит дистанцию от себе подобных
+  const placed = {};
+  const spaced = (kind, x, y, rx, ry, cap = 40) => {
+    const list = placed[kind] || (placed[kind] = []);
+    if (list.length >= cap) return false;
+    for (let i = 0; i < list.length; i += 2) if (Math.abs(list[i] - x) < rx && Math.abs(list[i + 1] - y) < ry) return false;
+    list.push(x, y);
+    return true;
+  };
 
   for (let y = 1; y < lv.h - 1; y++) {
     for (let x = 1; x < lv.w - 1; x++) {
@@ -63,7 +72,7 @@ function dressLevel(lv, ctx) {
       if (D.cables && ceil && free(x + 1, y) && free(x + 2, y) && solid(x + 1, y - 1) && solid(x + 2, y - 1) && chance(x, y, 4, D.cables)) {
         drawCable(ctx, px + 2, py, px + 3 * TILE - 2, py, 4 + hash2(x, y, 5) * 6);
       }
-      if (D.banners && ceil && free(x, y + 1) && open(x, y + 2) && chance(x, y, 6, D.banners)) {
+      if (D.banners && ceil && free(x, y + 1) && open(x, y + 2) && chance(x, y, 6, D.banners) && spaced('banner', x, y, 5, 3)) {
         drawBanner(ctx, px + 8, py, hash2(x, y, 7));
         take(x, y); take(x, y + 1); take(x - 1, y); take(x + 1, y);
         continue;
@@ -90,11 +99,11 @@ function dressLevel(lv, ctx) {
       // настенные: окна, ниши, пульты, решётки, руны — на высоте, не у потолка и не у пола
       const midWall = !ceil && !floor && free(x, y + 1) && open(x, y - 1);
       if (!midWall) continue;
-      if (D.windows && free(x, y - 1) && chance(x, y, 23, D.windows)) { drawWindow(ctx, px + 2, py - 8); take(x, y); take(x, y - 1); continue; }
-      if (D.niches && chance(x, y, 24, D.niches)) { drawNiche(ctx, px + 3, py + 2); take(x, y); continue; }
-      if (D.screens && chance(x, y, 25, D.screens)) { drawScreen(ctx, px + 2, py + 3, hash2(x, y, 26)); take(x, y); continue; }
-      if (D.vents && chance(x, y, 27, D.vents)) { drawVent(ctx, px + 3, py + 4); take(x, y); continue; }
-      if (D.glyphs && chance(x, y, 28, D.glyphs)) { lv.glyphs.push(drawTablet(ctx, px + 3, py + 2, col.glyph, hash2(x, y, 29))); take(x, y); continue; }
+      if (D.windows && free(x, y - 1) && chance(x, y, 23, D.windows) && spaced('window', x, y, 5, 4)) { drawWindow(ctx, px + 2, py - 8); take(x, y); take(x, y - 1); continue; }
+      if (D.niches && chance(x, y, 24, D.niches) && spaced('niche', x, y, 3, 2)) { drawNiche(ctx, px + 3, py + 2); take(x, y); continue; }
+      if (D.screens && chance(x, y, 25, D.screens) && spaced('screen', x, y, 4, 3)) { drawScreen(ctx, px + 2, py + 3, hash2(x, y, 26)); take(x, y); continue; }
+      if (D.vents && chance(x, y, 27, D.vents) && spaced('vent', x, y, 3, 2)) { drawVent(ctx, px + 3, py + 4); take(x, y); continue; }
+      if (D.glyphs && chance(x, y, 28, D.glyphs) && spaced('glyph', x, y, 6, 4, 30)) { lv.glyphs.push(drawTablet(ctx, px + 3, py + 2, col.glyph, hash2(x, y, 29))); take(x, y); continue; }
     }
   }
 }
