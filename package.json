@@ -1,0 +1,16 @@
+{
+  "name": "slipgate",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SLIPGATE — двумерный шутер в духе Quake 1 на чистом JavaScript и Canvas 2D",
+  "scripts": {
+    "test": "npm run test:levels && npm run test:game",
+    "test:levels": "node tools/check-levels.js && python3 tools/levelgen/build_levels.py --check",
+    "test:game": "node tests/run.js",
+    "levels": "python3 tools/levelgen/build_levels.py",
+    "build": "node tools/build.js"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}
