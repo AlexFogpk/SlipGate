@@ -361,6 +361,11 @@ class Monster {
       const away = -sign(t.cx - this.cx) || -this.facing;
       if (this.safeStep(away)) want = away;
       else this.fleeT = 0;
+    } else if (this.clearT > 0) {
+      // доска на линии огня: идём к её краю
+      this.clearT -= dt;
+      if (this.safeStep(this.clearDir)) want = this.clearDir;
+      else this.clearT = 0;
     } else if (this.canSee && this.pref > 0) {
       // стрелок держит свою дистанцию: подходит, пятится или переминается между выстрелами
       this.strafeT -= dt;
@@ -532,7 +537,30 @@ class Monster {
     return false;
   }
 
+  // Выстрел упрётся в доску платформы (или дверь), хотя героя видно: стрелок не тратит
+  // выстрел, а отходит к ближнему краю доски, откуда линия огня чистая.
+  plankInWay() {
+    const t = this.target;
+    if (!t) return false;
+    const s = this.shootPoint(), lv = Game.level;
+    const a = lv.rayCast(s.x, s.y, t.cx, t.cy, false, true);
+    if (!a.hit || !lv.rayCast(s.x, s.y, t.cx, t.y + 3, false, true).hit) return false;
+    const tx = Math.floor(a.x / TILE), ty = Math.floor((a.y + (a.ny < 0 ? 1 : -1)) / TILE);
+    let dir = pick([-1, 1]);
+    if (lv.tile(tx, ty) === T.PLAT) {
+      let l = tx, r = tx;
+      while (lv.tile(l - 1, ty) === T.PLAT) l--;
+      while (lv.tile(r + 1, ty) === T.PLAT) r++;
+      dir = this.cx - l * TILE < (r + 1) * TILE - this.cx ? -1 : 1;
+    }
+    this.cd = 0.35;
+    this.clearDir = dir;
+    this.clearT = 0.9;
+    return true;
+  }
+
   startAttack(kind) {
+    if (kind === 'ranged' && this.plankInWay()) return;
     this.state = 'attack';
     this.stateT = 0;
     this.fired = 0;

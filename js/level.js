@@ -5,6 +5,7 @@
 const T = { EMPTY: 0, WALL: 1, WALL2: 2, PLAT: 3, WATER: 4, LAVA: 5, SLIME: 6, SKY: 7, VOID: 8, DECO: 9 };
 const TILE_CHARS = { ' ': T.EMPTY, '#': T.WALL, '%': T.WALL2, '-': T.PLAT, '~': T.WATER, '!': T.LAVA, ';': T.SLIME, ',': T.SKY, '.': T.VOID, I: T.DECO };
 const skyLike = (t) => t === T.SKY || t === T.VOID;
+const PLANK = 6;   // толщина доски платформы в пикселях
 const MOVER_CHARS = { D: 'door', '[': 'silver', ']': 'gold', '=': 'gate', $: 'secret' };
 const LIQUID_NAMES = { [T.WATER]: 'water', [T.LAVA]: 'lava', [T.SLIME]: 'slime' };
 
@@ -577,8 +578,9 @@ class Level {
     return true;
   }
 
-  // Луч по тайлам (DDA) + динамические препятствия.
-  rayCast(x0, y0, x1, y1, ignoreSolids = false) {
+  // Луч по тайлам (DDA) + динамические препятствия. plats — доски платформ тоже
+  // останавливают луч (выстрелы и снаряды: пуля не проходит сквозь доску).
+  rayCast(x0, y0, x1, y1, ignoreSolids = false, plats = false) {
     const dx = x1 - x0, dy = y1 - y0;
     let tx = Math.floor(x0 / TILE), ty = Math.floor(y0 / TILE);
     const stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1;
@@ -587,14 +589,23 @@ class Level {
     let tMaxX = dx > 0 ? ((tx + 1) * TILE - x0) / dx : dx < 0 ? (tx * TILE - x0) / dx : Infinity;
     let tMaxY = dy > 0 ? ((ty + 1) * TILE - y0) / dy : dy < 0 ? (ty * TILE - y0) / dy : Infinity;
     let hitT = 1, nx = 0, ny = 0, hit = false;
+    // доска — полоса PLANK у верха клетки платформы, как она нарисована
+    const plank = (cx, cy) => {
+      if (!plats || this.tile(cx, cy) !== T.PLAT) return false;
+      const t = rayBox(x0, y0, dx, dy, cx * TILE, cy * TILE, TILE, PLANK);
+      if (t < 0 || t > 1) return false;
+      hitT = t; nx = 0; ny = dy > 0 ? -1 : 1; hit = true;
+      return true;
+    };
     if (this.tileSolid(tx, ty)) { hitT = 0; hit = true; }
-    else {
+    else if (!plank(tx, ty)) {
       for (let guard = 0; guard < 4000; guard++) {
         let t, cnx, cny;
         if (tMaxX < tMaxY) { t = tMaxX; tMaxX += tDeltaX; tx += stepX; cnx = -stepX; cny = 0; }
         else { t = tMaxY; tMaxY += tDeltaY; ty += stepY; cnx = 0; cny = -stepY; }
         if (t > 1) break;
         if (this.tileSolid(tx, ty)) { hitT = t; nx = cnx; ny = cny; hit = true; break; }
+        if (plank(tx, ty)) break;
       }
     }
     let solid = null;

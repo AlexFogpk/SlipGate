@@ -42,7 +42,7 @@ function hitscan(attacker, x0, y0, ang, pellets, dmg, spread, range = 900) {
     const a = ang + (Math.random() + Math.random() - 1) * spread;
     const cx = Math.cos(a), cy = Math.sin(a);
     const dx = cx * range, dy = cy * range;
-    const hit = lv.rayCast(x0, y0, x0 + dx, y0 + dy);
+    const hit = lv.rayCast(x0, y0, x0 + dx, y0 + dy, false, true);
     let best = hit.t, tgt = null;
     for (const t of targets) {
       const tt = rayBox(x0, y0, dx, dy, t.x, t.y, t.w, t.h);
@@ -74,7 +74,7 @@ function hitscan(attacker, x0, y0, ang, pellets, dmg, spread, range = 900) {
 function lightningRay(attacker, x0, y0, ang, range, dmg) {
   const lv = Game.level;
   const dx = Math.cos(ang) * range, dy = Math.sin(ang) * range;
-  const hit = lv.rayCast(x0, y0, x0 + dx, y0 + dy);
+  const hit = lv.rayCast(x0, y0, x0 + dx, y0 + dy, false, true);
   let best = hit.t, tgt = null;
   for (const t of Game.shootTargets(attacker)) {
     const tt = rayBox(x0, y0, dx, dy, t.x, t.y, t.w, t.h);
@@ -149,7 +149,7 @@ class Projectile {
     this.vy += this.grav * dt;
     this.spin += dt * 12;
     const nx = this.x + this.vx * dt, ny = this.y + this.vy * dt;
-    const hit = lv.rayCast(this.x, this.y, nx, ny);
+    const hit = lv.rayCast(this.x, this.y, nx, ny, false, true);
     let best = hit.hit ? hit.t : 1, tgt = null;
     const pad = this.kind === 'lavaball' ? 4 : 1;
     for (const t of Game.shootTargets(this.owner)) {
