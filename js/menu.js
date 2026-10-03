@@ -48,6 +48,7 @@ const Menu = {
         { label: 'Музыка: ' + Math.round(Sound.musicVolume * 100) + '%', adj: (d) => Sound.setMusicVolume(Math.round((Sound.musicVolume + d * 0.1) * 10) / 10) },
         { label: 'Яркость: ' + Math.round(Game.brightness * 100) + '%', adj: (d) => Game.setBrightness(Game.brightness + d * 0.1) },
         { label: 'Тряска экрана: ' + (Game.shakeOn ? 'вкл' : 'выкл'), act: () => { Game.shakeOn = !Game.shakeOn; Store.set('shake', Game.shakeOn); } },
+        { label: 'Передний план: ' + (Game.fgOn ? 'вкл' : 'выкл'), act: () => { Game.fgOn = !Game.fgOn; Store.set('fg', Game.fgOn); } },
         { label: 'Клавиши', act: () => this.open('keys') },
         { label: 'Во весь экран', act: () => Game.toggleFullscreen() },
         { label: 'Назад', act: () => this.back() },

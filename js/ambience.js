@@ -1,20 +1,19 @@
 'use strict';
 // Живая атмосфера уровней: столбы света из проёмов и окон с пылинками, дымка над
 // лавой, слизью и Пустотой, искры над лавой, капли со сталактитов, пар из решёток
-// и тёмные силуэты переднего плана, которые сдвигаются быстрее камеры.
+// (тёмные силуэты переднего плана — в foreground.js).
 // Всё это не влияет на игру: считается один раз при загрузке, рисуется поверх.
 
 const AMB = {
-  base: { shaft: [255, 238, 205], fg: ['girder', 'cable', 'chain'], rim: '#5a5448' },
-  castle: { shaft: [255, 222, 176], fg: ['chain', 'banner', 'cage'], rim: '#5a4430' },
-  crypt: { shaft: [205, 235, 212], fg: ['chain', 'roots', 'cage'], rim: '#4a4c3e' },
-  cave: { shaft: [225, 232, 205], fg: ['stal', 'roots', 'stal'], rim: '#5a4430' },
-  rune: { shaft: [195, 212, 255], fg: ['chain', 'cage', 'stal'], rim: '#3e4456' },
-  nether: { shaft: [255, 185, 242], fg: ['horn', 'stal', 'chain'], rim: '#3e2a46' },
-  void: { shaft: [195, 222, 255], fg: [], rim: '#2a3242' },
-  elder: { shaft: [255, 192, 140], fg: ['stal', 'chain', 'cage'], rim: '#4a2a20' },
+  base: { shaft: [255, 238, 205], fg: ['girder', 'cable', 'chain'], pillar: 'steel', rim: '#7a7262' },
+  castle: { shaft: [255, 222, 176], fg: ['chain', 'banner', 'cage'], pillar: 'stone', rim: '#8a6a44' },
+  crypt: { shaft: [205, 235, 212], fg: ['chain', 'roots', 'cage'], pillar: 'stone', rim: '#6a6e58' },
+  cave: { shaft: [225, 232, 205], fg: ['stal', 'roots', 'stal'], pillar: 'rock', rim: '#7a6444' },
+  rune: { shaft: [195, 212, 255], fg: ['chain', 'cage', 'stal'], pillar: 'stone', rim: '#5a6480' },
+  nether: { shaft: [255, 185, 242], fg: ['horn', 'stal', 'chain'], pillar: 'stone', rim: '#6a4278' },
+  void: { shaft: [195, 222, 255], fg: [], pillar: null, rim: '#3a4662' },
+  elder: { shaft: [255, 192, 140], fg: ['stal', 'chain', 'cage'], pillar: 'stone', rim: '#8a4a2c' },
 };
-const FG_PARALLAX = 1.35;
 
 function prepareAmbience(lv) {
   const A = AMB[lv.theme] || AMB.base;
@@ -62,25 +61,15 @@ function prepareAmbience(lv) {
     d.t = hash2(d.x, d.y, 3) * 3;
   }
   for (const v of amb.vents) v.t = hash2(v.x, v.y, 4) * 2;
-  // силуэты переднего плана вдоль всего уровня (в своём, более быстром слое)
-  amb.fg = [];
-  if (A.fg.length) {
-    let fx = 120 + hash2(lv.w, lv.h, 9) * 200;
-    let i = 0;
-    while (fx < lv.pxW * FG_PARALLAX + 200) {
-      const k = hash2(i, lv.w, 11);
-      amb.fg.push({ x: fx, type: A.fg[Math.floor(k * A.fg.length)], len: 26 + hash2(i, 3, 12) * 50, k });
-      fx += 200 + hash2(i, 5, 13) * 300;
-      i++;
-    }
-  }
-  amb.rim = A.rim;
+  // передний план: цепи, клетки, балки и колонны ближе к зрителю (см. foreground.js)
+  prepareForeground(lv, A);
 }
 
 // Частицы атмосферы рождаются только рядом с камерой.
 function updateAmbience(lv, dt, cam, vw, vh) {
   const amb = lv.amb;
   if (!amb || !amb.fogs) return;
+  updateForeground(lv, dt, cam, vw, vh);
   const inView = (x, y, m = 40) => x > cam.x - m && x < cam.x + vw + m && y > cam.y - m && y < cam.y + vh + m;
   for (const f of amb.fogs) {
     if (f.x1 < cam.x - 20 || f.x0 > cam.x + vw + 20 || f.y < cam.y - 20 || f.y > cam.y + vh + 40) continue;
@@ -183,88 +172,3 @@ function drawVignette(ctx, vw, vh) {
   ctx.drawImage(vignette, 0, 0);
 }
 
-// Передний план: тёмные силуэты цепей, балок, корней и сталактитов у верхнего края кадра.
-// Они ближе к зрителю, чем мир, поэтому едут быстрее камеры; под открытым небом их нет.
-function drawForeground(ctx, lv, cam, vw, vh, t) {
-  const amb = lv.amb;
-  if (!amb || !amb.fg || !amb.fg.length) return;
-  const rim = amb.rim;
-  const dark = '#07060a';
-  for (const p of amb.fg) {
-    const sx = Math.round(p.x - cam.x * FG_PARALLAX);
-    if (sx < -140 || sx > vw + 140) continue;
-    // в кадре сверху потолок или комната, а не небо
-    const wx = cam.x + clamp(sx, 0, vw - 1), wy = cam.y + 6;
-    const tile = lv.tile(Math.floor(wx / TILE), Math.floor(wy / TILE));
-    if (skyLike(tile) || lv.skyBack(Math.floor(wx / TILE), Math.floor(wy / TILE))) continue;
-    const sway = Math.sin(t * 0.8 + p.k * 10) * 1.5;
-    const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(a), Math.round(b), w, h); };
-    switch (p.type) {
-      case 'chain':
-        for (let y = -6; y < p.len; y += 5) {
-          const x = sx + sway * (y / p.len);
-          if (((y + 6) / 5) % 2 === 0) { f(x - 2, y, 5, 5, dark); f(x - 2, y, 1, 4, rim); } else f(x, y, 1, 5, dark);
-        }
-        f(sx + sway - 3, p.len, 7, 4, dark);
-        break;
-      case 'cage': {
-        for (let y = -6; y < p.len * 0.5; y += 5) f(sx + sway * 0.5, y, 2, 4, dark);
-        const y0 = p.len * 0.5;
-        f(sx + sway - 9, y0, 19, 3, dark);
-        for (let bx = -9; bx <= 9; bx += 3) f(sx + sway + bx, y0 + 3, 2, 24, dark);
-        f(sx + sway - 9, y0 + 26, 19, 3, dark);
-        f(sx + sway - 9, y0, 1, 28, rim);
-        break;
-      }
-      case 'girder':
-        f(sx - 100, 0, 220, 9, dark);
-        f(sx - 100, 9, 220, 1, rim);
-        for (let i = -96; i < 116; i += 10) f(sx + i, 4, 2, 2, rim);
-        for (let i = -100; i < 120; i += 20) for (let k = 0; k < 9; k++) f(sx + i + k, 9 + k, 2, 1, dark);
-        break;
-      case 'cable': {
-        for (let i = 0; i <= 160; i += 2) {
-          const tt = i / 160, y = Math.sin(tt * Math.PI) * p.len * 0.6 - 2;
-          f(sx - 80 + i, y + sway * Math.sin(tt * Math.PI), 2, 3, dark);
-        }
-        break;
-      }
-      case 'banner': {
-        f(sx - 9, -2, 18, 3, dark);
-        for (let y = 1; y < p.len; y++) {
-          const notch = y > p.len - 8 ? y - (p.len - 8) : 0;
-          const w = 16 - notch * 2;
-          f(sx - 8 + notch + sway * (y / p.len), y, Math.max(1, w), 1, dark);
-        }
-        break;
-      }
-      case 'roots':
-        for (let r = 0; r < 4; r++) {
-          let x = sx + (r - 1.5) * 7;
-          for (let y = -2; y < p.len * (0.6 + 0.4 * ((p.k * 7 + r) % 1)); y++) {
-            f(x, y, 2, 1, dark);
-            x += Math.sin(y * 0.3 + r * 2 + p.k * 9) * 0.6;
-          }
-        }
-        break;
-      case 'stal':
-        for (let s = 0; s < 3; s++) {
-          const cx = sx + (s - 1) * 14 + ((p.k * 37 + s * 11) % 6), hgt = p.len * (0.5 + 0.5 * ((p.k * 13 + s * 0.31) % 1)), w = 10 + s * 2;
-          for (let y = 0; y < hgt; y++) {
-            const half = (w / 2) * Math.pow(1 - y / hgt, 0.8);
-            f(cx - half, y - 2, Math.max(1, half * 2), 1, dark);
-          }
-          f(cx - w / 2, -2, 1, hgt * 0.4, rim);
-        }
-        break;
-      case 'horn': {
-        for (let y = 0; y < p.len; y++) {
-          const k = y / p.len, half = 7 * (1 - k) + 1;
-          f(sx + Math.pow(k, 2) * 22 * (p.k < 0.5 ? 1 : -1) - half, y - 2, half * 2, 1, dark);
-        }
-        break;
-      }
-      default: break;
-    }
-  }
-}

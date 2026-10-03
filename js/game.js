@@ -92,6 +92,7 @@ const Game = {
   cam: { x: 0, y: 0 },
   shakeAmt: 0, kickAmt: 0, kickX: 0, kickY: 0,
   shakeOn: Store.get('shake', true),
+  fgOn: Store.get('fg', true),
   brightness: clamp(Store.get('brightness', 1), 0.5, 1.6),
   damageFlash: 0, bonusFlash: 0,
   bossFx: 0, bossHintShown: false,
@@ -1002,6 +1003,7 @@ const Game = {
     const ky = Math.sin(this.time * 0.05) * 0.5 + 0.5;
     this.cam.y = ky * Math.max(0, lv.pxH - this.viewH);
     FX.update(dt);
+    updateForeground(lv, dt, this.cam, this.viewW, this.viewH);
     for (const m of this.monsters) m.anim += dt;
   },
 
@@ -1525,7 +1527,7 @@ const Game = {
     this.drawFlood(ctx, cam, t);
     this.drawStrikes(ctx, cam, t);
     FX.drawBright(ctx, cam, t);
-    drawForeground(ctx, lv, cam, vw, vh, t);
+    drawForeground(ctx, lv, cam, vw, vh);
 
     // экранные оттенки
     const p = this.player;

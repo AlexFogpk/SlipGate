@@ -54,6 +54,7 @@ const FX = {
 
   explosion(x, y, scale = 1) {
     this.blasts.push({ x, y, t: 0, max: 0.5, r: 26 * scale });
+    foregroundJolt(x, y, scale);
     this.light(x, y, 150 * scale, [1.0, 0.6, 0.25], 1.3, 0.45);
     const n = Math.round(30 * scale);
     for (let i = 0; i < n; i++) {
