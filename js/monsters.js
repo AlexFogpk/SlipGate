@@ -61,6 +61,11 @@ const TELLS = {
   eel: { t: 0.25, col: '#a0e0ff', r: 4, at: 'head' },
 };
 
+// Кольцо теней (как в Quake): монстры не видят героя вовсе — ни вблизи, ни уже в погоне.
+// Шум выстрела приводит их на место шума, а не к герою. Монстр, которого ранили, чует,
+// откуда стреляли, и недолго бьёт в ту точку с разбросом, но за героем не следит.
+const unseen = (t) => !!(t && t.isPlayer && t.ring > 0);
+
 class Monster {
   constructor(type, cx, bottom) {
     const d = MONSTER_DEFS[type];
@@ -114,7 +119,7 @@ class Monster {
     this.dodgeCd = 0; this.strafe = 0; this.strafeT = rand(0.5, 1.5);
     this.fleeT = 0; this.fled = false; this.gapJump = false;
     // память: где героя видели или слышали в последний раз, сколько ищем, насторожен ли
-    this.lastKnown = null; this.memT = 0; this.searchT = 0; this.wary = 0;
+    this.lastKnown = null; this.memT = 0; this.searchT = 0; this.wary = 0; this.senseT = 0;
   }
 
   get cx() { return this.x + this.w / 2; }
@@ -131,6 +136,7 @@ class Monster {
   }
 
   canSeeEntity(t) {
+    if (unseen(t)) return false;
     const e = this.eye();
     const lv = Game.level;
     return lv.los(e.x, e.y, t.cx, t.cy) || lv.los(e.x, e.y, t.cx, t.y + 3);
@@ -164,10 +170,9 @@ class Monster {
 
   lookForPlayer() {
     const p = Game.player;
-    if (!p || !p.alive) return;
+    if (!p || !p.alive || unseen(p)) return;
     const d = this.distTo(p);
-    const range = p.ring > 0 ? 70 : 380;
-    if (d > range) return;
+    if (d > 380) return;
     // угорь чует всплеск: замечает героя в воде с любой стороны
     const splash = this.def.swim && p.waterLevel > 0 && d < 300;
     // насторожённый после поисков монстр смотрит в обе стороны
@@ -203,6 +208,7 @@ class Monster {
       if (this.canSee) { this.lastKnown = { x: this.target.cx, y: this.target.y + this.target.h }; this.memT = 0; this.searchT = 0; }
     }
     this.wary = Math.max(0, this.wary - dt);
+    this.senseT = Math.max(0, this.senseT - dt);
     this.dodgeCd -= dt;
     if (this.state === 'chase') this.checkDodge();
 
@@ -294,7 +300,7 @@ class Monster {
 
   faceTarget() {
     if (!this.target) return;
-    const t = this.target;
+    const t = this.aimPoint(this.target);
     this.facing = t.cx >= this.cx ? 1 : -1;
     const a = Math.atan2(t.cy - (this.y + this.h * 0.4), t.cx - this.cx);
     this.aimLocal = this.facing > 0 ? a : Math.PI - a;
@@ -311,7 +317,7 @@ class Monster {
       // героя не видно. Недавно видели — идём по его следу; иначе — туда, где
       // видели или слышали в последний раз, и там осматриваемся. Не нашли — успокаиваемся.
       this.memT += dt;
-      if (this.lastSeenT < 10) {
+      if (this.lastSeenT < 10 && !unseen(t)) {
         this.navT -= dt;
         if (this.navT <= 0) { this.navT = 0.35; this.goal = this.trailGoal(); }
       } else this.goal = null;
@@ -609,9 +615,12 @@ class Monster {
 
   tryAttack() {
     const t = this.target;
+    // невидимого героя бьёт только тот, кого он только что ранил, — по месту выстрела
+    const hidden = unseen(t);
+    if (hidden && this.senseT <= 0) return;
     const d = this.distTo(t);
     const gap = this.gapTo(t);
-    const see = this.canSee;
+    const see = this.canSee || hidden;
     if (see && gap >= 14 && this.allyInLine()) {
       // свой на линии огня: отходим в сторону и пробуем снова
       this.cd = 0.3;
@@ -740,14 +749,23 @@ class Monster {
   // Угол выстрела; speed — скорость снаряда для стрельбы на упреждение.
   aimAt(t, spreadByDist = 0, speed = 0, from = null) {
     const s = from || this.shootPoint();
-    const p = speed ? this.predict(t, s, speed) : { x: t.cx, y: t.cy };
+    const hidden = unseen(t);
+    const p = hidden ? (({ cx, cy }) => ({ x: cx, y: cy }))(this.aimPoint(t)) : speed ? this.predict(t, s, speed) : { x: t.cx, y: t.cy };
     const d = dist(s.x, s.y, p.x, p.y);
-    return Math.atan2(p.y - s.y, p.x - s.x) + rand(-1, 1) * spreadByDist * Math.min(1, d / 300);
+    // по невидимому — вслепую: туда, откуда стреляли, и с разбросом
+    return Math.atan2(p.y - s.y, p.x - s.x) + rand(-1, 1) * (spreadByDist * Math.min(1, d / 300) + (hidden ? 0.09 : 0));
+  }
+
+  // Куда целиться: в героя, а в невидимого — в последнее место, где его выдал выстрел.
+  aimPoint(t) {
+    if (!unseen(t) || !this.lastKnown) return t;
+    return { cx: this.lastKnown.x, cy: this.lastKnown.y - (t.h || 24) * 0.5 };
   }
 
   // Где будет цель, когда долетит снаряд. Точность упреждения растёт со сложностью;
   // если упреждённая точка за стеной, целимся прямо.
   predict(t, s, speed) {
+    if (unseen(t)) { const a = this.aimPoint(t); return { x: a.cx, y: a.cy }; }
     const k = Game.skillLead();
     if (!k) return { x: t.cx, y: t.cy };
     let x = t.cx, y = t.cy;
@@ -837,9 +855,10 @@ class Monster {
   retarget(attacker) {
     if (!attacker || attacker === this || !attacker.alive) return;
     if (attacker.isPlayer) {
-      // урон выдаёт, откуда стреляли
+      // урон выдаёт, откуда стреляли; невидимого монстр чует лишь мгновение
       this.lastKnown = { x: attacker.cx, y: attacker.y + attacker.h };
       this.memT = 0; this.searchT = 0;
+      if (unseen(attacker)) this.senseT = 1.2;
       if (this.target !== attacker) { this.target = attacker; if (this.state === 'idle') this.state = 'chase'; }
     } else if (attacker.isMonster && attacker.type !== this.type && !attacker.def.boss) {
       // междоусобица, как в Quake

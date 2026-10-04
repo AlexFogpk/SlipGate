@@ -138,7 +138,8 @@ class Projectile {
     if (this.kind === 'voreball' || this.kind === 'lavaball') {
       if (Math.random() < 0.5) FX.add({ kind: 'spark', x: this.x, y: this.y, vx: rand(-20, 20), vy: rand(-20, 20), life: 0.3, max: 0.3, size: 1, col: this.kind === 'voreball' ? '#d080ff' : '#ff9030', grav: 0, bright: true });
     }
-    if (this.homing && this.target && this.target.alive) {
+    // самонаведение не находит невидимого героя
+    if (this.homing && this.target && this.target.alive && !(this.target.isPlayer && this.target.ring > 0)) {
       const want = Math.atan2(this.target.cy - this.y, this.target.cx - this.x);
       const cur = Math.atan2(this.vy, this.vx);
       const na = cur + clamp(angleDiff(cur, want), -this.homing * dt, this.homing * dt);
