@@ -144,8 +144,54 @@ def level(meta, m):
         assert m.g[ty][tx] in ' ,', (meta['id'], tx, ty, m.g[ty][tx])
         m.g[fy][fx] = back
         m.g[ty][tx] = ch
+    health_in_secrets(m)
     meta['map'] = m.rows()
     LEVELS.append(meta)
+
+
+def health_in_secrets(m):
+    """В каждом тайнике без лечения — аптечка: найти тайник должно быть за что.
+    Тайник — клетки за стеной '$', до которых не дойти от старта в обход неё
+    (так же считает игра, когда прячет комнату). Комнату со слипгейтом не трогаем."""
+    W, H = m.w, m.h
+    g = m.g
+    wall = lambda x, y: g[y][x] in '#%'
+    main = set()
+    st = [(x, y) for y in range(H) for x in range(W) if g[y][x] in 'P<']
+    main.update(st)
+    while st:
+        x, y = st.pop()
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if 0 <= nx < W and 0 <= ny < H and (nx, ny) not in main and not wall(nx, ny) and g[ny][nx] != '$':
+                main.add((nx, ny)); st.append((nx, ny))
+    seen = set()
+    for y0 in range(H):
+        for x0 in range(W):
+            if g[y0][x0] != '$' or (x0, y0) in seen:
+                continue
+            # стена тайника целиком и комната за ней
+            walls, st = {(x0, y0)}, [(x0, y0)]
+            while st:
+                x, y = st.pop()
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if g[ny][nx] == '$' and (nx, ny) not in walls:
+                        walls.add((nx, ny)); st.append((nx, ny))
+            seen |= walls
+            room, st = set(), list(walls)
+            while st:
+                x, y = st.pop()
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if 0 <= nx < W and 0 <= ny < H and (nx, ny) not in room and (nx, ny) not in main and not wall(nx, ny) and g[ny][nx] != '$':
+                        room.add((nx, ny)); st.append((nx, ny))
+            # тайник, за которым нет скрытой комнаты, виден с уровня — так нельзя
+            assert room, ('тайник виден: комната за ним соединена с уровнем', (x0, y0))
+            if any(g[y][x] in '+HMZ' for x, y in room):
+                continue
+            spots = sorted((abs(x - x0) + abs(y - y0), x, y) for x, y in room
+                           if g[y][x] in ' ,~' and g[y + 1][x] in '#%-~' and g[y][x] not in 'PE')
+            if spots:
+                _, x, y = spots[-1]   # подальше от входа — в глубине тайника
+                g[y][x] = 'H'
 
 # ---------------------------------------------------------------- START
 def start():
@@ -209,6 +255,9 @@ def e1m1():
     m.fill(7, 29, 7, 30, '~')
     m.put(3, 30, 'A'); m.put(5, 30, '+')
     m.plat(8, 27, 20)
+    # мостки-ступени у обоих берегов: из воды на них, с них — на берег или мост
+    m.plat(8, 10, 23)
+    m.plat(25, 27, 23)
     for x in (13, 20):
         m.deco(x, 21, x, 24, over=',')
     m.ledge(31, 35, 14)
@@ -330,7 +379,7 @@ def e1m2():
     m.fill(81, 13, 100, 16, ' ')
     m.put(90, 13, 'L')
     m.put(94, 16, 'g')
-    floor_secret(m, 88, 17, 'AK')
+    floor_secret(m, 90, 17, 'AK')
     # дверь в подземелье и шахта вниз
     m.fill(81, 22, 81, 24, 'D')
     m.fill(82, 22, 86, 24, ' ')

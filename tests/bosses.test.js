@@ -1,6 +1,7 @@
 'use strict';
 // Боссы E1–E3 по образцу финала E4M6: появление под табличку, фазы и гибель в замедлении.
-// Хтон: электроды заряжаются пультами по разные стороны озера, после ран поднимается лава.
+// Хтон: электроды заряжаются пультами по разные стороны озера, после ран поднимается лава;
+// гибель — сцена: камера уходит от пульта к озеру, табличка «повержен», подсказка после неё.
 // Шуб-Ниггурат: телепорт в её чрево пробуждает кровь её отродий, со второй фазы — щупальца.
 // Вестник Бездны: щит держат кристаллы, без щита он бросается рывками, на 40 % — гроза.
 const { openGame, check, noPageErrors } = require('./lib');
@@ -58,7 +59,19 @@ module.exports = {
       }
       out.cDying = ch.state;
       out.cSlow = Game.slowT > 0;
-      step(60 * 8);
+      // сцена гибели: камера уходит от героя у пульта к Хтону, подсказка — после сцены
+      out.cDeathCine = !!(Game.cine && Game.cine.death && Game.cine.boss === ch);
+      let camNear = false, hintDuring = false, hintAfter = false, cardShown = false;
+      for (let i = 0; i < 60 * 8; i++) {
+        Game.update(1 / 60);
+        const c = Game.cine;
+        if (c && c.death) {
+          if (c.t > 1.5 && c.t < 3 && Math.abs(Game.cam.x + Game.viewW / 2 - c.focus.x) < 90) camNear = true;
+          if (HUD.centerT > 0) hintDuring = true;
+          if (c.t > BOSS_CARDS.chthon.deathAt + 0.6) { Game.render(); cardShown = true; }
+        } else if (out.cDeathCine && HUD.centerT > 0) hintAfter = true;
+      }
+      out.cDeath = { camNear, hintDuring, hintAfter, cardShown, heroFar: Math.abs(p.cx - ch.cx) > 200 };
       out.cDead = !ch.alive;
       out.cGates = lv.movers.filter((m) => m.kind === 'gate' && m.target === 1).length;
       out.cHint = Game.exitHint === true;
@@ -140,6 +153,9 @@ module.exports = {
     check(r.cFloodOn && r.cFlood.maxH > 15 && r.cFlood.burned, 'лава не поднялась или не жжёт: ' + JSON.stringify(r.cFlood));
     check(r.cLedgeSafe, 'лава достаёт героя на уступе');
     check(r.cDying === 'dying' && r.cSlow, 'Хтон не гибнет в замедлении: ' + r.cDying);
+    const cd = r.cDeath;
+    check(r.cDeathCine && cd.heroFar && cd.camNear, 'гибель Хтона не показана: ' + JSON.stringify({ cine: r.cDeathCine, ...cd }));
+    check(cd.cardShown && !cd.hintDuring && cd.hintAfter, 'табличка и подсказка в сцене гибели Хтона: ' + JSON.stringify(cd));
     check(r.cDead && r.cGates > 0 && r.cHint, `после Хтона нет пути к руне: ворот ${r.cGates}, стрелка ${r.cHint}`);
     // Шуб-Ниггурат
     check(r.sSealed, 'телепорт к Шуб-Ниггурат не запечатан');

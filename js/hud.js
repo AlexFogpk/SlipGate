@@ -199,7 +199,8 @@ const HUD = {
       const owned = p.weapons[n], cur = p.weapon === n;
       const empty = owned && !p.hasAmmoFor(n);
       this.inset(ctx, sx, rowY, sw, rowH, u, cur ? 'rgba(150,100,30,0.55)' : null);
-      if (owned) this.icon(ctx, gunImg(n, t), sx + sw / 2 + u, rowY + rowH / 2 + 0.5 * u, sw - 4 * u, rowH - 3 * u, u, empty ? 0.35 : cur ? 1 : 0.8);
+      // значок в ячейке неподвижен: блок стволов крутится только в руках при стрельбе
+      if (owned) this.icon(ctx, gunImg(n), sx + sw / 2 + u, rowY + rowH / 2 + 0.5 * u, sw - 4 * u, rowH - 3 * u, u, empty ? 0.35 : cur ? 1 : 0.8);
       if (cur) {
         ctx.fillStyle = '#f0c870';
         ctx.fillRect(sx, rowY, sw, u); ctx.fillRect(sx, rowY + rowH - u, sw, u);

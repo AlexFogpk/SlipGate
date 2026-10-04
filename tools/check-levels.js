@@ -101,12 +101,14 @@ function analyze(def, show) {
   const stand = (x, y) => fits(x, y) && !deadly(x, y) && (support(x, y + 1) || water(x, y));
 
   const jumpK = 1 / (def.gravity || 1), jumpUp = Math.floor(3 * jumpK);
-  let reach;
+  let reach, edges, cur = -1;
   const bfs = () => {
     reach = new Set();
+    edges = new Map();   // переходы между клетками — для поиска ловушек
     const q = [];
     const push = (x, y) => {
       const k = y * w + x;
+      if (cur >= 0 && cur !== k) { let e = edges.get(cur); if (!e) edges.set(cur, e = []); e.push(k); }
       if (reach.has(k)) return;
       reach.add(k);
       q.push([x, y]);
@@ -119,9 +121,11 @@ function analyze(def, show) {
       }
       return null;
     };
+    cur = -1;
     push(starts[0].x, starts[0].y);
     while (q.length) {
       const [x, y] = q.shift();
+      cur = y * w + x;
       const inWater = water(x, y);
       // телепорт
       const si = srcs.findIndex((s) => s.x === x && (s.y === y || s.y === y + 1 || s.y === y - 1));
@@ -254,6 +258,37 @@ function analyze(def, show) {
       }
       for (const [sx, sy] of wv.drop || []) if (!reach.has(sy * w + sx)) warnings.push(`волна ${i + 1}: припасы в (${sx},${sy}) недостижимы`);
     });
+  }
+  // ловушки: место, куда можно попасть, но откуда уже не дойти ни до выхода, ни до
+  // секретного выхода (яма за выходом, бассейн без ступеней, трамплин в одну сторону)
+  const back = new Map();
+  for (const [a, list] of edges) for (const b of list) { let e = back.get(b); if (!e) back.set(b, e = []); e.push(a); }
+  const free = new Set(), fq = [];
+  for (const s of [...exits, ...zs]) {
+    for (const k of [s.y * w + s.x, (s.y + 1) * w + s.x, (s.y - 1) * w + s.x, s.y * w + s.x + 1, s.y * w + s.x - 1]) {
+      if (reach.has(k) && !free.has(k)) { free.add(k); fq.push(k); }
+    }
+  }
+  while (fq.length) {
+    const k = fq.pop();
+    for (const a of back.get(k) || []) if (!free.has(a)) { free.add(a); fq.push(a); }
+  }
+  const stuck = [...reach].filter((k) => !free.has(k));
+  if (reachedExits.length && stuck.length) {
+    const left = new Set(stuck), groups = [];
+    for (const k0 of stuck) {
+      if (!left.has(k0)) continue;
+      left.delete(k0);
+      const st = [k0], gr = [];
+      while (st.length) {
+        const k = st.pop(); gr.push(k);
+        const x = k % w, y = (k - x) / w;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const n = (y + dy) * w + x + dx; if (left.has(n)) { left.delete(n); st.push(n); } }
+      }
+      const xs = gr.map((k) => k % w), ys = gr.map((k) => Math.floor(k / w));
+      groups.push(`(${Math.min(...xs)},${Math.min(...ys)})-(${Math.max(...xs)},${Math.max(...ys)})`);
+    }
+    errors.push('ловушки — попав сюда, не выбраться к выходу: ' + groups.join(' '));
   }
   if (def.skillPortals && reachedExits.length < exits.length) errors.push(`достижимо порталов сложности: ${reachedExits.length}/${exits.length}`);
   const items = spawns.filter((s) => '()+HMAYRUNKCQXVW3456789'.includes(s.c));

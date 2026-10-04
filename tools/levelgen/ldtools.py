@@ -10,7 +10,12 @@ def trap(x0, y0, x1, y1, spawn, msg=None):
 
 
 def floor_secret(m, x, floor_row, items):
-    """Люк в полу (2 клетки) и погреб под ним с платформой, чтобы выбраться."""
+    """Люк в полу (2 клетки) и погреб под ним с платформой, чтобы выбраться.
+    Погреб вырубается в сплошном камне: если рядом коридор, комната была бы видна
+    и в неё можно было бы войти, минуя люк."""
+    for yy in range(floor_row + 1, floor_row + 6):
+        for xx in range(x - 3, x + 5):
+            assert m.g[yy][xx] in '#%', ('floor_secret: погреб не в камне', x, floor_row, xx, yy, m.g[yy][xx])
     m.fill(x, floor_row, x + 1, floor_row, '$')
     m.fill(x - 2, floor_row + 1, x + 3, floor_row + 4, ' ')
     m.plat(x, x + 1, floor_row + 3)

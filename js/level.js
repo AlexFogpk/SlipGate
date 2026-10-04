@@ -167,6 +167,8 @@ class Crusher {
 
 const JUMP_PAD_VEL = 670;
 
+const SCORCH_LIFE = 30;   // секунд до полного исчезновения копоти
+
 class Level {
   constructor(def) {
     this.def = def;
@@ -453,6 +455,23 @@ class Level {
     ctx.drawImage(this.mapCanvas, x, y, this.w * scale, this.h * scale);
   }
 
+  // Светильнику не к чему крепиться: вокруг ни стены, ни колонны.
+  decorFree(d) {
+    const tx = Math.floor(d.x / TILE), ty = Math.floor((d.y - 1) / TILE);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const t = this.tile(tx + dx, ty + dy);
+      if (isSolidType(t) || t === T.DECO) return false;
+    }
+    return true;
+  }
+
+  // Индекс тайника, за которым точка (или -1), — неважно, открыт он или нет.
+  secretIndexAt(px, py) {
+    const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
+    if (!this.hidden || tx < 0 || ty < 0 || tx >= this.w || ty >= this.h) return -1;
+    return this.hidden[ty * this.w + tx];
+  }
+
   isHiddenAt(px, py) {
     const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
     if (tx < 0 || ty < 0 || tx >= this.w || ty >= this.h) return false;
@@ -460,7 +479,40 @@ class Level {
     return i >= 0 && this.movers[i].open < 0.3;
   }
 
+  // Маскировка тайников: та же стена с теми же крупными пятнами, что и вокруг, —
+  // чтобы закрытая комната не читалась плоским прямоугольником.
+  bakeCovers(tex, blot, bw, bh) {
+    this.covers = [];
+    const by = new Map();
+    for (const c of this.hiddenCells) {
+      let b = by.get(c.i);
+      if (!b) by.set(c.i, b = { i: c.i, x0: c.x, y0: c.y, x1: c.x, y1: c.y, cells: [] });
+      b.x0 = Math.min(b.x0, c.x); b.y0 = Math.min(b.y0, c.y); b.x1 = Math.max(b.x1, c.x); b.y1 = Math.max(b.y1, c.y);
+      b.cells.push(c);
+    }
+    for (const b of by.values()) {
+      const cv = makeCanvas((b.x1 - b.x0 + 1) * TILE, (b.y1 - b.y0 + 1) * TILE);
+      const g = cv.getContext('2d');
+      for (const c of b.cells) g.drawImage(tex.wall, (c.x % 4) * TILE, (c.y % 4) * TILE, TILE, TILE, (c.x - b.x0) * TILE, (c.y - b.y0) * TILE, TILE, TILE);
+      g.save();
+      g.globalCompositeOperation = 'source-atop';
+      g.imageSmoothingEnabled = true;
+      g.drawImage(blot, -b.x0 * TILE, -b.y0 * TILE, bw * TILE * 3, bh * TILE * 3);
+      g.restore();
+      this.covers.push({ i: b.i, x: b.x0 * TILE, y: b.y0 * TILE, canvas: cv });
+    }
+  }
+
   drawHidden(ctx, cam, vw, vh) {
+    if (this.covers) {
+      for (const c of this.covers) {
+        if (this.movers[c.i].open >= 0.3) continue;
+        const x = c.x - cam.x, y = c.y - cam.y;
+        if (x > vw || y > vh || x + c.canvas.width < 0 || y + c.canvas.height < 0) continue;
+        ctx.drawImage(c.canvas, Math.round(x), Math.round(y));
+      }
+      return;
+    }
     for (const c of this.hiddenCells) {
       if (this.movers[c.i].open >= 0.3) continue;
       const x = c.x * TILE - cam.x, y = c.y * TILE - cam.y;
@@ -632,6 +684,7 @@ class Level {
   // --- логика дверей, кнопок и тайников ---
   update(dt) {
     const p = Game.player;
+    this.updateScorches(dt);
     this.updateLifts(dt);
     for (const c of this.crushers) c.update(dt);
     for (const m of this.movers) {
@@ -743,6 +796,7 @@ class Level {
     if (m.found) return;
     m.found = true;
     m.target = 1;
+    this.lightSecret(this.movers.indexOf(m));
     for (let y = m.y / TILE; y < (m.y + m.h) / TILE; y++) for (let x = m.x / TILE; x < (m.x + m.w) / TILE; x++) this.explored[y * this.w + x] = 0;
     Game.secrets++;
     HUD.center('Вы нашли секретное место!', 2);
@@ -811,8 +865,12 @@ class Level {
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(blot, 0, 0, bw * TILE * 3, bh * TILE * 3);
     ctx.restore();
+    this.bakeCovers(tex, blot, bw, bh);
 
+    // клетки тайника для кромок — как камень: иначе кромки соседних стен обведут комнату
+    const hid = (x, y) => !!this.hidden && x >= 0 && y >= 0 && x < this.w && y < this.h && this.hidden[y * this.w + x] >= 0;
     const solidOrOut = (x, y) => this.tileSolid(x, y);
+    const edgeSolid = (x, y) => this.tileSolid(x, y) || hid(x, y);
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
         const t = this.tiles[y * this.w + x];
@@ -820,10 +878,10 @@ class Level {
         if (isSolidType(t)) {
           // кромка пола сверху (бортик, карниз, дёрн) и тёмный край потолка снизу
           const sx = (x % 4) * TILE;
-          if (!solidOrOut(x, y - 1)) ctx.drawImage(tex.trim, sx, 0, TILE, 6, px, py, TILE, 6);
-          if (!solidOrOut(x, y + 1)) ctx.drawImage(tex.ceil, sx, 0, TILE, 4, px, py + TILE - 4, TILE, 4);
-          if (!solidOrOut(x - 1, y)) { ctx.fillStyle = 'rgba(255,240,210,0.1)'; ctx.fillRect(px, py, 1, TILE); }
-          if (!solidOrOut(x + 1, y)) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(px + TILE - 1, py, 1, TILE); }
+          if (!edgeSolid(x, y - 1)) ctx.drawImage(tex.trim, sx, 0, TILE, 6, px, py, TILE, 6);
+          if (!edgeSolid(x, y + 1)) ctx.drawImage(tex.ceil, sx, 0, TILE, 4, px, py + TILE - 4, TILE, 4);
+          if (!edgeSolid(x - 1, y)) { ctx.fillStyle = 'rgba(255,240,210,0.1)'; ctx.fillRect(px, py, 1, TILE); }
+          if (!edgeSolid(x + 1, y)) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(px + TILE - 1, py, 1, TILE); }
         } else if (!skyLike(t) && !this.skyBack(x, y)) {
           // «ambient occlusion» на задней стене рядом с твёрдыми тайлами
           const sh = (a, fn) => { for (let i = 0; i < 3; i++) { ctx.fillStyle = `rgba(0,0,0,${a * (3 - i) / 3})`; fn(i); } };
@@ -883,6 +941,8 @@ class Level {
         ctx.fillStyle = '#1a1612'; ctx.fillRect(d.x - 1, d.y - 16, 2, 8);
         continue;
       }
+      // огню без опоры (в открытом небе Измерения Древних) держатель не нужен — он парит
+      if ((d.kind === 'torch' || d.kind === 'lamp') && this.decorFree(d)) { d.free = true; continue; }
       if (d.kind === 'torch') drawTorchHolder(ctx, d.x, d.y);
       else if (d.kind === 'lamp') drawLampHousing(ctx, d.x, d.y);
     }
@@ -903,9 +963,27 @@ class Level {
     if (right) br(px + TILE - 4, -1);
   }
 
+  // Источники света, запекаемые в карту освещения. Свет из закрытого тайника не
+  // запекается: иначе он подсвечивает маскировку и выдаёт комнату. Его добавляем,
+  // когда тайник открывают (см. openSecret).
   staticLights() {
+    const all = this.allStaticLights();
+    this.secretLights = [];
+    return all.filter((l) => {
+      const i = this.secretIndexAt(l.x, l.y + 6);
+      if (i < 0) return true;
+      this.secretLights.push(Object.assign(l, { secret: i }));
+      return false;
+    });
+  }
+
+  allStaticLights() {
     const L = [];
     for (const pad of this.jumpPads) L.push({ x: pad.x + 7, y: pad.y - 6, r: 50, c: [0.3, 1, 0.8], i: 0.5 });
+    // свет из больших окон: лунный, витражный или адский
+    const WIN = { night: [[0.55, 0.65, 1], 0.35], stained: [[0.5, 0.55, 1], 0.5], amber: [[1, 0.72, 0.38], 0.5], hell: [[1, 0.38, 0.15], 0.6] };
+    for (const w of this.archWindows || []) { const [c, i] = WIN[w.kind]; L.push({ x: w.x + 24, y: w.y + 50, r: 96, c, i }); }
+    for (const f of this.fans || []) L.push({ x: f.x, y: f.y, r: 40, c: [1, 0.75, 0.45], i: 0.3 });
     for (const d of this.decor) {
       if (d.kind === 'torch') L.push({ x: d.x, y: d.y - 4, r: 140, c: [1.0, 0.68, 0.38], i: 1.1 });
       else if (d.kind === 'lamp') L.push({ x: d.x, y: d.y + 3, r: 175, c: [1.0, 0.95, 0.82], i: 1.15 });
@@ -953,40 +1031,68 @@ class Level {
     for (let i = 0; i < cw * ch; i++) {
       L[i * 3] = amb[0] * ambScale; L[i * 3 + 1] = amb[1] * ambScale; L[i * 3 + 2] = amb[2] * ambScale;
     }
+    this.lightBuf = { L, C, cw, ch };
+    for (const l of this.staticLights()) this.addBakedLight(l);
+    const lc = makeCanvas(cw, ch);
+    this.lightCanvas = lc;
+    this.encodeLight(0, 0, cw - 1, ch - 1);
+  }
+
+  // Добавить источник в запечённый свет (с тенями от стен); вернуть задетый прямоугольник.
+  addBakedLight(l) {
+    const { L, C, cw, ch } = this.lightBuf;
     const cell = TILE / C;
-    for (const l of this.staticLights()) {
-      const cx0 = Math.max(0, Math.floor((l.x - l.r) / cell)), cx1 = Math.min(cw - 1, Math.floor((l.x + l.r) / cell));
-      const cy0 = Math.max(0, Math.floor((l.y - l.r) / cell)), cy1 = Math.min(ch - 1, Math.floor((l.y + l.r) / cell));
-      for (let cy = cy0; cy <= cy1; cy++) {
-        for (let cx = cx0; cx <= cx1; cx++) {
-          const px = cx * cell + cell / 2, py = cy * cell + cell / 2;
-          const d = dist(l.x, l.y, px, py);
-          if (d >= l.r) continue;
-          if (!this.lightVisible(l.x, l.y, px, py)) continue;
-          const f = 1 - d / l.r;
-          const k = f * Math.sqrt(f) * l.i;
-          const i = (cy * cw + cx) * 3;
-          L[i] += l.c[0] * k; L[i + 1] += l.c[1] * k; L[i + 2] += l.c[2] * k;
-        }
+    const cx0 = Math.max(0, Math.floor((l.x - l.r) / cell)), cx1 = Math.min(cw - 1, Math.floor((l.x + l.r) / cell));
+    const cy0 = Math.max(0, Math.floor((l.y - l.r) / cell)), cy1 = Math.min(ch - 1, Math.floor((l.y + l.r) / cell));
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const px = cx * cell + cell / 2, py = cy * cell + cell / 2;
+        const d = dist(l.x, l.y, px, py);
+        if (d >= l.r) continue;
+        if (!this.lightVisible(l.x, l.y, px, py)) continue;
+        const f = 1 - d / l.r;
+        const k = f * Math.sqrt(f) * l.i;
+        const i = (cy * cw + cx) * 3;
+        L[i] += l.c[0] * k; L[i + 1] += l.c[1] * k; L[i + 2] += l.c[2] * k;
       }
     }
-    const lc = makeCanvas(cw, ch);
-    const lctx = lc.getContext('2d');
-    const img = lctx.createImageData(cw, ch);
-    for (let cy = 0; cy < ch; cy++) {
-      for (let cx = 0; cx < cw; cx++) {
-        const i = cy * cw + cx;
+    return [cx0, cy0, cx1, cy1];
+  }
+
+  // Перенести часть буфера света в холст.
+  encodeLight(cx0, cy0, cx1, cy1) {
+    const { L, C, cw } = this.lightBuf;
+    const lctx = this.lightCanvas.getContext('2d');
+    const w = cx1 - cx0 + 1, h = cy1 - cy0 + 1;
+    const img = lctx.createImageData(w, h);
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const i = cy * cw + cx, o = ((cy - cy0) * w + (cx - cx0)) * 4;
         const tx = Math.floor(cx / C), ty = Math.floor(cy / C);
         const sky = skyLike(this.tiles[ty * this.w + tx]) || this.skyBack(tx, ty);
         for (let k = 0; k < 3; k++) {
           const v = sky ? 1 : Math.pow(clamp(L[i * 3 + k], 0, 1), 0.85);
-          img.data[i * 4 + k] = v * 255;
+          img.data[o + k] = v * 255;
         }
-        img.data[i * 4 + 3] = 255;
+        img.data[o + 3] = 255;
       }
     }
-    lctx.putImageData(img, 0, 0);
-    this.lightCanvas = lc;
+    lctx.putImageData(img, cx0, cy0);
+  }
+
+  // Тайник открыт: зажечь его свет в запечённой карте.
+  lightSecret(idx) {
+    if (!this.lightBuf || !this.secretLights) return;
+    const list = this.secretLights.filter((l) => l.secret === idx && !l.done);
+    if (!list.length) return;
+    let box = null;
+    for (const l of list) {
+      l.done = true;
+      const b = this.addBakedLight(l);
+      box = box ? [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])] : b;
+    }
+    this.encodeLight(...box);
+    if (this.amb) this.amb.fgLit = false;
   }
 
   // Пятна крови и копоть рисуются прямо в запечённый слой.
@@ -999,17 +1105,51 @@ class Level {
     ctx.globalCompositeOperation = 'source-over';
   }
 
+  // Копоть от взрыва — отдельное пятно поверх стены, а не краска в запечённом слое:
+  // взрыв в том же месте обновляет пятно (а не темнит его до чёрного круга),
+  // и через полминуты пятно тает.
   paintScorch(x, y, r) {
-    if (!this.canvas) return;
-    const ctx = this.canvas.getContext('2d');
-    ctx.globalCompositeOperation = 'source-atop';
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(0,0,0,0.55)');
-    g.addColorStop(0.6, 'rgba(10,5,0,0.25)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
-    ctx.globalCompositeOperation = 'source-over';
+    if (!this.scorches) this.scorches = [];
+    const near = this.scorches.find((s) => dist(s.x, s.y, x, y) < Math.max(s.r, r) * 0.6);
+    if (near) {
+      near.x = (near.x + x) / 2; near.y = (near.y + y) / 2;
+      near.r = Math.min(Math.max(near.r, r) * 1.05, r * 1.6);
+      near.t = 0;
+      return;
+    }
+    this.scorches.push({ x, y, r, t: 0 });
+    if (this.scorches.length > 48) this.scorches.shift();
+  }
+
+  updateScorches(dt) {
+    if (!this.scorches || !this.scorches.length) return;
+    for (const s of this.scorches) s.t += dt;
+    this.scorches = this.scorches.filter((s) => s.t < SCORCH_LIFE);
+  }
+
+  // Пятна копоти: только на стенах и задней стене, не на небе.
+  drawScorches(ctx, cam, vw, vh) {
+    if (!this.scorches) return;
+    for (const s of this.scorches) {
+      const x = s.x - cam.x, y = s.y - cam.y;
+      if (x < -s.r || y < -s.r || x > vw + s.r || y > vh + s.r) continue;
+      const fade = clamp((SCORCH_LIFE - s.t) / 8, 0, 1);
+      ctx.save();
+      ctx.beginPath();
+      const tx0 = Math.floor((s.x - s.r) / TILE), tx1 = Math.floor((s.x + s.r) / TILE);
+      const ty0 = Math.floor((s.y - s.r) / TILE), ty1 = Math.floor((s.y + s.r) / TILE);
+      for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+        if (!skyLike(this.tile(tx, ty)) && !this.skyBack(tx, ty)) ctx.rect(tx * TILE - cam.x, ty * TILE - cam.y, TILE, TILE);
+      }
+      ctx.clip();
+      const g = ctx.createRadialGradient(x, y, 0, x, y, s.r);
+      g.addColorStop(0, `rgba(0,0,0,${0.5 * fade})`);
+      g.addColorStop(0.6, `rgba(10,5,0,${0.22 * fade})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - s.r, y - s.r, s.r * 2, s.r * 2);
+      ctx.restore();
+    }
   }
 
   // Горизонт для силуэтов: медиана нижних клеток неба по столбцам (в пикселях мира).
@@ -1184,7 +1324,7 @@ class Level {
   drawPortals(ctx, cam, t, bright) {
     const list = this.exits.concat(this.teleports);
     for (const e of list) {
-      if (e.hidden) continue;
+      if (e.hidden || this.isHiddenAt(e.cx, e.bottom - 8)) continue;
       const x = Math.round(e.cx - cam.x), y = Math.round(e.bottom - cam.y);
       if (x < -40 || x > 2000 || y < -60 || y > 2000) continue;
       if (!bright) {
@@ -1227,6 +1367,7 @@ class Level {
 
   drawDecorBright(ctx, cam, t) {
     drawGlyphs(ctx, cam, this.glyphs, t);
+    if (this.archWindows) drawArchGlows(ctx, cam, this.archWindows, t);
     if (this.amb && this.amb.strips) {
       for (const s of this.amb.strips) {
         const x = Math.round(s.x - cam.x), y = Math.round(s.y - cam.y);
@@ -1278,7 +1419,9 @@ class Level {
     for (const d of this.decor) {
       const x = Math.round(d.x - cam.x), y = Math.round(d.y - cam.y);
       if (x < -20 || y < -40 || x > 2000 || y > 2000) continue;
-      if (d.kind === 'torch') drawTorchFlame(ctx, x, y, t, d.x * 0.37 + d.y * 0.11);
+      if (this.isHiddenAt(d.x, d.y)) continue;
+      if (d.free) drawWisp(ctx, x, y, t, d.x * 0.37 + d.y * 0.11, d.kind === 'torch');
+      else if (d.kind === 'torch') drawTorchFlame(ctx, x, y, t, d.x * 0.37 + d.y * 0.11);
       else if (d.kind === 'lamp') drawLampLight(ctx, x, y, t);
       else if (d.kind === 'electrode') {
         drawElectrode(ctx, x, y, t, Game.bossFx, d);

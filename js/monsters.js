@@ -1003,8 +1003,19 @@ class Monster {
         this.updateElectrodes(dt);
         if (this.stateT > 1.4) { this.state = 'active'; this.stateT = 0; this.cd = 0.8; }
         break;
-      case 'dying':
-        this.y = lerp(rest, hidden + 20, clamp(this.stateT / 3.5, 0, 1));
+      case 'dying': {
+        // агония: вздымается из лавы, по телу ползут молнии электродов, рёв — и уходит на дно
+        const rise = Math.sin(clamp(this.stateT / 1.3, 0, 1) * Math.PI) * 20;
+        this.y = lerp(rest, hidden + 20, clamp((this.stateT - 0.6) / 2.9, 0, 1)) - rise;
+        this.hurtFlash = this.stateT < 1.6 ? 0.1 : this.hurtFlash;
+        if (this.stateT < 1.6 && Math.random() < dt * 9) {
+          const els = Game.level.decor.filter((d) => d.kind === 'electrode');
+          const e = els.length ? pick(els) : null;
+          if (e) FX.beam(e.x, e.y - 34, this.cx + rand(-24, 24), this.y + rand(10, 60), '#d0e0ff', 0.25, 3);
+          else FX.beam(this.cx + rand(-30, 30), this.y + rand(0, 30), this.cx + rand(-30, 30), this.y + rand(30, 70), '#d0e0ff', 0.2, 2);
+          if (Math.random() < 0.4) Sound.play('lightning', this.cx, this.cy, { gap: 0.12 });
+        }
+        for (const at of [0.9, 2.2]) if (this.stateT >= at && this.stateT - dt < at) Sound.play('roar', this.cx, this.cy, { p: at > 2 ? 0.7 : 0.85 });
         if (Math.random() < 0.6) FX.sparks(this.cx + rand(-30, 30), rest + rand(20, 70), 3, '#ff8030', 160);
         this.shubBoomT = (this.shubBoomT || 0) - dt;
         if (this.shubBoomT <= 0) {
@@ -1023,6 +1034,7 @@ class Monster {
           Game.onBossDefeated();
         }
         break;
+      }
       default: break;
     }
   }

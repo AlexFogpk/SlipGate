@@ -1948,6 +1948,43 @@ function drawItem(ctx, x, y, it, t) {
   ctx.restore();
 }
 
+// Оружие на полу светится: отсвет на полу, светлый контур, бегущий блик, искры вверх.
+function drawWeaponGlow(ctx, x, y, it, t) {
+  const ph = it.phase || 0;
+  const bob = it.dropped ? 0 : Math.round(Math.sin(t * 3 + ph) * 1.5) - 1;
+  const pulse = 0.5 + Math.sin(t * 3 + ph) * 0.5;
+  const img = gunImg(+it.ch);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  // отсвет на полу
+  const g = ctx.createRadialGradient(x, y - 1, 0, x, y - 1, 16);
+  g.addColorStop(0, `rgba(255,200,110,${0.32 + pulse * 0.14})`);
+  g.addColorStop(1, 'rgba(255,170,60,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(x - 16, y - 7, 32, 9);
+  if (img) {
+    // сам ствол чуть подсвечен — силуэт читается и в темноте
+    const gx = Math.round(x - 7), gy = Math.round(y + bob - 5 - img.height / 2 + 1);
+    ctx.globalAlpha = 0.22 + pulse * 0.12;
+    ctx.drawImage(img, gx, gy);
+    // блик пробегает вдоль ствола раз в две секунды
+    const k = ((t * 0.5 + ph) % 1) * 2;
+    if (k < 1) {
+      ctx.globalAlpha = 0.8 * Math.sin(k * Math.PI);
+      ctx.fillStyle = '#fff4d0';
+      ctx.fillRect(gx + Math.round(k * img.width), gy + 1, 2, Math.max(1, img.height - 3));
+    }
+  }
+  // искры поднимаются и гаснут
+  for (let i = 0; i < 3; i++) {
+    const k = (t * 0.6 + ph + i / 3) % 1;
+    ctx.globalAlpha = 0.7 * (1 - k);
+    ctx.fillStyle = '#ffd890';
+    ctx.fillRect(Math.round(x - 8 + ((i * 7 + Math.floor(ph * 10)) % 16)), Math.round(y - 3 - k * 16 + bob), 1, 1);
+  }
+  ctx.restore();
+}
+
 // ---------------- лицо героя для HUD ----------------
 function drawFace(ctx, x, y, s, p, t) {
   const r = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x + a * s, y + b * s, w * s, h * s); };

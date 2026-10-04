@@ -5,14 +5,16 @@
 
 const DRESS = {
   // pilasters — шаг колонн вдоль стен в клетках; band — стиль цоколя и фриза
-  base: { pipes: 0.16, vents: 0.05, screens: 0.035, cables: 0.12, girders: 0.07, hazard: 1, strips: 0.05, pilasters: 14, band: 'metal' },
-  castle: { banners: 0.1, windows: 0.06, chains: 0.05, webs: 0.25, rafters: 0.08, cages: 0.03, pilasters: 11, band: 'stone' },
-  crypt: { webs: 0.35, chains: 0.06, skulls: 0.05, roots: 0.05, niches: 0.05, rafters: 0.06, cages: 0.035, chained: 0.03, drips: 0.35, pilasters: 13, band: 'skulls' },
+  // arch — большие арочные окна (что за ними), fans — вентиляторы в стене,
+  // alcoves — глухие арки-ниши у пола (что в них стоит)
+  base: { pipes: 0.16, vents: 0.05, screens: 0.035, cables: 0.12, girders: 0.07, hazard: 1, strips: 0.05, pilasters: 14, band: 'metal', fans: 1 },
+  castle: { banners: 0.1, windows: 0.06, chains: 0.05, webs: 0.25, rafters: 0.08, cages: 0.03, pilasters: 11, band: 'stone', arch: ['night', 'amber'], alcoves: 'armor' },
+  crypt: { webs: 0.35, chains: 0.06, skulls: 0.05, roots: 0.05, niches: 0.05, rafters: 0.06, cages: 0.035, chained: 0.03, drips: 0.35, pilasters: 13, band: 'skulls', arch: 'night', alcoves: 'urn' },
   cave: { stalactites: 0.3, rocks: 0.14, roots: 0.12, drips: 0.25 },
-  rune: { chains: 0.05, glyphs: 0.02, webs: 0.12, pilasters: 10, cages: 0.02, band: 'rune' },
-  nether: { stalactites: 0.18, glyphs: 0.03, skulls: 0.04, chains: 0.05, spikes: 0.05, cages: 0.03, pilasters: 12, band: 'stone' },
+  rune: { chains: 0.05, glyphs: 0.02, webs: 0.12, pilasters: 10, cages: 0.02, band: 'rune', arch: 'stained', alcoves: 'glyph' },
+  nether: { stalactites: 0.18, glyphs: 0.03, skulls: 0.04, chains: 0.05, spikes: 0.05, cages: 0.03, pilasters: 12, band: 'stone', arch: 'hell', alcoves: 'candle' },
   void: { glyphs: 0.03, chains: 0.04, stalactites: 0.08, band: 'rune' },
-  elder: { stalactites: 0.2, skulls: 0.05, glyphs: 0.03, chains: 0.05, spikes: 0.05, cages: 0.025, chained: 0.02, pilasters: 12, band: 'stone' },
+  elder: { stalactites: 0.2, skulls: 0.05, glyphs: 0.03, chains: 0.05, spikes: 0.05, cages: 0.025, chained: 0.02, pilasters: 12, band: 'stone', arch: 'hell', alcoves: 'urn' },
 };
 const DRESS_COL = {
   base: { rock: '#4e4a42', glyph: '#60d0ff' },
@@ -74,6 +76,7 @@ function dressLevel(lv, ctx) {
       }
     }
   }
+  dressArchitecture(lv, ctx, D, col, { free, open, solid, take, spaced });
   for (let y = 1; y < lv.h - 1; y++) {
     for (let x = 1; x < lv.w - 1; x++) {
       if (!free(x, y)) continue;
@@ -397,6 +400,243 @@ function drawSkull(ctx, x, bottom, k) {
   ctx.fillStyle = '#1a1612'; ctx.fillRect(x + 2, bottom - 3, 1, 1); ctx.fillRect(x + 1, bottom - 1, 3, 1);
   if (k > 0.4) { ctx.fillStyle = '#7a7262'; ctx.fillRect(x - 5, bottom - 1, 5, 1); ctx.fillRect(x + 5, bottom - 2, 1, 2); ctx.fillRect(x + 4, bottom - 1, 4, 1); }
 }
+// --- большая архитектура: окна, вентиляторы, ниши ---
+// Сначала крупное (ему нужна свободная стена), потом мелочь заполняет остальное.
+function dressArchitecture(lv, ctx, D, col, h) {
+  const { free, open, solid, take, spaced } = h;
+  lv.archWindows = [];
+  lv.fans = [];
+  const block = (x, y, w, hh) => {
+    for (let yy = y; yy < y + hh; yy++) for (let xx = x; xx < x + w; xx++) if (!free(xx, yy)) return false;
+    return true;
+  };
+  const takeBlock = (x, y, w, hh) => { for (let yy = y; yy < y + hh; yy++) for (let xx = x; xx < x + w; xx++) take(xx, yy); };
+  const rowOpen = (x, y, w) => { for (let xx = x; xx < x + w; xx++) if (!open(xx, y)) return false; return true; };
+  // кандидаты собираем по всей карте и разбираем в псевдослучайном порядке —
+  // иначе все окна достались бы верхним залам
+  const cands = [];
+  for (let y = 2; y < lv.h - 8; y++) for (let x = 2; x < lv.w - 5; x++) cands.push([hash2(x, y, 71), x, y]);
+  cands.sort((p, q) => p[0] - q[0]);
+  const cap = Math.max(3, Math.round(lv.w * lv.h / 1400));
+  for (const [, x, y] of cands) {
+    // арочное окно 3×5 клеток посреди стены: над ним клетка воздуха, под ним — ещё две
+    if (D.arch && lv.archWindows.length < cap && block(x, y, 3, 5) && rowOpen(x, y - 1, 3) && rowOpen(x, y + 5, 3) && rowOpen(x, y + 6, 3) && spaced('archwin', x, y, 18, 10, 80)) {
+      const kinds = [].concat(D.arch);
+      const w = { x: x * TILE, y: y * TILE, kind: kinds[Math.floor(hash2(x, y, 70) * kinds.length)], k: hash2(x, y, 72) };
+      drawArchWindow(ctx, w.x, w.y, w.kind, w.k, col.rock);
+      lv.archWindows.push(w);
+      takeBlock(x - 1, y - 1, 5, 7);
+      continue;
+    }
+    // вентилятор 3×3 клетки (база): лопасти крутятся, за ними свет
+    if (D.fans && lv.fans.length < cap && block(x, y, 3, 3) && rowOpen(x, y - 1, 3) && rowOpen(x, y + 3, 3) && spaced('fan', x, y, 20, 8, 80)) {
+      const f = { x: x * TILE + 24, y: y * TILE + 24, k: hash2(x, y, 74) };
+      drawFanHousing(ctx, f.x, f.y);
+      lv.fans.push(f);
+      takeBlock(x - 1, y - 1, 5, 5);
+    }
+  }
+  // глухие арки-ниши у пола: 2×3 клетки, ритмом вдоль длинных стен
+  if (D.alcoves) {
+    for (let y = 4; y < lv.h - 1; y++) {
+      for (let x = 2; x < lv.w - 3; x++) {
+        if (x % 3 || !solid(x, y + 1) || !solid(x + 1, y + 1) || !block(x, y - 2, 2, 3) || !rowOpen(x, y - 3, 2)) continue;
+        if (hash2(x, y, 75) > 0.3 || !spaced('alcove', x, y, 9, 4, 40)) continue;
+        const g = drawAlcove(ctx, x * TILE + 4, (y + 1) * TILE, D.alcoves, hash2(x, y, 76), col);
+        if (g) lv.glyphs.push(g);
+        takeBlock(x, y - 2, 2, 3);
+      }
+    }
+  }
+}
+
+// Контур арки: прямые стороны и полукруглый верх.
+function archPath(ctx, cx, top, r, bottom) {
+  ctx.beginPath();
+  ctx.moveTo(cx - r, bottom); ctx.lineTo(cx - r, top + r);
+  ctx.arc(cx, top + r, r, Math.PI, 0);
+  ctx.lineTo(cx + r, bottom); ctx.closePath();
+}
+
+// Что видно в окне: ночь со звёздами и луной, витраж (синий или янтарный), адское зарево.
+function fillWindowView(ctx, x0, y0, w, h, kind, k) {
+  if (kind === 'stained' || kind === 'amber') {
+    const pal = kind === 'stained' ? ['#2a46a8', '#56309a', '#1c6c98', '#86306a', '#b89030', '#3a3aa0'] : ['#9a5410', '#c07a20', '#782a10', '#cc9a3a', '#5a3010', '#a8402a'];
+    ctx.fillStyle = '#100c14'; ctx.fillRect(x0, y0, w, h);
+    // ромбическая сетка стёкол
+    for (let yy = 0; yy < h; yy += 6) for (let xx = (yy / 6) % 2 ? 3 : 0; xx < w; xx += 6) {
+      ctx.fillStyle = pal[Math.floor(hash2(x0 + xx, y0 + yy, 77) * pal.length)];
+      ctx.beginPath();
+      ctx.moveTo(x0 + xx + 3, y0 + yy - 2); ctx.lineTo(x0 + xx + 6, y0 + yy + 2); ctx.lineTo(x0 + xx + 3, y0 + yy + 6); ctx.lineTo(x0 + xx, y0 + yy + 2);
+      ctx.closePath(); ctx.fill();
+    }
+    return;
+  }
+  if (kind === 'hell') {
+    const g = ctx.createLinearGradient(0, y0, 0, y0 + h);
+    g.addColorStop(0, '#2a0606'); g.addColorStop(0.6, '#8a1a08'); g.addColorStop(1, '#e85a18');
+    ctx.fillStyle = g; ctx.fillRect(x0, y0, w, h);
+    // шпили и скалы Нижнего мира на фоне зарева
+    ctx.fillStyle = '#0a0304';
+    for (let xx = 0; xx < w; xx += 3) {
+      const hh = 4 + hash2(x0 + xx, y0, 78) * 10 + (hash2(x0 + xx, y0, 79) < 0.15 ? 12 : 0);
+      ctx.fillRect(x0 + xx, y0 + h - hh, 3, hh);
+    }
+    return;
+  }
+  // ночь
+  const g = ctx.createLinearGradient(0, y0, 0, y0 + h);
+  g.addColorStop(0, '#060818'); g.addColorStop(1, '#1c1a34');
+  ctx.fillStyle = g; ctx.fillRect(x0, y0, w, h);
+  for (let i = 0; i < 9; i++) {
+    ctx.fillStyle = hash2(x0, i, 80) < 0.3 ? '#e8ecff' : '#8890c0';
+    ctx.fillRect(x0 + Math.floor(hash2(x0, i, 81) * w), y0 + Math.floor(hash2(y0, i, 82) * h * 0.7), 1, 1);
+  }
+  if (k < 0.45) {
+    // луна в части окон
+    const mx = x0 + w * (0.3 + k), my = y0 + h * 0.25;
+    ctx.fillStyle = '#d8d4b8'; ctx.beginPath(); ctx.arc(mx, my, 5, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#b0aa90'; ctx.fillRect(Math.round(mx - 2), Math.round(my - 1), 2, 2); ctx.fillRect(Math.round(mx + 1), Math.round(my + 2), 1, 1);
+  }
+  // далёкие башни
+  ctx.fillStyle = '#05040a';
+  for (let xx = 0; xx < w; xx += 4) {
+    const hh = 3 + hash2(x0 + xx, y0, 83) * 6 + (hash2(x0 + xx, y0, 84) < 0.2 ? 8 : 0);
+    ctx.fillRect(x0 + xx, y0 + h - hh, 4, hh);
+  }
+}
+
+// Арочное окно 3×5 клеток: глубокий откос, каменная арка с клиньями, средник с
+// перемычкой и розеткой, подоконник; за стеклом — вид по теме уровня.
+function drawArchWindow(ctx, x, y, kind, k, rock) {
+  const r = ramp(shade(rock, 1.2));
+  const cx = x + 24, top = y + 3, R = 15, bottom = y + 74;
+  // кладка вокруг окна: арка из клиньев и боковые блоки
+  ctx.fillStyle = r[2]; archPath(ctx, cx, top - 4, R + 5, bottom + 1); ctx.fill();
+  // откос (глубина стены)
+  ctx.fillStyle = r[0]; archPath(ctx, cx, top, R + 1, bottom); ctx.fill();
+  // вид за окном
+  ctx.save();
+  archPath(ctx, cx, top + 2, R - 1, bottom - 1); ctx.clip();
+  fillWindowView(ctx, cx - R, top + 2, R * 2, bottom - top - 2, kind, k);
+  ctx.restore();
+  // переплёт: средник, перемычка, розетка в арке
+  ctx.fillStyle = '#1a1410';
+  ctx.fillRect(cx - 1, top + R + 4, 2, bottom - top - R - 4);
+  ctx.fillRect(cx - R, top + R + 24, R * 2, 2);
+  ctx.strokeStyle = '#1a1410'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, top + R + 1, 5, 0, TAU); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - R + 1, top + R + 4); ctx.lineTo(cx + R - 1, top + R + 4); ctx.stroke();
+  // клинья арки
+  ctx.strokeStyle = r[0]; ctx.lineWidth = 1;
+  for (let i = 1; i < 8; i++) {
+    const a = Math.PI + (i / 8) * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (R + 1), top + R + Math.sin(a) * (R + 1));
+    ctx.lineTo(cx + Math.cos(a) * (R + 5), top + R - 4 + Math.sin(a) * (R + 5) + 4);
+    ctx.stroke();
+  }
+  ctx.fillStyle = r[4]; ctx.fillRect(cx - 1, top - 5, 3, 3);   // замковый камень
+  for (let yy = top + R + 8; yy < bottom; yy += 9) { ctx.fillStyle = r[0]; ctx.fillRect(cx - R - 5, yy, 4, 1); ctx.fillRect(cx + R + 1, yy, 4, 1); }
+  ctx.fillStyle = r[3]; ctx.fillRect(cx - R - 5, top + R, 1, bottom - top - R);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(cx + R + 4, top + R, 1, bottom - top - R);
+  // подоконник
+  ctx.fillStyle = r[3]; ctx.fillRect(cx - R - 7, bottom, R * 2 + 14, 4);
+  ctx.fillStyle = r[4]; ctx.fillRect(cx - R - 7, bottom, R * 2 + 14, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(cx - R - 6, bottom + 4, R * 2 + 12, 2);
+}
+
+// Свечение витражей и зарева (яркий проход, поверх освещения).
+function drawArchGlows(ctx, cam, list, t) {
+  for (const w of list) {
+    const x = w.x - cam.x, y = w.y - cam.y;
+    if (x < -60 || y < -90 || x > 2000 || y > 2000) continue;
+    if (Game.level.isHiddenAt(w.x + 24, w.y + 40)) continue;
+    const cx = x + 24, top = y + 5, R = 14, bottom = y + 73;
+    let col, a;
+    if (w.kind === 'hell') { col = '255,90,30'; a = 0.22 + Math.sin(t * 2.3 + w.k * 9) * 0.06 + Math.sin(t * 7.1 + w.k * 3) * 0.03; }
+    else if (w.kind === 'night') { col = '150,170,255'; a = 0.07; }
+    else { col = w.kind === 'stained' ? '120,140,255' : '255,180,90'; a = 0.16 + Math.sin(t * 0.8 + w.k * 6) * 0.03; }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    archPath(ctx, cx, top, R, bottom); ctx.clip();
+    const g = ctx.createLinearGradient(0, top, 0, bottom);
+    g.addColorStop(0, `rgba(${col},${a * 0.6})`); g.addColorStop(1, `rgba(${col},${a})`);
+    ctx.fillStyle = g; ctx.fillRect(cx - R, top, R * 2, bottom - top);
+    ctx.restore();
+  }
+}
+
+// Вентилятор в стене: стальное кольцо на болтах, тёмная шахта, крестовина.
+function drawFanHousing(ctx, cx, cy) {
+  ctx.fillStyle = '#2a2c2e'; ctx.beginPath(); ctx.arc(cx, cy, 22, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#5a5c5a'; ctx.beginPath(); ctx.arc(cx, cy, 20, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#0a0b0c'; ctx.beginPath(); ctx.arc(cx, cy, 16, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#7a7c78';
+  for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; ctx.fillRect(Math.round(cx + Math.cos(a) * 18) - 1, Math.round(cy + Math.sin(a) * 18) - 1, 2, 2); }
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, 20, Math.PI * 0.9, Math.PI * 1.6); ctx.stroke();
+}
+
+// Лопасти крутятся (до освещения — их освещает мир), за ними — тусклый свет шахты.
+function drawFans(ctx, cam, list, t) {
+  for (const f of list) {
+    const x = f.x - cam.x, y = f.y - cam.y;
+    if (x < -30 || y < -30 || x > 2000 || y > 2000) continue;
+    const a0 = t * (2.5 + f.k * 3) * (f.k < 0.5 ? 1 : -1);
+    ctx.save();
+    ctx.translate(Math.round(x), Math.round(y));
+    const g = ctx.createRadialGradient(0, 0, 2, 0, 0, 16);
+    g.addColorStop(0, '#4a3a24'); g.addColorStop(1, '#0a0b0c');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 16, 0, TAU); ctx.fill();
+    for (let i = 0; i < 4; i++) {
+      ctx.save(); ctx.rotate(a0 + i * Math.PI / 2);
+      ctx.fillStyle = '#3a3c3a';
+      ctx.beginPath(); ctx.moveTo(2, -2); ctx.lineTo(15, -6); ctx.lineTo(15, 2); ctx.lineTo(2, 2); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#6a6c66'; ctx.fillRect(3, -3, 11, 1);
+      ctx.restore();
+    }
+    ctx.fillStyle = '#5a5c58'; ctx.beginPath(); ctx.arc(0, 0, 3, 0, TAU); ctx.fill();
+    // защитная решётка поверх лопастей
+    ctx.fillStyle = 'rgba(20,22,24,0.85)';
+    ctx.fillRect(-16, -1, 32, 2); ctx.fillRect(-1, -16, 2, 32);
+    ctx.restore();
+  }
+}
+
+// Глухая арка-ниша у пола: тёмная глубина, каменная обводка; в нише по теме — доспех,
+// урна, табличка с руной или свечи у черепа.
+function drawAlcove(ctx, x, bottom, kind, k, col) {
+  const r = ramp(shade(col.rock, 1.15));
+  const cx = x + 12, top = bottom - 44, R = 10;
+  ctx.fillStyle = r[2]; archPath(ctx, cx, top - 3, R + 3, bottom); ctx.fill();
+  const g = ctx.createLinearGradient(0, top, 0, bottom);
+  g.addColorStop(0, 'rgba(0,0,0,0.75)'); g.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = g; archPath(ctx, cx, top, R, bottom); ctx.fill();
+  ctx.fillStyle = r[3]; ctx.fillRect(cx - R - 3, top + R, 1, bottom - top - R);
+  ctx.fillStyle = r[0]; ctx.fillRect(cx + R + 2, top + R, 1, bottom - top - R);
+  ctx.fillStyle = r[4]; ctx.fillRect(cx - 1, top - 4, 3, 2);
+  ctx.fillStyle = r[3]; ctx.fillRect(cx - R - 1, bottom - 3, R * 2 + 2, 3);
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(a), Math.round(b), w, h); };
+  if (kind === 'armor') {
+    // доспех на подставке
+    f(cx - 3, bottom - 30, 6, 6, '#6a6a6e'); f(cx - 2, bottom - 28, 4, 1, '#1a1a1c');
+    f(cx - 6, bottom - 24, 12, 3, '#5a5a5e'); f(cx - 4, bottom - 21, 8, 9, '#626266');
+    f(cx - 4, bottom - 12, 3, 8, '#525256'); f(cx + 1, bottom - 12, 3, 8, '#525256');
+    f(cx - 5, bottom - 23, 1, 10, '#8a8a90'); f(cx + 7, bottom - 34, 1, 30, '#7a7a80'); f(cx + 5, bottom - 26, 5, 1, '#5a4a30');
+  } else if (kind === 'urn') {
+    f(cx - 4, bottom - 15, 8, 9, '#5a4a38'); f(cx - 3, bottom - 17, 6, 2, '#4a3a2a'); f(cx - 2, bottom - 6, 4, 3, '#4a3a2a');
+    f(cx - 4, bottom - 14, 1, 7, '#8a7458'); f(cx - 3, bottom - 11, 6, 1, '#2a2018');
+    drawSkull(ctx, cx - 9, bottom - 3, k);
+  } else if (kind === 'candle') {
+    drawSkull(ctx, cx - 2, bottom - 3, k);
+    for (const dx of [-7, 6]) { f(cx + dx, bottom - 10, 2, 7, '#c8b890'); f(cx + dx, bottom - 12, 2, 2, '#ffb040'); f(cx + dx, bottom - 13, 1, 1, '#fff0b0'); }
+  } else if (kind === 'glyph') {
+    return drawTablet(ctx, cx - 5, bottom - 22, col.glyph, k);
+  }
+  return null;
+}
+
 function drawWindow(ctx, x, y) {
   // арочное окно с решёткой: за ним ночь
   ctx.fillStyle = '#2a2018'; ctx.fillRect(x - 1, y + 4, 14, 22);
@@ -464,6 +704,30 @@ function drawTorchHolder(ctx, x, y) {
   ctx.fillStyle = '#7a6448'; ctx.fillRect(x - 3, y - 3, 7, 1);
   ctx.fillStyle = '#4a3a28'; ctx.fillRect(x - 3, y - 2, 1, 2);
 }
+// Парящий огонь Древних: сгусток пламени без держателя, медленно плывёт вверх-вниз,
+// вокруг — мерцающий ореол и пара искр.
+function drawWisp(ctx, x, y, t, seed, warm) {
+  const by = y - 4 + Math.sin(t * 1.3 + seed) * 2;
+  const fl = 0.85 + Math.sin(t * 9 + seed * 3) * 0.1 + Math.sin(t * 23 + seed) * 0.05;
+  const core = warm ? '#fff0c0' : '#f0f6ff', mid = warm ? '#ffa040' : '#9ac0ff', edge = warm ? '255,120,40' : '130,170,255';
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(x, by, 0, x, by, 14);
+  g.addColorStop(0, `rgba(${edge},${0.45 * fl})`);
+  g.addColorStop(1, `rgba(${edge},0)`);
+  ctx.fillStyle = g; ctx.fillRect(x - 14, by - 14, 28, 28);
+  ctx.globalAlpha = fl;
+  ctx.fillStyle = mid; ctx.fillRect(Math.round(x - 2), Math.round(by - 3), 5, 6); ctx.fillRect(Math.round(x - 1), Math.round(by - 5), 3, 2);
+  ctx.fillStyle = core; ctx.fillRect(Math.round(x - 1), Math.round(by - 2), 3, 3);
+  for (let i = 0; i < 2; i++) {
+    const k = (t * 0.7 + seed + i * 0.5) % 1;
+    ctx.globalAlpha = 0.8 * (1 - k);
+    ctx.fillStyle = mid;
+    ctx.fillRect(Math.round(x + Math.sin(seed * 7 + i * 3 + k * 4) * 4), Math.round(by - 5 - k * 12), 1, 1);
+  }
+  ctx.restore();
+}
+
 function drawTorchFlame(ctx, x, y, t, seed) {
   const h = 10 + Math.round(Math.sin(t * 11 + seed) * 1.3 + Math.sin(t * 17 + seed * 2) * 0.8);
   const sway = Math.sin(t * 6 + seed) * 1.3 + Math.sin(t * 15 + seed) * 0.4;

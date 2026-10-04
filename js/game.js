@@ -3,7 +3,9 @@
 
 // Табличка босса при его появлении: имя, титул, цвета букв и черты под ними.
 const BOSS_CARDS = {
-  chthon: { name: 'ХТОН', sub: 'Владыка Лавы', cols: ['#fff0c0', '#ff9a30', '#8a2a10'], line: '#ffb040', subCol: '#f0c090', dur: 4.4 },
+  // death — длина сцены гибели (игровые секунды): Хтона убивают разрядом издалека,
+  // и без сцены герой слышал бы его гибель, но не видел
+  chthon: { name: 'ХТОН', sub: 'Владыка Лавы', cols: ['#fff0c0', '#ff9a30', '#8a2a10'], line: '#ffb040', subCol: '#f0c090', dur: 4.4, death: 5.4, deathAt: 3.6 },
   shub: { name: 'ШУБ-НИГГУРАТ', sub: 'Мать Тысячи Отродий', cols: ['#ffe0f0', '#d070a0', '#5a1a3a'], line: '#e080b0', subCol: '#e0b0c8', dur: 4.2 },
   herald: { name: 'ВЕСТНИК БЕЗДНЫ', sub: 'Глас Нижнего мира', cols: ['#fff0ff', '#d080ff', '#5a2a8a'], line: '#d080ff', subCol: '#d8b8f0', dur: 4.2 },
   elder: { name: 'ДРЕВНИЙ', sub: 'Пожиратель Измерений', cols: ['#e8fbff', '#70d8ff', '#2a6a9a'], line: '#70d8ff', subCol: '#a8d8f0', dur: 4 },
@@ -577,7 +579,14 @@ const Game = {
 
   // Гибель босса: время замедляется, вспышка, слуги рассыпаются.
   bossDeath(boss, attacker, text) {
-    HUD.center(text, 3);
+    const card = BOSS_CARDS[boss.type];
+    if (card && card.death) {
+      // гибель как в кино: камера уходит к боссу, мир замирает, в конце — табличка
+      this.cine = { t: 0, dur: card.death, boss, death: true, focus: { x: boss.cx, y: boss.cy } };
+      HUD.centerT = 0;
+      // снаряды босса гаснут — после сцены ничто не прилетит в героя
+      this.projectiles = this.projectiles.filter((pr) => pr.owner !== boss);
+    } else HUD.center(text, 3);
     Sound.play('roar');
     this.slowT = 2.4;
     this.whiteFlash = 0.5;
@@ -776,8 +785,9 @@ const Game = {
       e.hidden = false;
       FX.teleport(e.cx, e.bottom - 16);
     }
-    HUD.center(msg || 'Путь к руне открыт —\nслипгейт отмечен стрелкой', 4);
-    Sound.play('secret');
+    const say = () => { HUD.center(msg || 'Путь к руне открыт —\nслипгейт отмечен стрелкой', 4); Sound.play('secret'); };
+    // идёт сцена гибели — подсказка выйдет, когда камера вернётся к герою
+    if (this.cine && this.cine.death) this.cine.after = say; else say();
     this.exitHint = true;
   },
 
@@ -1024,13 +1034,14 @@ const Game = {
       moveBody(p, dt);
       FX.update(dt);
       const k = clamp(Math.min(c.t / 0.8, (c.dur - c.t) / 0.7), 0, 1);
-      const pc = this.cameraTarget(true), bc = this.clampCam(c.boss.cx - this.viewW / 2, c.boss.cy - this.viewH * 0.45);
+      const f = c.focus || { x: c.boss.cx, y: c.boss.cy };
+      const pc = this.cameraTarget(true), bc = this.clampCam(f.x - this.viewW / 2, f.y - this.viewH * 0.45);
       const tx = lerp(pc.x, bc.x, k * k * (3 - 2 * k)), ty = lerp(pc.y, bc.y, k * k * (3 - 2 * k));
       const kk = 1 - Math.exp(-dt * 6);
       this.cam.x = lerp(this.cam.x, tx, kk); this.cam.y = lerp(this.cam.y, ty, kk);
       this.shakeAmt = Math.max(0, this.shakeAmt - dt * 10);
       Sound.listenerX = p.cx; Sound.listenerY = p.cy;
-      if (c.t >= c.dur) this.cine = null;
+      if (c.t >= c.dur) { this.cine = null; if (c.after) c.after(); }
       Input.mouseDown = false;
       return;
     }
@@ -1234,7 +1245,7 @@ const Game = {
         } else if (!Input.touchMode) {
           HUD.crosshair(ctx, Input.mouseX * this.dpr, Input.mouseY * this.dpr, u);
         }
-        if (this.exitHint && p.alive) this.drawExitPointer(ctx, W, H, u);
+        if (this.exitHint && p.alive && !this.cine) this.drawExitPointer(ctx, W, H, u);
         if (this.cine) this.drawBossCard(ctx, W, H, u);
         if (Input.touchMode) HUD.drawTouch(ctx, W, H, u);
         if (this.showStats) this.drawAutomap(ctx, W, H, u);
@@ -1252,10 +1263,12 @@ const Game = {
     const c = this.cine;
     const card = BOSS_CARDS[c.boss.type];
     const k = clamp(Math.min(c.t / 0.5, (c.dur - c.t) / 0.5), 0, 1);
+    // в сцене гибели табличка «повержен» выходит, когда босс взрывается
+    const sub = c.death ? 'повержен' : card.sub;
     const bar = H * 0.11 * k;
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
-    const a = clamp(Math.min((c.t - 1) / 0.6, (c.dur - 0.3 - c.t) / 0.5), 0, 1);
+    const a = c.death ? clamp(Math.min((c.t - card.deathAt) / 0.5, (c.dur - 0.25 - c.t) / 0.4), 0, 1) : clamp(Math.min((c.t - 1) / 0.6, (c.dur - 0.3 - c.t) / 0.5), 0, 1);
     if (a <= 0) return;
     ctx.globalAlpha = a;
     let size = Math.min(34 * u, W / 9);
@@ -1273,7 +1286,7 @@ const Game = {
     const g = ctx.createLinearGradient(0, y, 0, y + size);
     g.addColorStop(0, card.cols[0]); g.addColorStop(0.5, card.cols[1]); g.addColorStop(1, card.cols[2]);
     ctx.fillStyle = g; ctx.fillText(card.name, W / 2, y);
-    HUD.text(ctx, card.sub, W / 2, y + size * 1.15, 7 * u, card.subCol, 'center');
+    HUD.text(ctx, sub, W / 2, y + size * 1.15, 7 * u, card.subCol, 'center');
     ctx.fillStyle = card.line;
     ctx.fillRect(W / 2 - 90 * u * a, y + size * 1.08, 180 * u * a, Math.max(1, u * 0.6));
     ctx.globalAlpha = 1;
@@ -1434,7 +1447,7 @@ const Game = {
     for (const it of this.items) it.lights(out, this.time);
     for (const m of this.monsters) if (m.alive) m.lights(out);
     for (const d of this.level.decor) {
-      if (d.kind !== 'torch') continue;
+      if (d.kind !== 'torch' || this.level.isHiddenAt(d.x, d.y)) continue;
       if (d.x < this.cam.x - 80 || d.x > this.cam.x + this.viewW + 80 || d.y < this.cam.y - 80 || d.y > this.cam.y + this.viewH + 80) continue;
       const f = Math.sin(this.time * 11 + d.x) * 0.5 + Math.sin(this.time * 17.3 + d.y) * 0.5;
       out.push({ x: d.x, y: d.y - 6, r: 44, c: [1, 0.6, 0.25], i: 0.2 + f * 0.1 });
@@ -1474,8 +1487,10 @@ const Game = {
     ctx.fillRect(0, 0, vw, vh);
     lv.drawSky(ctx, cam, vw, vh, t);
     lv.drawBaked(ctx, cam, vw, vh);
+    lv.drawScorches(ctx, cam, vw, vh);
     lv.drawPortals(ctx, cam, t, false);
     lv.drawMovers(ctx, cam);
+    if (lv.fans && lv.fans.length) drawFans(ctx, cam, lv.fans, t);
     for (const it of this.items) it.draw(ctx, cam, t);
     for (const m of this.monsters) if (!m.alive) m.draw(ctx, cam);
     for (const m of this.monsters) if (m.alive) m.draw(ctx, cam);
@@ -1523,6 +1538,7 @@ const Game = {
     drawShafts(ctx, lv, cam, vw, vh, t);
     lv.drawPortals(ctx, cam, t, true);
     lv.drawDecorBright(ctx, cam, t);
+    for (const it of this.items) it.drawBright(ctx, cam, t);
     for (const pr of this.projectiles) pr.draw(ctx, cam, true);
     for (const m of this.monsters) m.drawBright(ctx, cam);
     this.drawFlood(ctx, cam, t);

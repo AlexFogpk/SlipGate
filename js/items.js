@@ -130,7 +130,13 @@ class Item {
     return false;
   }
 
+  get isWeapon() { return this.ch >= '3' && this.ch <= '9' && this.ch.length === 1; }
+
   lights(out, t) {
+    // свет из закрытого тайника не выдаёт его
+    if (this.taken || Game.level.isHiddenAt(this.cx, this.cy)) return;
+    // оружие на полу видно издалека: свой тёплый свет, как у пьедестала в Quake
+    if (this.isWeapon) { out.push({ x: this.cx, y: this.cy - 2, r: 60, c: [1, 0.86, 0.55], i: 0.7 + Math.sin(t * 3 + this.phase) * 0.12 }); return; }
     const glow = { M: [0.4, 0.5, 1], Q: [0.3, 0.4, 1], X: [1, 0.25, 0.2], V: [1, 0.8, 0.3], W: [0.3, 1, 0.4], '(': [0.8, 0.85, 1], ')': [1, 0.8, 0.3] }[this.ch];
     if (glow) out.push({ x: this.cx, y: this.cy, r: 48, c: glow, i: 0.6 + Math.sin(t * 4 + this.phase) * 0.15 });
   }
@@ -140,5 +146,13 @@ class Item {
     const x = Math.round(this.cx - cam.x), y = Math.round(this.y + this.h - cam.y);
     if (x < -20 || y < -20 || x > ctx.canvas.width + 20 || y > ctx.canvas.height + 20) return;
     drawItem(ctx, x, y, this, t);
+  }
+
+  // Поверх освещения: золотой отсвет под оружием, блик и искры — чтобы оружие не терялось.
+  drawBright(ctx, cam, t) {
+    if (this.taken || !this.isWeapon || Game.level.isHiddenAt(this.cx, this.cy)) return;
+    const x = Math.round(this.cx - cam.x), y = Math.round(this.y + this.h - cam.y);
+    if (x < -30 || y < -30 || x > ctx.canvas.width + 30 || y > ctx.canvas.height + 30) return;
+    drawWeaponGlow(ctx, x, y, this, t);
   }
 }
