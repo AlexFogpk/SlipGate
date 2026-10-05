@@ -43,9 +43,14 @@ const Input = {
   wheel: 0,
   clicks: [],
   touchMode: false,
+  // Сенсорное управление живёт в пикселях холста (как и кнопки, которые рисует HUD):
+  // левый стик — бег, правый — прицел и огонь, палец не закрывает цель.
   stick: { id: null, ox: 0, oy: 0, x: 0, y: 0 },
-  aim: { id: null, x: 0, y: 0 },
-  touchButtons: [],        // заполняется HUD: {name, x, y, r}
+  aim: { id: null, ox: 0, oy: 0, x: 0, y: 0 },
+  aimAngle: null,          // куда тянут правый стик (null — ещё не тянули)
+  stickR: 44,              // радиус стиков, задаёт HUD по размеру экрана
+  touchButtons: [],        // заполняется HUD: {name, x, y, r} или {name, x, y, w, h}
+  slotRects: [],           // ячейки оружия в строке состояния — касание выбирает оружие
   heldButtons: new Map(),  // pointerId -> name
   buttonPresses: new Set(),
   canvas: null,
@@ -97,6 +102,20 @@ const Input = {
     return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height };
   },
 
+  // Точка касания в пикселях холста.
+  canvasPos(p) {
+    const k = this.canvas.width / (p.w || 1);
+    return { x: p.x * k, y: p.y * k };
+  },
+
+  hitButton(c) {
+    for (const b of this.touchButtons) {
+      if (b.w ? c.x >= b.x && c.x <= b.x + b.w && c.y >= b.y && c.y <= b.y + b.h : dist(c.x, c.y, b.x, b.y) <= b.r) return b.name;
+    }
+    for (const r of this.slotRects) if (c.x >= r.x && c.x <= r.x + r.w && c.y >= r.y && c.y <= r.y + r.h) return 'w' + r.n;
+    return null;
+  },
+
   onPointerDown(e) {
     Sound.init();
     const p = this.pos(e);
@@ -104,23 +123,25 @@ const Input = {
       e.preventDefault();
       this.touchMode = true;
       this.clicks.push({ x: p.x, y: p.y });
-      for (const b of this.touchButtons) {
-        if (dist(p.x, p.y, b.x, b.y) <= b.r) {
-          this.heldButtons.set(e.pointerId, b.name);
-          this.buttonPresses.add(b.name);
-          return;
-        }
+      const c = this.canvasPos(p);
+      const btn = this.hitButton(c);
+      if (btn) {
+        this.heldButtons.set(e.pointerId, btn);
+        this.buttonPresses.add(btn);
+        return;
       }
-      if (p.x < p.w * 0.4) {
+      if (c.x < this.canvas.width * 0.42) {
         if (this.stick.id === null) {
           this.stick.id = e.pointerId;
-          this.stick.ox = p.x; this.stick.oy = p.y;
-          this.stick.x = p.x; this.stick.y = p.y;
+          this.stick.ox = c.x; this.stick.oy = c.y;
+          this.stick.x = c.x; this.stick.y = c.y;
         }
       } else if (this.aim.id === null) {
+        // правый стик: касание — огонь туда, куда смотрит герой; потянуть — прицелиться
         this.aim.id = e.pointerId;
-        this.aim.x = p.x; this.aim.y = p.y;
-        this.mouseX = p.x; this.mouseY = p.y;
+        this.aim.ox = c.x; this.aim.oy = c.y;
+        this.aim.x = c.x; this.aim.y = c.y;
+        this.aimAngle = null;
       }
       try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { /* не критично */ }
       return;
@@ -139,10 +160,12 @@ const Input = {
   onPointerMove(e) {
     const p = this.pos(e);
     if (e.pointerType === 'touch' || e.pointerType === 'pen') {
-      if (e.pointerId === this.stick.id) { this.stick.x = p.x; this.stick.y = p.y; }
+      const c = this.canvasPos(p);
+      if (e.pointerId === this.stick.id) { this.stick.x = c.x; this.stick.y = c.y; }
       if (e.pointerId === this.aim.id) {
-        this.aim.x = p.x; this.aim.y = p.y;
-        this.mouseX = p.x; this.mouseY = p.y;
+        this.aim.x = c.x; this.aim.y = c.y;
+        const dx = c.x - this.aim.ox, dy = c.y - this.aim.oy;
+        if (Math.hypot(dx, dy) > this.stickR * 0.22) this.aimAngle = Math.atan2(dy, dx);
       }
       return;
     }
@@ -160,7 +183,7 @@ const Input = {
 
   stickVec() {
     if (this.stick.id === null) return { x: 0, y: 0 };
-    const r = 40;
+    const r = this.stickR;
     const dx = clamp((this.stick.x - this.stick.ox) / r, -1, 1);
     const dy = clamp((this.stick.y - this.stick.oy) / r, -1, 1);
     return { x: Math.abs(dx) < 0.25 ? 0 : dx, y: Math.abs(dy) < 0.25 ? 0 : dy };
@@ -240,8 +263,18 @@ const Input = {
     if (s.x) x = s.x;
     return clamp(x, -1, 1);
   },
+  // прыжок со стика — только когда его толкают вверх, а не вбок с лёгким наклоном
+  stickUp() {
+    const s = this.stickVec();
+    return s.y < -0.6 && -s.y > Math.abs(s.x) * 0.75;
+  },
   jumpHeld() {
-    return this.act('jump') || this.stickVec().y < -0.55 || this.buttonHeld('jump');
+    return this.act('jump') || this.stickUp() || this.buttonHeld('jump');
+  },
+  // короткая вибрация телефона (ранение, гибель)
+  vibrate(ms) {
+    if (!this.touchMode || !navigator.vibrate) return;
+    try { navigator.vibrate(ms); } catch (e) { /* не везде можно */ }
   },
   downHeld() {
     return this.act('down') || this.stickVec().y > 0.6 || this.padY > 0.6;

@@ -159,7 +159,12 @@ const Game = {
   toggleFullscreen() {
     try {
       if (document.fullscreenElement) document.exitFullscreen();
-      else document.documentElement.requestFullscreen().catch(() => {});
+      else {
+        // на телефоне заодно фиксируем горизонтальную ориентацию
+        document.documentElement.requestFullscreen()
+          .then(() => (screen.orientation && screen.orientation.lock ? screen.orientation.lock('landscape') : null))
+          .catch(() => {});
+      }
     } catch (e) { /* полноэкранный режим недоступен */ }
   },
 
@@ -886,9 +891,15 @@ const Game = {
 
   aimWorld() {
     const p = this.player;
-    if (Input.touchMode && Input.aim.id === null) {
+    if (Input.touchMode) {
+      // правый стик держат — целимся туда, куда его тянут (или прямо, если просто коснулись);
+      // не держат — герой смотрит туда, куда бежит
       const s = p.shoulder();
-      return { x: s.x + Math.cos(p.aim) * 100, y: s.y + Math.sin(p.aim) * 100 };
+      let a = p.aim;
+      if (Input.aim.id !== null) a = Input.aimAngle !== null ? Input.aimAngle : p.aim;
+      else { const mx = Input.stickVec().x; if (mx) a = mx > 0 ? 0 : Math.PI; }
+      a = Input.aim.id !== null ? this.autoAim(s, a) : (this.autoTarget = null, a);
+      return { x: s.x + Math.cos(a) * 100, y: s.y + Math.sin(a) * 100 };
     }
     if (Input.padMode) {
       const s = p.shoulder();
@@ -898,6 +909,23 @@ const Game = {
       x: this.cam.x + (Input.mouseX * this.dpr - this.offX) / this.scale,
       y: this.cam.y + (Input.mouseY * this.dpr - this.offY) / this.scale,
     };
+  },
+
+  // Автоприцел, как в Quake: стреляя с телефона, герой доворачивает на монстра,
+  // который почти на линии прицела, виден и не слишком далеко.
+  autoTarget: null,
+  autoAim(s, a) {
+    let best = null, bd = 0.26;
+    for (const m of this.monsters) {
+      if (!m.alive || m.state === 'dormant' || m.state === 'intro') continue;
+      const d = dist(s.x, s.y, m.cx, m.cy);
+      if (d > 480) continue;
+      const ang = Math.atan2(m.cy - s.y, m.cx - s.x);
+      const diff = Math.abs(angleDiff(a, ang)) + d / 5000;
+      if (diff < bd && this.level.los(s.x, s.y, m.cx, m.cy)) { bd = diff; best = { m, ang }; }
+    }
+    this.autoTarget = best ? best.m : null;
+    return best ? best.ang : a;
   },
 
   cameraTarget(plain = false) {
@@ -1052,6 +1080,7 @@ const Game = {
       if (Music.playing) Music.stop(); else Music.start(this.levelDef.music || 55, this.musicStyle());
     }
     if (Input.buttonPresses.has('map') || Input.actPressed('mapPin')) this.mapOpen = !this.mapOpen;
+    if (Input.buttonPresses.has('full')) this.toggleFullscreen();
     this.showStats = Input.act('map') || this.mapOpen;
     this.revealT -= dt;
     if (this.revealT <= 0) {
@@ -1247,7 +1276,11 @@ const Game = {
         }
         if (this.exitHint && p.alive && !this.cine) this.drawExitPointer(ctx, W, H, u);
         if (this.cine) this.drawBossCard(ctx, W, H, u);
-        if (Input.touchMode) HUD.drawTouch(ctx, W, H, u);
+        if (Input.touchMode) {
+          const m = this.autoTarget;
+          if (m && m.alive && Input.aim.id !== null) HUD.drawAutoTarget(ctx, m, (wx, wy) => ({ x: (wx - this.cam.x) * this.scale + this.offX, y: (wy - this.cam.y) * this.scale + this.offY }), u);
+          HUD.drawTouch(ctx, W, H, u);
+        }
         if (this.showStats) this.drawAutomap(ctx, W, H, u);
       }
       if (this.debugOn && p) this.drawDebug(ctx, W, H, u);

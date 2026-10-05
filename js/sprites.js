@@ -1985,38 +1985,172 @@ function drawWeaponGlow(ctx, x, y, it, t) {
   ctx.restore();
 }
 
+// Подсветка припасов: отсвет на полу цветом по смыслу, подсвеченный силуэт и искорки.
+function drawPickupGlow(ctx, x, y, it, t, col) {
+  const ph = it.phase || 0;
+  const bob = it.dropped ? 0 : Math.round(Math.sin(t * 3 + ph) * 1.5) - 1;
+  const pulse = 0.5 + Math.sin(t * 3 + ph) * 0.5;
+  const img = itemImg(it.ch);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  // ореол вокруг предмета и отсвет на полу
+  const cy = y + bob - (img ? img.height / 2 : 6);
+  const halo = ctx.createRadialGradient(x, cy, 0, x, cy, 15);
+  halo.addColorStop(0, `rgba(${col},${0.2 + pulse * 0.1})`);
+  halo.addColorStop(1, `rgba(${col},0)`);
+  ctx.fillStyle = halo;
+  ctx.fillRect(x - 15, cy - 15, 30, 30);
+  const g = ctx.createRadialGradient(x, y - 1, 0, x, y - 1, 14);
+  g.addColorStop(0, `rgba(${col},${0.36 + pulse * 0.14})`);
+  g.addColorStop(1, `rgba(${col},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(x - 14, y - 6, 28, 8);
+  if (img) {
+    ctx.globalAlpha = 0.2 + pulse * 0.12;
+    ctx.drawImage(img, x - (img.width >> 1), y + bob - img.height);
+  }
+  // две искорки поднимаются и гаснут
+  for (let i = 0; i < 2; i++) {
+    const k = (t * 0.5 + ph + i / 2) % 1;
+    ctx.globalAlpha = 0.6 * (1 - k);
+    ctx.fillStyle = `rgb(${col})`;
+    ctx.fillRect(Math.round(x - 5 + ((i * 9 + Math.floor(ph * 10)) % 10)), Math.round(y - 4 - k * 12 + bob), 1, 1);
+  }
+  ctx.restore();
+}
+
 // ---------------- лицо героя для HUD ----------------
+// Лицо героя в строке состояния, как в Quake: смотрит по сторонам, морщится от боли,
+// с каждой ступенью ранения — больше крови и синяков. Рисуется на сетке 32×32 в кэш
+// и выводится без сглаживания в те же 16×16 единиц интерфейса.
+const FACE_CACHE = new Map();
 function drawFace(ctx, x, y, s, p, t) {
-  const r = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x + a * s, y + b * s, w * s, h * s); };
   const hp = p.health;
   const tier = !p.alive ? 5 : hp >= 80 ? 0 : hp >= 60 ? 1 : hp >= 40 ? 2 : hp >= 20 ? 3 : 4;
-  let skin = '#c09070', sh = '#96684e';
-  if (p.pent > 0) { skin = '#d07060'; sh = '#a04a3a'; }
-  if (tier === 5) { skin = '#8a7a6a'; sh = '#5a4a3a'; }
-  r(3, 1, 10, 14, sh);
-  r(3, 1, 9, 13, skin);
-  r(2, 0, 12, 4, '#3a3020');
-  r(2, 3, 2, 5, '#3a3020');
-  r(12, 3, 2, 4, '#3a3020');
-  r(2, 6, 1, 3, sh);
-  r(13, 6, 1, 3, sh);
-  const look = tier === 5 ? 0 : Math.round(Math.sin(t * 0.7) * 1.2);
-  const pain = p.faceT > 0 || tier === 5;
-  if (pain) {
-    r(4, 7, 3, 1, '#2a1a10'); r(9, 7, 3, 1, '#2a1a10');
-  } else {
-    r(4, 6, 3, 2, p.quad > 0 ? '#80a0ff' : '#e8e0d0');
-    r(9, 6, 3, 2, p.quad > 0 ? '#80a0ff' : '#e8e0d0');
-    r(5 + look, 6, 1, 2, p.pent > 0 ? '#ff2010' : '#2a1a10');
-    r(10 + look, 6, 1, 2, p.pent > 0 ? '#ff2010' : '#2a1a10');
+  // взгляд: как в Quake, раз в пару секунд косится влево или вправо
+  const ph = (t * 0.45) % 3;
+  const look = tier === 5 ? 0 : ph < 0.5 ? -1 : ph > 1.5 && ph < 2 ? 1 : 0;
+  const pain = tier < 5 && p.faceT > 0;
+  const mode = p.ring > 0 ? 'ring' : p.pent > 0 ? 'pent' : p.quad > 0 ? 'quad' : '';
+  const key = `${tier}|${look}|${pain ? 1 : 0}|${mode}`;
+  let img = FACE_CACHE.get(key);
+  if (!img) { img = paintFace(tier, look, pain, mode); FACE_CACHE.set(key, img); }
+  const sm = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, Math.round(x), Math.round(y), Math.round(16 * s), Math.round(16 * s));
+  ctx.imageSmoothingEnabled = sm;
+}
+
+function paintFace(tier, look, pain, mode) {
+  const cv = makeCanvas(32, 32);
+  const g = cv.getContext('2d');
+  const px = (a, b, c, w = 1, h = 1) => { g.fillStyle = c; g.fillRect(a, b, w, h); };
+  const dead = tier === 5;
+  // кожа: от света к тени; под пентаграммой — красноватая, у мёртвого — серая
+  let S = ['#ecbc96', '#d2986e', '#b27852', '#8a5638', '#5a3220'];
+  if (mode === 'pent') S = ['#f0a090', '#d8786a', '#b0564a', '#843a32', '#52201a'];
+  if (dead) S = ['#b4a898', '#988a7a', '#7a6c5e', '#5a4e44', '#3a302a'];
+  const HAIR = ['#3a2616', '#4e3420', '#6e4c30'];
+  const cx = 16;
+  // очертание головы: полуширина по рядам (квадратная челюсть)
+  const HW = { 4: 7, 5: 9, 6: 10, 7: 10, 8: 11, 9: 11, 10: 11, 11: 11, 12: 11, 13: 11, 14: 11, 15: 11, 16: 11, 17: 11, 18: 11, 19: 10, 20: 10, 21: 10, 22: 10, 23: 9, 24: 9, 25: 9, 26: 8, 27: 7, 28: 6 };
+  for (let y = 4; y <= 28; y++) {
+    const hw = HW[y];
+    for (let x = cx - hw; x < cx + hw; x++) {
+      const e = (x - (cx - hw)) / (hw * 2);          // 0 — левый край (свет), 1 — правый (тень)
+      let c = S[1];
+      if (e < 0.12) c = S[2]; else if (e < 0.32) c = S[0]; else if (e > 0.86) c = S[3]; else if (e > 0.7) c = S[2];
+      if (y >= 26) c = e > 0.6 ? S[3] : S[2];        // тень под подбородком
+      px(x, y, c);
+    }
   }
-  r(4, 5, 3, 1, '#4a3a28'); r(9, 5, 3, 1, '#4a3a28');
-  r(7, 8, 2, 3, sh);
-  r(6, 12, 4, 1, pain ? '#3a1010' : '#6a3a2a');
-  if (pain) r(6, 11, 4, 1, '#3a1010');
-  if (tier >= 1) r(11, 9, 2, 3, '#8a0a08');
-  if (tier >= 2) { r(3, 2, 2, 2, '#8a0a08'); r(10, 12, 3, 2, '#7a0a08'); }
-  if (tier >= 3) { r(4, 9, 2, 4, '#7a0a08'); r(8, 1, 3, 2, '#9a1010'); }
-  if (tier >= 4) { r(5, 3, 6, 1, '#6a0806'); r(3, 13, 9, 2, '#6a0806'); }
-  if (p.ring > 0) { ctx.fillStyle = 'rgba(10,8,6,0.75)'; ctx.fillRect(x + 2 * s, y, 12 * s, 15 * s); r(5, 6, 1, 1, '#ffe080'); r(10, 6, 1, 1, '#ffe080'); }
+  // уши
+  px(cx - 12, 14, S[2], 1, 5); px(cx - 13, 15, S[3], 1, 3); px(cx + 11, 14, S[3], 1, 5); px(cx + 12, 15, S[4], 1, 3);
+  // шея и ворот брони
+  px(cx - 5, 28, S[3], 10, 2);
+  px(cx - 10, 30, '#3a4a28', 20, 2); px(cx - 10, 30, '#56683a', 20, 1); px(cx - 2, 29, '#2a3420', 4, 2);
+  // волосы: короткая стрижка, виски, чуть темнее сверху
+  for (let y = 1; y <= 8; y++) {
+    const hw = y < 4 ? 5 + (y - 1) * 2 : Math.min(12, (HW[y] || 11) + 1);
+    px(cx - hw, y, HAIR[y < 3 ? 0 : 1], hw * 2, 1);
+  }
+  for (let i = 0; i < 9; i++) px(cx - 9 + i * 2 + (i % 2), 2 + (i % 3), HAIR[2], 1, 2);   // блики в волосах
+  px(cx - 12, 9, HAIR[1], 3, 5); px(cx + 9, 9, HAIR[1], 3, 5);   // виски
+  for (let i = 0; i < 6; i++) px(cx - 8 + i * 3, 3 + (i % 2), HAIR[2], 2, 1);   // пряди
+  px(cx - 9, 9, HAIR[0], 18, 1);                                     // линия роста волос
+  // лоб и надбровья
+  px(cx - 9, 11, S[1], 18, 1);
+  // брови: сдвинуты к переносице (решимость); от боли — ниже и круче
+  const by = pain ? 13 : 12;
+  px(cx - 8, by, '#2a1c12', 5, 1); px(cx - 4, by + 1, '#2a1c12', 2, 1);
+  px(cx + 3, by, '#2a1c12', 5, 1); px(cx + 2, by + 1, '#2a1c12', 2, 1);
+  // глаза
+  const eyeY = 15;
+  if (mode === 'ring') {
+    // кольцо теней: голова растворяется во тьме (только она, не фон), видны глаза
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = 'rgba(8,6,4,0.86)'; g.fillRect(0, 0, 32, 32);
+    g.globalCompositeOperation = 'source-over';
+    px(cx - 6, eyeY, '#ffe080', 2, 1); px(cx + 4, eyeY, '#ffe080', 2, 1);
+    return cv;
+  }
+  if (dead) {
+    px(cx - 7, eyeY, S[4], 4, 1); px(cx + 3, eyeY, S[4], 4, 1);
+  } else if (pain) {
+    px(cx - 7, eyeY, '#2a1810', 4, 1); px(cx + 3, eyeY, '#2a1810', 4, 1);
+    px(cx - 7, eyeY + 1, S[3], 4, 1); px(cx + 3, eyeY + 1, S[3], 4, 1);
+  } else {
+    const white = '#ece4d6', iris = mode === 'quad' ? '#90b0ff' : mode === 'pent' ? '#ff3a20' : '#4a6a86';
+    px(cx - 7, eyeY, white, 4, 2); px(cx + 3, eyeY, white, 4, 2);
+    const ix = 1 + look;
+    px(cx - 7 + ix, eyeY, iris, 2, 2); px(cx + 3 + ix, eyeY, iris, 2, 2);
+    px(cx - 7 + ix + (look > 0 ? 1 : 0), eyeY, '#100c0a'); px(cx + 3 + ix + (look > 0 ? 1 : 0), eyeY, '#100c0a');
+    px(cx - 7, eyeY - 1, S[3], 4, 1); px(cx + 3, eyeY - 1, S[3], 4, 1);   // верхнее веко
+    if (mode === 'quad') { g.fillStyle = 'rgba(140,170,255,0.35)'; g.fillRect(cx - 8, eyeY - 1, 6, 4); g.fillRect(cx + 2, eyeY - 1, 6, 4); }
+  }
+  px(cx - 7, eyeY + 2, S[2], 4, 1); px(cx + 3, eyeY + 2, S[3], 4, 1);     // тень под глазами
+  // нос: переносица, тень справа, кончик и ноздри
+  px(cx, 15, S[2], 1, 5); px(cx + 1, 16, S[3], 1, 5); px(cx - 1, 19, S[0]);
+  px(cx - 2, 21, S[3], 5, 1); px(cx - 2, 21, S[4]); px(cx + 2, 21, S[4]);
+  // скулы
+  px(cx - 9, 18, S[0], 2, 2); px(cx + 7, 18, S[3], 2, 2);
+  // щетина
+  for (let i = 0; i < 26; i++) {
+    const sx = cx - 8 + Math.floor(hash2(i, 1, 201) * 16), sy = 22 + Math.floor(hash2(i, 2, 202) * 6);
+    if (Math.abs(sx - cx) + (sy - 22) < 14) px(sx, sy, dead ? S[3] : 'rgba(70,40,24,0.5)');
+  }
+  // рот: сжат; от боли — оскал с зубами; у мёртвого — приоткрыт
+  if (pain) { px(cx - 4, 23, '#3a1410', 8, 3); px(cx - 3, 23, '#e8e0d0', 6, 1); px(cx - 3, 25, '#c8c0b0', 6, 1); }
+  else if (dead) { px(cx - 3, 24, '#2a1410', 6, 2); }
+  else { px(cx - 4, 24, '#5a2a1c', 8, 1); px(cx - 3, 25, S[0], 6, 1); px(cx + 4, 23, '#5a2a1c'); }
+  // подбородок
+  px(cx - 2, 27, S[1], 4, 1);
+  // ранения
+  const B = ['#9a0c0a', '#6a0806', '#c01810'];
+  if (tier >= 1) { px(cx + 8, 10, B[0], 2, 1); px(cx + 9, 11, B[0], 1, 4); px(cx + 9, 15, B[1]); }          // рассечён висок
+  if (tier >= 2) { px(cx - 1, 22, B[0], 1, 2); px(cx + 1, 22, B[1], 1, 3); px(cx - 3, 26, B[0], 2, 1); }   // кровь из носа, губа
+  if (tier >= 3) {
+    g.fillStyle = 'rgba(90,40,90,0.55)'; g.fillRect(cx - 8, eyeY - 1, 6, 4);                               // синяк под глазом
+    px(cx - 5, 9, B[2], 6, 1); px(cx - 4, 10, B[0], 1, 4); px(cx - 1, 10, B[0], 1, 3);                      // рана на лбу
+    px(cx - 10, 19, B[1], 1, 5);
+  }
+  if (tier >= 4) {
+    px(cx + 3, eyeY, S[3], 4, 1);                                                                          // заплывший глаз
+    px(cx - 9, 20, B[0], 3, 6); px(cx + 6, 22, B[1], 3, 5); px(cx - 8, 28, B[1], 16, 1);
+    px(cx + 2, 9, B[2], 3, 1); px(cx + 3, 10, B[0], 1, 3);     // ещё одна рана у линии волос
+  }
+  if (dead) { px(cx - 6, 6, B[1], 12, 2); px(cx - 9, 12, B[0], 2, 10); px(cx + 7, 11, B[1], 2, 12); }
+  outlineSprite(g, 32, 32, '#0c0805');
+  return cv;
+}
+
+// Тёмный контур в пиксель вокруг непрозрачного: силуэт читается на любом фоне.
+function outlineSprite(g, w, h, col) {
+  const img = g.getImageData(0, 0, w, h), d = img.data;
+  const solid = (x, y) => x >= 0 && y >= 0 && x < w && y < h && d[(y * w + x) * 4 + 3] > 40;
+  g.fillStyle = col;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (solid(x, y)) continue;
+    if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1)) g.fillRect(x, y, 1, 1);
+  }
 }

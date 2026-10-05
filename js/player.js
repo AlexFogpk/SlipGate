@@ -99,7 +99,8 @@ class Player {
 
     const move = Input.moveAxis();
     const jumpHeld = Input.jumpHeld();
-    const jumpPressed = jumpHeld && !this.prevJump;
+    // быстрый тап по кнопке на телефоне (нажали и отпустили между кадрами) — тоже прыжок
+    const jumpPressed = (jumpHeld && !this.prevJump) || Input.buttonPresses.has('jump');
     this.prevJump = jumpHeld;
     if (jumpPressed) this.jumpBuf = 0.12; else this.jumpBuf -= dt;
     const down = Input.downHeld();
@@ -255,7 +256,7 @@ class Player {
   updateWeapons(dt) {
     this.fireCd -= dt;
     this.attackAnim = Math.max(0, this.attackAnim - dt);
-    for (let n = 1; n <= 9; n++) if (Input.wasPressed('Digit' + n, 'Numpad' + n)) this.selectWeapon(n, true);
+    for (let n = 1; n <= 9; n++) if (Input.wasPressed('Digit' + n, 'Numpad' + n) || Input.buttonPresses.has('w' + n)) this.selectWeapon(n, true);
     if (Input.wheel > 0 || Input.actPressed('next') || Input.buttonPresses.has('next')) this.cycleWeapon(1);
     if (Input.wheel < 0 || Input.actPressed('prev')) this.cycleWeapon(-1);
     if (Input.fireHeld() && this.fireCd <= 0) this.fire();
@@ -423,6 +424,7 @@ class Player {
     this.health -= take;
     this.faceT = 0.4;
     this.hurtFlash = 0.1;
+    Input.vibrate(this.health <= 0 ? 160 : take >= 25 ? 60 : 25);
     Game.damageFlash = Math.min(0.8, Game.damageFlash + take / 45);
     if (attacker && attacker !== this && attacker.cx !== undefined) HUD.hitFrom(attacker.cx, attacker.cy);
     FX.blood(this.cx, this.cy, rand(-1, 1), -1, Math.min(8, 2 + take / 5));

@@ -194,8 +194,11 @@ const HUD = {
 
     // оружие: картинки в ячейках, номер в углу, выбранное — в золотой рамке
     const slotW = Math.min(26, (cw * 0.6) / 9);
+    Input.slotRects.length = 0;
     for (let n = 1; n <= 9; n++) {
       const sx = X((n - 1) * slotW), sw = Math.round((slotW - 1.5) * u);
+      // касание ячейки выбирает оружие (только то, что есть)
+      if (p.weapons[n]) Input.slotRects.push({ n, x: sx, y: rowY - 2 * u, w: sw, h: rowH + 4 * u });
       const owned = p.weapons[n], cur = p.weapon === n;
       const empty = owned && !p.hasAmmoFor(n);
       this.inset(ctx, sx, rowY, sw, rowH, u, cur ? 'rgba(150,100,30,0.55)' : null);
@@ -414,14 +417,18 @@ const HUD = {
 
   layoutTouch(W, H, u) {
     const by = H - HUD_BAR * u;
+    Input.stickR = Math.round(36 * u);
     Input.touchButtons = [
-      { name: 'pause', x: W - 18 * u, y: 18 * u, r: 13 * u, label: 'II' },
-      { name: 'next', x: W - 22 * u, y: by - 58 * u, r: 16 * u, label: '⇄' },
-      { name: 'jump', x: W - 58 * u, y: by - 26 * u, r: 20 * u, label: '▲' },
-      { name: 'map', x: W - 48 * u, y: 18 * u, r: 11 * u, label: '▦' },
+      { name: 'pause', x: W - 18 * u, y: 18 * u, r: 12 * u, label: 'II' },
+      { name: 'map', x: W - 46 * u, y: 18 * u, r: 11 * u, label: '▦' },
+      { name: 'full', x: W - 73 * u, y: 18 * u, r: 11 * u, label: '⛶' },
+      { name: 'next', x: W - 26 * u, y: by - 86 * u, r: 15 * u, label: '⇄' },
+      { name: 'jump', x: W - 32 * u, y: by - 42 * u, r: 22 * u, label: '▲' },
     ];
   },
 
+  // Сенсорные кнопки и два стика: левый — бег (вверх — прыжок, вниз — спрыгнуть),
+  // правый — прицел и огонь. Пока стик не тронут, на его месте — бледная подсказка.
   drawTouch(ctx, W, H, u) {
     ctx.save();
     for (const b of Input.touchButtons) {
@@ -435,16 +442,41 @@ const HUD = {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(b.label, b.x, b.y + 1);
     }
-    const st = Input.stick;
-    const bx = st.id !== null ? st.ox : W * 0.14, byy = st.id !== null ? st.oy : H * 0.62;
-    ctx.globalAlpha = st.id !== null ? 0.8 : 0.35;
-    ctx.strokeStyle = 'rgba(240,200,120,0.7)';
-    ctx.lineWidth = u;
-    ctx.beginPath(); ctx.arc(bx, byy, 40, 0, TAU); ctx.stroke();
-    const v = Input.stickVec();
-    ctx.fillStyle = 'rgba(240,200,120,0.5)';
-    ctx.beginPath(); ctx.arc(bx + v.x * 30, byy + v.y * 30, 16, 0, TAU); ctx.fill();
+    const R = Input.stickR;
+    const stickAt = (st, gx, gy, vec, label, col) => {
+      const on = st.id !== null;
+      const bx = on ? st.ox : gx, byy = on ? st.oy : gy;
+      ctx.globalAlpha = on ? 0.85 : 0.3;
+      ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, u);
+      ctx.beginPath(); ctx.arc(bx, byy, R, 0, TAU); ctx.stroke();
+      ctx.fillStyle = col.replace('0.75', '0.18');
+      ctx.fill();
+      ctx.fillStyle = col.replace('0.75', '0.55');
+      ctx.beginPath(); ctx.arc(bx + vec.x * R * 0.75, byy + vec.y * R * 0.75, R * 0.4, 0, TAU); ctx.fill();
+      if (!on) { ctx.globalAlpha = 0.45; this.text(ctx, label, bx, byy + R + 6 * u, 5 * u, '#f0d898', 'center'); }
+      ctx.globalAlpha = 1;
+    };
+    stickAt(Input.stick, W * 0.13, H * 0.6, Input.stickVec(), 'бег · вверх — прыжок', 'rgba(240,200,120,0.75)');
+    let av = { x: 0, y: 0 };
+    if (Input.aim.id !== null) {
+      const dx = Input.aim.x - Input.aim.ox, dy = Input.aim.y - Input.aim.oy, l = Math.hypot(dx, dy) || 1;
+      const k = Math.min(1, l / R);
+      av = { x: dx / l * k, y: dy / l * k };
+    }
+    stickAt(Input.aim, W * 0.74, H * 0.6, av, 'прицел и огонь', 'rgba(255,140,90,0.75)');
     ctx.restore();
+  },
+
+  // Автоприцел нашёл цель: уголки рамки вокруг неё (только на телефоне).
+  drawAutoTarget(ctx, m, toScreen, u) {
+    const a = toScreen(m.x - 3, m.y - 3), b = toScreen(m.x + m.w + 3, m.y + m.h + 3);
+    const L = 4 * u;
+    ctx.strokeStyle = 'rgba(255,120,60,0.9)'; ctx.lineWidth = Math.max(1, u * 0.8);
+    ctx.beginPath();
+    for (const [x, y, sx, sy] of [[a.x, a.y, 1, 1], [b.x, a.y, -1, 1], [a.x, b.y, 1, -1], [b.x, b.y, -1, -1]]) {
+      ctx.moveTo(x + sx * L, y); ctx.lineTo(x, y); ctx.lineTo(x, y + sy * L);
+    }
+    ctx.stroke();
   },
 
   // Таблица уровня (Tab) и итоги (антракт).

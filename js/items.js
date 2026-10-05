@@ -20,6 +20,19 @@ const POWERUPS = {
 };
 const ITEM_CHARS = '+HMAYRUNKCQXVW()3456789';
 
+const PICK_GLOW = {
+  '+': { col: '255,90,80', light: [1, 0.4, 0.35] },
+  H: { col: '255,90,80', light: [1, 0.4, 0.35] },
+  A: { col: '110,230,110', light: [0.45, 1, 0.45] },
+  Y: { col: '255,210,80', light: [1, 0.85, 0.35] },
+  R: { col: '255,80,60', light: [1, 0.35, 0.3] },
+  U: { col: '255,190,100', light: [1, 0.75, 0.4] },
+  N: { col: '255,190,100', light: [1, 0.75, 0.4] },
+  K: { col: '255,160,80', light: [1, 0.62, 0.35] },
+  C: { col: '140,200,255', light: [0.55, 0.78, 1] },
+  backpack: { col: '255,190,100', light: [1, 0.75, 0.4] },
+};
+
 class Item {
   constructor(ch, cx, bottom, extra = {}) {
     this.ch = ch;
@@ -131,12 +144,17 @@ class Item {
   }
 
   get isWeapon() { return this.ch >= '3' && this.ch <= '9' && this.ch.length === 1; }
+  // Подсветка всего, что можно подобрать: цвет по смыслу — лечение красное, броня по
+  // своему цвету, патроны тёплые, батареи голубые.
+  get pickGlow() { return PICK_GLOW[this.ch] || null; }
 
   lights(out, t) {
     // свет из закрытого тайника не выдаёт его
     if (this.taken || Game.level.isHiddenAt(this.cx, this.cy)) return;
     // оружие на полу видно издалека: свой тёплый свет, как у пьедестала в Quake
     if (this.isWeapon) { out.push({ x: this.cx, y: this.cy - 2, r: 60, c: [1, 0.86, 0.55], i: 0.7 + Math.sin(t * 3 + this.phase) * 0.12 }); return; }
+    const pg = this.pickGlow;
+    if (pg) { out.push({ x: this.cx, y: this.cy - 2, r: 46, c: pg.light, i: 0.55 + Math.sin(t * 3 + this.phase) * 0.12 }); return; }
     const glow = { M: [0.4, 0.5, 1], Q: [0.3, 0.4, 1], X: [1, 0.25, 0.2], V: [1, 0.8, 0.3], W: [0.3, 1, 0.4], '(': [0.8, 0.85, 1], ')': [1, 0.8, 0.3] }[this.ch];
     if (glow) out.push({ x: this.cx, y: this.cy, r: 48, c: glow, i: 0.6 + Math.sin(t * 4 + this.phase) * 0.15 });
   }
@@ -150,9 +168,12 @@ class Item {
 
   // Поверх освещения: золотой отсвет под оружием, блик и искры — чтобы оружие не терялось.
   drawBright(ctx, cam, t) {
-    if (this.taken || !this.isWeapon || Game.level.isHiddenAt(this.cx, this.cy)) return;
+    if (this.taken || Game.level.isHiddenAt(this.cx, this.cy)) return;
+    const pg = this.pickGlow;
+    if (!this.isWeapon && !pg) return;
     const x = Math.round(this.cx - cam.x), y = Math.round(this.y + this.h - cam.y);
     if (x < -30 || y < -30 || x > ctx.canvas.width + 30 || y > ctx.canvas.height + 30) return;
-    drawWeaponGlow(ctx, x, y, this, t);
+    if (this.isWeapon) drawWeaponGlow(ctx, x, y, this, t);
+    else drawPickupGlow(ctx, x, y, this, t, pg.col);
   }
 }
