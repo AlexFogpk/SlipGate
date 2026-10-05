@@ -95,6 +95,11 @@ const Input = {
     canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
     window.addEventListener('pointerup', (e) => this.onPointerUp(e));
     window.addEventListener('pointercancel', (e) => this.onPointerUp(e));
+    // iPhone: прокрутка, масштаб и двойное касание на холсте отменяли касания (pointercancel) —
+    // стик бросало посреди движения. Касания-указатели при этом приходят как обычно.
+    const stop = (e) => { if (e.cancelable) e.preventDefault(); };
+    for (const t of ['touchstart', 'touchmove', 'touchend']) canvas.addEventListener(t, stop, { passive: false });
+    for (const t of ['gesturestart', 'gesturechange', 'dblclick']) document.addEventListener(t, stop, { passive: false });
   },
 
   pos(e) {
@@ -104,8 +109,7 @@ const Input = {
 
   // Точка касания в пикселях холста.
   canvasPos(p) {
-    const k = this.canvas.width / (p.w || 1);
-    return { x: p.x * k, y: p.y * k };
+    return { x: p.x * this.canvas.width / (p.w || 1), y: p.y * this.canvas.height / (p.h || 1) };
   },
 
   hitButton(c) {
@@ -122,7 +126,7 @@ const Input = {
     if (e.pointerType === 'touch' || e.pointerType === 'pen') {
       e.preventDefault();
       this.touchMode = true;
-      this.clicks.push({ x: p.x, y: p.y });
+      this.clicks.push(p);
       const c = this.canvasPos(p);
       const btn = this.hitButton(c);
       if (btn) {
@@ -151,7 +155,7 @@ const Input = {
     this.mouseX = p.x; this.mouseY = p.y;
     if (e.button === 0) {
       this.mouseDown = true;
-      this.clicks.push({ x: p.x, y: p.y });
+      this.clicks.push(p);
     } else if (e.button === 2) {
       this.pressed.add('Mouse2');
     }

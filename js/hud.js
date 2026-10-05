@@ -167,12 +167,15 @@ const HUD = {
     return low ? DIGIT_RED : DIGIT_GOLD;
   },
 
+  // верх строки состояния: над полоской «Домой» на iPhone
+  barTop(H, u) { return H - HUD_BAR * u - ((Game.safe && Game.safe.b) || 0); },
+
   draw(ctx, W, H, u, t) {
     const p = Game.player;
     if (!p) return;
     this.trackValues(p);
     const VW = W / u;
-    const by = H - HUD_BAR * u;
+    const by = this.barTop(H, u);
 
     // мало здоровья — по краям экрана пульсирует красное
     if (p.alive && p.health <= 25) {
@@ -186,6 +189,7 @@ const HUD = {
 
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.barTexture(Math.ceil(VW)), 0, by, Math.ceil(VW) * u, HUD_BAR * u);
+    if (H > by + HUD_BAR * u) { ctx.fillStyle = '#100a06'; ctx.fillRect(0, by + HUD_BAR * u, W, H - by - HUD_BAR * u); }
 
     const cw = Math.min(VW - 8, 440);
     const x0 = (VW - cw) / 2;
@@ -366,11 +370,12 @@ const HUD = {
       const ly = byy + (sub !== null ? 11 : 8) * u;
       this.text(ctx, label, W / 2, ly, 5 * u, status === status.toUpperCase() && status ? '#ffe0a0' : guard ? (boss.type === 'elder' ? '#a0e8ff' : boss.type === 'chthon' ? '#ffc890' : '#d0a0ff') : '#f0c0a0', 'center');
     }
-    // сообщения
-    let myy = 6 * u;
+    // сообщения — правее выреза экрана
+    const sf = Game.safe || { l: 0, t: 0 };
+    let myy = sf.t + 6 * u;
     for (const m of this.msgs) {
       ctx.globalAlpha = clamp(m.t, 0, 1);
-      this.text(ctx, m.text, 6 * u, myy, 6.5 * u, '#e8d8b0');
+      this.text(ctx, m.text, sf.l + 6 * u, myy, 6.5 * u, '#e8d8b0');
       myy += 10 * u;
     }
     ctx.globalAlpha = 1;
@@ -416,14 +421,16 @@ const HUD = {
   },
 
   layoutTouch(W, H, u) {
-    const by = H - HUD_BAR * u;
+    const by = this.barTop(H, u);
+    const s = Game.safe || { t: 0, r: 0 };
+    const R = W - s.r, T = s.t;
     Input.stickR = Math.round(36 * u);
     Input.touchButtons = [
-      { name: 'pause', x: W - 18 * u, y: 18 * u, r: 12 * u, label: 'II' },
-      { name: 'map', x: W - 46 * u, y: 18 * u, r: 11 * u, label: '▦' },
-      { name: 'full', x: W - 73 * u, y: 18 * u, r: 11 * u, label: '⛶' },
-      { name: 'next', x: W - 26 * u, y: by - 86 * u, r: 15 * u, label: '⇄' },
-      { name: 'jump', x: W - 32 * u, y: by - 42 * u, r: 22 * u, label: '▲' },
+      { name: 'pause', x: R - 18 * u, y: T + 18 * u, r: 12 * u, label: 'II' },
+      { name: 'map', x: R - 46 * u, y: T + 18 * u, r: 11 * u, label: '▦' },
+      { name: 'full', x: R - 73 * u, y: T + 18 * u, r: 11 * u, label: '⛶' },
+      { name: 'next', x: R - 26 * u, y: by - 86 * u, r: 15 * u, label: '⇄' },
+      { name: 'jump', x: R - 32 * u, y: by - 42 * u, r: 22 * u, label: '▲' },
     ].filter((b) => b.name !== 'full' || !App.installed);   // с главного экрана игра и так во весь экран
   },
 
@@ -456,7 +463,8 @@ const HUD = {
       if (!on) { ctx.globalAlpha = 0.45; this.text(ctx, label, bx, byy + R + 6 * u, 5 * u, '#f0d898', 'center'); }
       ctx.globalAlpha = 1;
     };
-    stickAt(Input.stick, W * 0.13, H * 0.6, Input.stickVec(), 'бег · вверх — прыжок', 'rgba(240,200,120,0.75)');
+    const sl = (Game.safe && Game.safe.l) || 0;
+    stickAt(Input.stick, sl + (W - sl) * 0.13, H * 0.6, Input.stickVec(), 'бег · вверх — прыжок', 'rgba(240,200,120,0.75)');
     let av = { x: 0, y: 0 };
     if (Input.aim.id !== null) {
       const dx = Input.aim.x - Input.aim.ox, dy = Input.aim.y - Input.aim.oy, l = Math.hypot(dx, dy) || 1;

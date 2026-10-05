@@ -135,6 +135,7 @@ const Game = {
     this.dpr = dpr;
     const rect = this.canvas.getBoundingClientRect();
     const cssW = Math.max(200, rect.width || window.innerWidth), cssH = Math.max(150, rect.height || window.innerHeight);
+    this.cssW = this.canvas.clientWidth; this.cssH = this.canvas.clientHeight;
     this.canvas.width = Math.round(cssW * dpr);
     this.canvas.height = Math.round(cssH * dpr);
     const s = Math.min(cssW / 560, cssH / 315);
@@ -147,7 +148,23 @@ const Game = {
     this.world.width = vw; this.world.height = vh;
     this.light.width = vw; this.light.height = vh;
     this.u = Math.max(0.8, Math.min(this.canvas.width / 540, this.canvas.height / 300));
+    this.safe = this.safeInsets(this.canvas.width / cssW);
     HUD.layoutTouch(this.canvas.width, this.canvas.height, this.u);
+  },
+
+  // Вырезы экрана — «чёлка», Dynamic Island, полоска «Домой» — в пикселях холста.
+  // Картинка идёт на весь экран, а кнопки, стики и надписи держатся внутри безопасной зоны.
+  safeInsets(k) {
+    if (!this.safeProbe) {
+      const d = document.createElement('div');
+      d.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;' +
+        'padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
+      document.body.appendChild(d);
+      this.safeProbe = d;
+    }
+    const cs = getComputedStyle(this.safeProbe);
+    const v = (s) => Math.round((parseFloat(s) || 0) * k);
+    return { t: v(cs.paddingTop), r: v(cs.paddingRight), b: v(cs.paddingBottom), l: v(cs.paddingLeft) };
   },
 
   // Яркость: выше 100% поднимает тени (как гамма в Quake), ниже — приглушает свет.
@@ -169,6 +186,9 @@ const Game = {
   },
 
   loop(now) {
+    // размер холста сверяем каждый кадр: iPhone при повороте шлёт resize раньше, чем
+    // пересчитает раскладку, — картинка оставалась сжатой, а касания попадали мимо кнопок
+    if (this.canvas.clientWidth !== this.cssW || this.canvas.clientHeight !== this.cssH) this.resize();
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.acc += dt;
@@ -1393,7 +1413,7 @@ const Game = {
     const e = best.e;
     const sx = this.offX + (e.cx - this.cam.x) * this.scale;
     const sy = this.offY + (e.bottom - 30 - this.cam.y) * this.scale;
-    const m = 26 * u, bottom = H - HUD_BAR * u - 22 * u;
+    const m = 26 * u, bottom = HUD.barTop(H, u) - 22 * u;
     const inside = sx > m && sx < W - m && sy > m && sy < bottom;
     const bob = Math.sin(this.time * 6) * 3 * u;
     ctx.save();
