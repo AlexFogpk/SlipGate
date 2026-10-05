@@ -158,14 +158,15 @@ const Menu = {
       const hb = this.hitAt(Input.mouseX * Game.dpr, Input.mouseY * Game.dpr);
       if (hb !== null && hb !== this.sel) { this.sel = hb; Sound.play('menu'); }
     }
-    for (const c of Input.clicks) {
-      const hb = this.hitAt(c.x * Game.dpr, c.y * Game.dpr);
+    for (const click of Input.clicks) {
+      const c = Input.canvasPos(click);
+      const hb = this.hitAt(c.x, c.y);
       if (hb !== null) {
         this.sel = hb;
         const item = items[hb];
         // клик по левой/правой половине строки регулирует значение
         if (item.adj) {
-          item.adj(c.x * Game.dpr < Game.canvas.width / 2 ? -1 : 1);
+          item.adj(c.x < Game.canvas.width / 2 ? -1 : 1);
           Sound.play('menu');
         } else this.activate(item);
         break;
