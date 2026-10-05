@@ -54,6 +54,7 @@ const FX = {
 
   explosion(x, y, scale = 1) {
     this.blasts.push({ x, y, t: 0, max: 0.5, r: 26 * scale });
+    foregroundJolt(x, y, scale);
     this.light(x, y, 150 * scale, [1.0, 0.6, 0.25], 1.3, 0.45);
     const n = Math.round(30 * scale);
     for (let i = 0; i < n; i++) {
@@ -195,6 +196,12 @@ const FX = {
         const s = p.size * (1.8 - k);
         ctx.fillStyle = p.col;
         ctx.fillRect(Math.round(x - s / 2), Math.round(y - s / 2), Math.ceil(s), Math.ceil(s));
+      } else if (p.kind === 'shell') {
+        // гильза: кувыркается, то вдоль, то поперёк
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = p.col;
+        const a = Math.floor((p.life * 20) % 2);
+        ctx.fillRect(Math.round(x), Math.round(y), a ? 2 : 1, a ? 1 : 2);
       } else {
         ctx.globalAlpha = 1;
         ctx.fillStyle = p.col;
@@ -204,11 +211,30 @@ const FX = {
     ctx.globalAlpha = 1;
   },
 
+  // Вспышка выстрела: ядро и лучи по направлению ствола.
+  flash(x, y, ang, col, size) {
+    this.add({ kind: 'flash', x, y, ang, col, size, life: 0.06, max: 0.06, vx: 0, vy: 0, grav: 0, bright: true });
+  },
+
   drawBright(ctx, cam, t) {
     for (const p of this.parts) {
       if (!p.bright) continue;
       const x = Math.round(p.x - cam.x), y = Math.round(p.y - cam.y);
       const k = p.life / p.max;
+      if (p.kind === 'flash') {
+        ctx.save();
+        ctx.translate(x, y); ctx.rotate(p.ang);
+        ctx.globalAlpha = Math.min(1, k * 1.6);
+        ctx.fillStyle = p.col;
+        const L = p.size * (0.7 + k * 0.5);
+        ctx.fillRect(0, -1, L * 1.6, 2);
+        ctx.fillRect(0, -L * 0.45, 2, L * 0.9);
+        for (const a of [-0.55, 0.55]) { ctx.save(); ctx.rotate(a); ctx.fillRect(0, -0.5, L, 1); ctx.restore(); }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(-1, -1.5, 3, 3);
+        ctx.restore();
+        continue;
+      }
       if (p.kind === 'fire') {
         ctx.fillStyle = k > 0.7 ? '#fff0b0' : k > 0.45 ? '#ffb040' : k > 0.25 ? '#e05a10' : '#6a2008';
       } else ctx.fillStyle = p.col;

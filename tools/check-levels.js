@@ -11,7 +11,7 @@ const SOLID = new Set(['#', '%']);
 const LIQUID = new Set(['~', '!', ';', '.']);
 const TILE_CH = new Set([' ', '#', '%', '-', '~', '!', ';', ',', '.', 'I']);
 const MOVER_CH = new Set(['D', '[', ']', '=', '$']);
-const ENTITY_CH = new Set('PE><L*b@x&_:^|()+HMAYRUNKCQXVW3456789gdekozfsnvtmcawruyhpqj'.split(''));
+const ENTITY_CH = new Set('PEZ><L*b@x&_:^|()+HMAYRUNKCQXVW3456789gdekozfsnvtmcawruyhpqj'.split(''));
 const MONSTER_CH_FLY = new Set(['s', 'a', 'h', 'j']);
 const MONSTER_H = { g: 2, d: 1, e: 2, k: 2, o: 2, z: 2, f: 2, s: 1, n: 2, v: 2, t: 1, m: 3, c: 1, a: 1, w: 6, r: 1, u: 1, y: 2, h: 4, p: 2, q: 2, j: 5 };
 
@@ -100,12 +100,15 @@ function analyze(def, show) {
   const fits = (x, y) => passable(x, y) && passable(x, y - 1);
   const stand = (x, y) => fits(x, y) && !deadly(x, y) && (support(x, y + 1) || water(x, y));
 
-  let reach;
+  const jumpK = 1 / (def.gravity || 1), jumpUp = Math.floor(3 * jumpK);
+  let reach, edges, cur = -1;
   const bfs = () => {
     reach = new Set();
+    edges = new Map();   // переходы между клетками — для поиска ловушек
     const q = [];
     const push = (x, y) => {
       const k = y * w + x;
+      if (cur >= 0 && cur !== k) { let e = edges.get(cur); if (!e) edges.set(cur, e = []); e.push(k); }
       if (reach.has(k)) return;
       reach.add(k);
       q.push([x, y]);
@@ -118,9 +121,11 @@ function analyze(def, show) {
       }
       return null;
     };
+    cur = -1;
     push(starts[0].x, starts[0].y);
     while (q.length) {
       const [x, y] = q.shift();
+      cur = y * w + x;
       const inWater = water(x, y);
       // телепорт
       const si = srcs.findIndex((s) => s.x === x && (s.y === y || s.y === y + 1 || s.y === y - 1));
@@ -159,14 +164,15 @@ function analyze(def, show) {
           }
         }
       }
-      // прыжки
+      // прыжки (при слабой тяжести выше и дальше во столько же раз)
       if (!support(x, y + 1) && !inWater) continue;
-      for (let dy = -3; dy <= 0; dy++) {
+      for (let dy = -jumpUp; dy <= 0; dy++) {
         const py = y + dy;
         let ok = true;
         for (let r = y; r >= py; r--) if (!fits(x, r)) { ok = false; break; }
         if (!ok) continue;
-        const maxDx = dy === -3 ? 3 : dy === -2 ? 4 : 5;
+        const ndy = Math.ceil(dy / jumpK);
+        const maxDx = Math.floor((ndy <= -3 ? 3 : ndy === -2 ? 4 : 5) * jumpK);
         for (const dir of [-1, 1]) {
           for (let dx = 1; dx <= maxDx; dx++) {
             const nx = x + dir * dx;
@@ -228,6 +234,62 @@ function analyze(def, show) {
   const lostCp = cps.filter((s) => !near(s));
   if (lostCp.length) warnings.push('недостижимые контрольные точки: ' + lostCp.map((s) => `(${s.x},${s.y})`).join(' '));
   if (exits.length && !reachedExits.length) errors.push('выход E недостижим');
+  // секретный выход: есть, достижим и ведёт на существующий секретный уровень
+  const zs = spawns.filter((s) => s.c === 'Z');
+  if (def.secretNext) {
+    const to = LEVELS.find((l) => l.id === def.secretNext);
+    if (!to || !to.secret) errors.push(`секретный выход ведёт на ${def.secretNext}, но такого секретного уровня нет`);
+    if (!zs.length) errors.push('у уровня есть secretNext, но нет секретного выхода Z');
+    else if (!zs.some(near)) errors.push('секретный выход Z недостижим');
+  } else if (zs.length) errors.push('секретный выход Z без поля secretNext');
+  // арена волн: монстры волн помещаются и стоят на опоре
+  if (def.waves) {
+    const [x0, y0, x1, y1] = def.waves.at;
+    let hit = false;
+    for (let y = y0; y <= y1 && !hit; y++) for (let x = x0; x <= x1; x++) if (reach.has(y * w + x)) { hit = true; break; }
+    if (!hit) errors.push('зона арены волн недостижима');
+    def.waves.list.forEach((wv, i) => {
+      for (const [sx, sy, ch] of wv.spawn) {
+        const hh = MONSTER_H[ch];
+        if (!hh) { errors.push(`волна ${i + 1}: неизвестный монстр '${ch}'`); continue; }
+        trapMonsters++;
+        for (let k = 0; k < hh; k++) if (SOLID.has(base(sx, sy - k))) { warnings.push(`волна ${i + 1}: монстру '${ch}' тесно в (${sx},${sy})`); break; }
+        if (!MONSTER_CH_FLY.has(ch) && !SOLID.has(base(sx, sy + 1)) && base(sx, sy + 1) !== '-') warnings.push(`волна ${i + 1}: монстр '${ch}' в (${sx},${sy}) не стоит на опоре`);
+      }
+      for (const [sx, sy] of wv.drop || []) if (!reach.has(sy * w + sx)) warnings.push(`волна ${i + 1}: припасы в (${sx},${sy}) недостижимы`);
+    });
+  }
+  // ловушки: место, куда можно попасть, но откуда уже не дойти ни до выхода, ни до
+  // секретного выхода (яма за выходом, бассейн без ступеней, трамплин в одну сторону)
+  const back = new Map();
+  for (const [a, list] of edges) for (const b of list) { let e = back.get(b); if (!e) back.set(b, e = []); e.push(a); }
+  const free = new Set(), fq = [];
+  for (const s of [...exits, ...zs]) {
+    for (const k of [s.y * w + s.x, (s.y + 1) * w + s.x, (s.y - 1) * w + s.x, s.y * w + s.x + 1, s.y * w + s.x - 1]) {
+      if (reach.has(k) && !free.has(k)) { free.add(k); fq.push(k); }
+    }
+  }
+  while (fq.length) {
+    const k = fq.pop();
+    for (const a of back.get(k) || []) if (!free.has(a)) { free.add(a); fq.push(a); }
+  }
+  const stuck = [...reach].filter((k) => !free.has(k));
+  if (reachedExits.length && stuck.length) {
+    const left = new Set(stuck), groups = [];
+    for (const k0 of stuck) {
+      if (!left.has(k0)) continue;
+      left.delete(k0);
+      const st = [k0], gr = [];
+      while (st.length) {
+        const k = st.pop(); gr.push(k);
+        const x = k % w, y = (k - x) / w;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const n = (y + dy) * w + x + dx; if (left.has(n)) { left.delete(n); st.push(n); } }
+      }
+      const xs = gr.map((k) => k % w), ys = gr.map((k) => Math.floor(k / w));
+      groups.push(`(${Math.min(...xs)},${Math.min(...ys)})-(${Math.max(...xs)},${Math.max(...ys)})`);
+    }
+    errors.push('ловушки — попав сюда, не выбраться к выходу: ' + groups.join(' '));
+  }
   if (def.skillPortals && reachedExits.length < exits.length) errors.push(`достижимо порталов сложности: ${reachedExits.length}/${exits.length}`);
   const items = spawns.filter((s) => '()+HMAYRUNKCQXVW3456789'.includes(s.c));
   const lost = items.filter((s) => !near(s));
@@ -238,7 +300,7 @@ function analyze(def, show) {
     const out = g.map((r, y) => r.split('').map((c, x) => (reach.has(y * w + x) && (c === ' ' || c === ',') ? '·' : c)).join(''));
     console.log(out.join('\n'));
   }
-  return { errors, warnings, stats };
+  return { errors, warnings, stats, reach, grid: g, w, h };
 }
 
 function countRuns(runs) {
@@ -276,7 +338,7 @@ function supplyWarnings() {
   const out = {};
   const eps = [...new Set(LEVELS.filter((l) => l.episode).map((l) => l.episode))];
   for (const ep of eps) {
-    const lv = LEVELS.filter((l) => l.episode === ep);
+    const lv = LEVELS.filter((l) => l.episode === ep && !l.secret);
     for (let i = 1; i < lv.length; i++) {
       const prev = lv[i - 1];
       const have = new Set(prev.kit ? prev.kit.weapons : [1, 2]);
@@ -287,6 +349,9 @@ function supplyWarnings() {
   }
   return out;
 }
+module.exports = { analyze };
+if (require.main !== module) return;
+
 const SUPPLY = supplyWarnings();
 
 const args = process.argv.slice(2);

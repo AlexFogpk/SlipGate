@@ -1,5 +1,5 @@
 'use strict';
-// Синтезированный звук на Web Audio: эффекты и мрачный эмбиент.
+// Синтезированный звук на Web Audio: эффекты и мрачный эмбиент с боевым слоем.
 
 const Sound = {
   ctx: null,
@@ -26,12 +26,29 @@ const Sound = {
     comp.threshold.value = -14;
     comp.ratio.value = 4;
     comp.connect(ctx.destination);
+    // шины → master → фильтр «под водой» → компрессор → выход
+    this.water = ctx.createBiquadFilter();
+    this.water.type = 'lowpass'; this.water.frequency.value = 20000; this.water.Q.value = 0.7;
+    this.water.connect(comp);
     this.master = ctx.createGain();
-    this.master.connect(comp);
+    this.master.connect(this.water);
     this.sfxBus = ctx.createGain();
     this.sfxBus.connect(this.master);
     this.musicBus = ctx.createGain();
     this.musicBus.connect(this.master);
+    this.ambBus = ctx.createGain();
+    this.ambBus.connect(this.master);
+    // эхо: посылка с шины эффектов в две свёртки — малое помещение и большой зал
+    this.verbSend = ctx.createGain();
+    this.sfxBus.connect(this.verbSend);
+    this.ambBus.connect(this.verbSend);
+    this.wetSmall = ctx.createGain(); this.wetSmall.gain.value = 0.1;
+    this.wetLarge = ctx.createGain(); this.wetLarge.gain.value = 0;
+    for (const [dur, decay, wet] of [[0.7, 3.2, this.wetSmall], [2.6, 2.2, this.wetLarge]]) {
+      const cv = ctx.createConvolver();
+      cv.buffer = this.impulse(dur, decay);
+      this.verbSend.connect(cv); cv.connect(wet); wet.connect(this.master);
+    }
     this.applyVolumes();
     const len = ctx.sampleRate * 2;
     this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -44,6 +61,35 @@ const Sound = {
     if (!this.ctx) return;
     this.sfxBus.gain.value = this.volume;
     this.musicBus.gain.value = this.musicVolume * 0.6;
+    this.ambBus.gain.value = this.volume * 0.7;
+  },
+
+  // Отклик помещения: шум, затухающий по степени, с короткой паузой и разными каналами.
+  impulse(dur, decay) {
+    const ctx = this.ctx, n = Math.floor(ctx.sampleRate * dur), pre = Math.floor(ctx.sampleRate * 0.012);
+    const b = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = b.getChannelData(c);
+      for (let i = pre; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay);
+    }
+    return b;
+  },
+
+  // Размер помещения вокруг героя (0 — тесный коридор, 1 — огромный зал) и доля открытого неба.
+  setRoom(size, outdoor) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const open = 1 - outdoor * 0.85;
+    this.wetSmall.gain.setTargetAtTime((1 - size) * 0.2 * open, t, 0.4);
+    this.wetLarge.gain.setTargetAtTime(size * 0.34 * open, t, 0.4);
+    Ambient.outdoor = outdoor;
+  },
+
+  // Под водой звук глухой.
+  setUnderwater(on) {
+    if (!this.ctx || this.underwater === on) return;
+    this.underwater = on;
+    this.water.frequency.setTargetAtTime(on ? 480 : 20000, this.ctx.currentTime, 0.08);
   },
 
   setVolume(v) { this.volume = clamp(v, 0, 1); Store.set('volume', this.volume); this.applyVolumes(); },
@@ -126,6 +172,12 @@ const SFX = {
     S.osc(o, 'square', 1100 * p, 380 * p, t, 0.045, 0.16 * v);
     S.noise(o, t, 0.05, 0.25 * v, 'highpass', 3000, 3000, 0.7);
   },
+  // звон цепи или фонаря на переднем плане: два коротких металлических удара
+  clink(S, o, t, v, p) {
+    S.osc(o, 'triangle', 1850 * p, 1720 * p, t, 0.12, 0.1 * v, 0.002);
+    S.osc(o, 'sine', 2630 * p, 2480 * p, t + 0.004, 0.2, 0.05 * v, 0.002);
+    S.osc(o, 'triangle', 1900 * p, 1760 * p, t + 0.075, 0.09, 0.05 * v, 0.002);
+  },
   ric(S, o, t, v) {
     S.osc(o, 'sine', rand(1800, 2600), rand(900, 1300), t, 0.09, 0.12 * v);
   },
@@ -154,6 +206,11 @@ const SFX = {
     S.osc(o, 'sawtooth', 200, 40, t, 0.6, 0.5 * v);
   },
   axe(S, o, t, v) { S.noise(o, t, 0.16, 0.45 * v, 'bandpass', 1800, 500, 1.2, 0.03); },
+  drip(S, o, t, v, p) {
+    const f = rand(1400, 2200) * p;
+    S.osc(o, 'sine', f, f * 0.55, t, 0.09, 0.16 * v, 0.002);
+    S.osc(o, 'sine', f * 1.5, f * 0.9, t + 0.01, 0.05, 0.05 * v, 0.002);
+  },
   axehit(S, o, t, v) {
     S.osc(o, 'square', 170, 70, t, 0.1, 0.35 * v);
     S.noise(o, t, 0.1, 0.5 * v, 'lowpass', 1800, 300, 1);
@@ -251,6 +308,17 @@ const SFX = {
     S.noise(o, t, 0.1, 0.5 * v, 'bandpass', 900, 500, 3);
     S.noise(o, t + 0.16, 0.1, 0.5 * v, 'bandpass', 900, 500, 3);
   },
+  // попадание по врагу: глухой шлепок, тон выше у слабых попаданий
+  hit(S, o, t, v, p) {
+    S.noise(o, t, 0.06, 0.45 * v, 'bandpass', 1500 * p, 600, 2);
+    S.osc(o, 'sine', 170 * p, 80, t, 0.07, 0.3 * v);
+  },
+  // убийство: короткий двойной щелчок
+  kill(S, o, t, v) {
+    S.osc(o, 'square', 330, 330, t, 0.04, 0.1 * v);
+    S.osc(o, 'square', 520, 520, t + 0.045, 0.07, 0.1 * v);
+    S.noise(o, t, 0.12, 0.3 * v, 'lowpass', 900, 200, 1);
+  },
   mpain(S, o, t, v, p) { S.osc(o, 'sawtooth', 220 * p, 120 * p, t, 0.18, 0.28 * v); },
   mdeath(S, o, t, v, p) {
     S.osc(o, 'sawtooth', 200 * p, 40 * p, t, 0.7, 0.3 * v);
@@ -283,66 +351,149 @@ const SFX = {
 };
 
 // Фоновый эмбиент: гул, металлические удары и «вздохи» в темноте.
+// Музыка: гул тональности уровня, редкие события и боевой слой.
+// У каждого эпизода свой характер: E1 — механический гул базы, E2 — колокола и хор
+// чёрной магии, E3 — тритоны и сердцебиение Нижнего мира, E4 — холодное мерцание
+// Пустоты. Боевой слой — ритм со своим рисунком на эпизод; громкость его задаёт
+// игра (setIntensity) по числу встревоженных монстров рядом.
+const MUSIC_STYLES = {
+  menu: {
+    drone: [['sawtooth', 1, 0.12], ['sawtooth', 1.007, 0.12], ['sawtooth', 1.498 * 0.996, 0.05], ['sine', 0.5, 0.22]],
+    lp: 260, lfo: 0.05, lfoDepth: 160,
+    events: ['metal', 'sigh', 'note', 'heart'], scale: [1, 1.189, 1.335, 1.498, 1.587, 2],
+  },
+  e1: {
+    drone: [['sawtooth', 1, 0.12], ['sawtooth', 1.007, 0.12], ['sawtooth', 1.498 * 0.996, 0.05], ['sine', 0.5, 0.22]],
+    lp: 260, lfo: 0.05, lfoDepth: 160,
+    events: ['metal', 'sigh', 'machine', 'note', 'heart', 'machine'], scale: [1, 1.189, 1.335, 1.498, 1.587, 2],
+    bpm: 104, combat: 'industrial',
+  },
+  e2: {
+    drone: [['sawtooth', 1, 0.08], ['sawtooth', 1.2 * 1.003, 0.05], ['triangle', 2.004, 0.05], ['sine', 0.5, 0.22]],
+    lp: 380, lfo: 0.035, lfoDepth: 220,
+    events: ['bell', 'choir', 'whisper', 'sigh', 'choir'], scale: [1, 1.067, 1.2, 1.335, 1.498, 1.6, 1.8, 2],
+    bpm: 84, combat: 'ritual',
+  },
+  e3: {
+    drone: [['sawtooth', 1, 0.1], ['sawtooth', 1.414, 0.05], ['square', 0.5, 0.035], ['sine', 0.5, 0.2]],
+    lp: 210, lfo: 0.08, lfoDepth: 140,
+    events: ['swell', 'glass', 'heart', 'metal', 'swell'], scale: [1, 1.059, 1.189, 1.414, 1.498, 1.682, 2],
+    bpm: 126, combat: 'pulse',
+  },
+  e4: {
+    drone: [['sine', 1, 0.12], ['sine', 1.498, 0.06], ['triangle', 2.003, 0.04], ['sine', 0.5, 0.24], ['sawtooth', 1.002, 0.03]],
+    lp: 700, lfo: 0.025, lfoDepth: 400,
+    events: ['shimmer', 'crystal', 'wind', 'swell', 'shimmer'], scale: [1, 1.125, 1.26, 1.414, 1.498, 1.682, 1.888, 2],
+    bpm: 72, combat: 'cosmic',
+  },
+  finale: {
+    drone: [['sine', 1, 0.14], ['sine', 1.498, 0.07], ['triangle', 2, 0.03], ['sine', 0.5, 0.2]],
+    lp: 600, lfo: 0.03, lfoDepth: 200,
+    events: ['shimmer', 'bell', 'note'], scale: [1, 1.125, 1.26, 1.498, 1.682, 2],
+  },
+};
+
 const Music = {
   nodes: [],
   playing: false,
   wanted: false,
   timer: null,
+  ticker: null,
   root: 55,
+  style: 'menu',
+  intensity: 0,     // цель боевого слоя 0..1
+  combatLevel: 0,   // текущая громкость боевого слоя (плавно догоняет цель)
+  step: 0,
+  nextStep: 0,
 
-  onAudioReady() { if (this.wanted) this.start(this.root); },
+  onAudioReady() { if (this.wanted) this.start(this.root, this.style); },
 
-  start(root) {
+  start(root, style) {
     root = root || 55;
+    style = MUSIC_STYLES[style] ? style : 'menu';
     this.wanted = true;
     if (this.playing) {
-      if (root === this.root) return;
+      if (root === this.root && style === this.style) return;
       // новый уровень — новая тональность: плавно гасим старый гул и запускаем заново
       this.stop();
       this.wanted = true;
-      this.root = root;
-      setTimeout(() => { if (this.wanted && !this.playing) this.start(this.root); }, 1300);
+      this.root = root; this.style = style;
+      setTimeout(() => { if (this.wanted && !this.playing) this.start(this.root, this.style); }, 1300);
       return;
     }
-    this.root = root;
+    this.root = root; this.style = style;
     const S = Sound;
     if (!S.ctx) return;
     this.playing = true;
+    const st = MUSIC_STYLES[style];
     const ctx = S.ctx;
     const out = ctx.createGain();
     out.gain.setValueAtTime(0.0001, ctx.currentTime);
     out.gain.exponentialRampToValueAtTime(1, ctx.currentTime + 3);
     out.connect(S.musicBus);
+    // гул идёт через свою шину: в бою он тише и ярче, чтобы ритм читался
+    const bed = ctx.createGain();
+    bed.connect(out);
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 260;
+    lp.frequency.value = st.lp;
     lp.Q.value = 3;
-    lp.connect(out);
+    lp.connect(bed);
     const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.05;
+    lfo.frequency.value = st.lfo;
     const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 160;
+    lfoGain.gain.value = st.lfoDepth;
     lfo.connect(lfoGain);
     lfoGain.connect(lp.frequency);
     lfo.start();
-    const mk = (type, f, vol, dest) => {
+    for (const [type, k, vol] of st.drone) {
       const o = ctx.createOscillator();
       o.type = type;
-      o.frequency.value = f;
+      o.frequency.value = this.root * k;
       const g = ctx.createGain();
       g.gain.value = vol;
-      o.connect(g); g.connect(dest);
+      o.connect(g); g.connect(k < 1 ? bed : lp);
       o.start();
       this.nodes.push(o);
-      return o;
-    };
-    mk('sawtooth', this.root, 0.12, lp);
-    mk('sawtooth', this.root * 1.007, 0.12, lp);
-    mk('sawtooth', this.root * 1.5 * 0.996, 0.05, lp);
-    mk('sine', this.root / 2, 0.22, out);
+    }
     this.nodes.push(lfo);
     this.out = out;
+    this.bed = bed;
+    this.lp = lp;
+    // боевой слой: своя шина, громкость плавно идёт за интенсивностью
+    this.combat = ctx.createGain();
+    this.combat.gain.value = 0.0001;
+    this.combat.connect(out);
+    this.combatLevel = 0;
+    this.step = 0;
+    this.nextStep = ctx.currentTime + 0.1;
     this.schedule();
+    clearInterval(this.ticker);
+    this.ticker = setInterval(() => this.tick(), 100);
+  },
+
+  // Игра сообщает, насколько жарко вокруг героя: 0 — тихо, 1 — бой с боссом.
+  setIntensity(v) { this.intensity = clamp(v, 0, 1); },
+
+  tick() {
+    const ctx = Sound.ctx;
+    if (!this.playing || !ctx || !this.combat) return;
+    const st = MUSIC_STYLES[this.style];
+    const want = st.combat ? this.intensity : 0;
+    // вступает за ~1.5 с, затихает за ~5 с после боя
+    this.combatLevel += (want - this.combatLevel) * (want > this.combatLevel ? 0.07 : 0.02);
+    if (this.combatLevel < 0.005) this.combatLevel = 0;
+    const c = this.combatLevel;
+    this.combat.gain.setTargetAtTime(Math.max(0.0001, c * 1.3), ctx.currentTime, 0.15);
+    this.bed.gain.setTargetAtTime(1 - c * 0.35, ctx.currentTime, 0.3);
+    this.lp.frequency.setTargetAtTime(st.lp * (1 + c * 0.8), ctx.currentTime, 0.3);
+    const stepLen = st.bpm ? 60 / st.bpm / 4 : 0.25;
+    if (this.nextStep < ctx.currentTime) this.nextStep = ctx.currentTime + 0.05;
+    while (this.nextStep < ctx.currentTime + 0.3) {
+      if (this.combatLevel > 0.02) this.combatStep(st.combat, this.step, this.nextStep, stepLen);
+      this.nextStep += stepLen;
+      this.step++;
+    }
   },
 
   schedule() {
@@ -354,30 +505,196 @@ const Music = {
     }, rand(3500, 8000));
   },
 
+  // --- инструменты ---
+  // Пэд через полосовые фильтры-форманты: «хор» без сэмплов.
+  pad(f, t, dur, vol, formants) {
+    const S = Sound, ctx = S.ctx;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.35);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    g.connect(this.out);
+    for (const det of [0.996, 1.004]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = f * det;
+      for (const [ff, q] of formants) {
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass'; bp.frequency.value = ff; bp.Q.value = q;
+        o.connect(bp); bp.connect(g);
+      }
+      o.start(t); o.stop(t + dur + 0.1);
+    }
+  },
+
+  // Нарастание и обрыв — как звук, пущенный задом наперёд.
+  swell(f, t, dur, vol, type = 'sawtooth') {
+    const S = Sound, ctx = S.ctx;
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f, t);
+    o.frequency.linearRampToValueAtTime(f * 1.02, t + dur);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(200, t);
+    lp.frequency.exponentialRampToValueAtTime(2400, t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + dur);
+    g.gain.linearRampToValueAtTime(0.0001, t + dur + 0.08);
+    o.connect(lp); lp.connect(g); g.connect(this.out);
+    o.start(t); o.stop(t + dur + 0.15);
+  },
+
+  bell(f, t, vol, dur = 5) {
+    const S = Sound;
+    [[1, 1], [2, 0.6], [2.4, 0.45], [3, 0.3], [4.2, 0.22], [5.4, 0.12]].forEach(([k, a], i) => {
+      S.osc(this.out, 'sine', f * k, f * k * 0.999, t, dur / (1 + i * 0.4), vol * a, 0.004);
+    });
+  },
+
   event() {
     const S = Sound, ctx = S.ctx;
     if (!ctx || !this.out) return;
     const t = ctx.currentTime + 0.05;
     const o = this.out;
-    const k = Math.random();
-    const scale = [1, 1.189, 1.335, 1.498, 1.587, 2];
-    if (k < 0.3) {
-      // металлический удар с долгим хвостом
-      S.noise(o, t, 3.5, 0.18, 'bandpass', rand(300, 1400), rand(200, 900), 18, 0.01);
-    } else if (k < 0.55) {
-      // низкий вздох
-      S.noise(o, t, 4, 0.25, 'lowpass', 120, 700, 2, 1.5);
-    } else if (k < 0.8) {
-      // протяжная нота
-      const f = this.root * 4 * pick(scale);
-      S.osc(o, 'triangle', f, f * 0.99, t, 5, 0.05, 1.8);
-      S.osc(o, 'sine', f * 1.5, f * 1.49, t + 0.5, 4.5, 0.025, 1.8);
-    } else {
-      // «сердцебиение»
-      for (let i = 0; i < 2; i++) {
-        S.osc(o, 'sine', 60, 35, t + i * 0.28, 0.25, 0.35, 0.01);
-        S.osc(o, 'sine', 60, 35, t + 0.9 + i * 0.28, 0.25, 0.3, 0.01);
+    const st = MUSIC_STYLES[this.style];
+    const scale = st.scale;
+    const root = this.root;
+    switch (pick(st.events)) {
+      case 'metal':
+        // металлический удар с долгим хвостом
+        S.noise(o, t, 3.5, 0.18, 'bandpass', rand(300, 1400), rand(200, 900), 18, 0.01);
+        break;
+      case 'sigh':
+        // низкий вздох
+        S.noise(o, t, 4, 0.25, 'lowpass', 120, 700, 2, 1.5);
+        break;
+      case 'note': {
+        // протяжная нота
+        const f = root * 4 * pick(scale);
+        S.osc(o, 'triangle', f, f * 0.99, t, 5, 0.05, 1.8);
+        S.osc(o, 'sine', f * 1.5, f * 1.49, t + 0.5, 4.5, 0.025, 1.8);
+        break;
       }
+      case 'heart':
+        // «сердцебиение»
+        for (let i = 0; i < 2; i++) {
+          S.osc(o, 'sine', 60, 35, t + i * 0.28, 0.25, 0.35, 0.01);
+          S.osc(o, 'sine', 60, 35, t + 0.9 + i * 0.28, 0.25, 0.3, 0.01);
+        }
+        break;
+      case 'machine': {
+        // далёкий механизм: серия лязгов с затихающим эхом
+        const f = rand(500, 1200), n = randInt(4, 7), gap = rand(0.16, 0.24);
+        for (let i = 0; i < n; i++) S.noise(o, t + i * gap, 0.5, 0.12 * (1 - i / (n + 2)), 'bandpass', f * (i % 2 ? 0.8 : 1), f * 0.7, 12, 0.003);
+        S.osc(o, 'sawtooth', root, root * 0.94, t, n * gap + 0.6, 0.04, 0.2);
+        break;
+      }
+      case 'bell':
+        this.bell(root * 4 * pick([1, 1.2, 1.498]), t, 0.06, 6);
+        if (Math.random() < 0.5) this.bell(root * 2, t + 1.6, 0.05, 6);
+        break;
+      case 'choir': {
+        const f = root * 2 * pick(scale);
+        const vowel = pick([[[700, 6], [1150, 8]], [[400, 6], [800, 8]], [[300, 6], [2200, 10]]]);
+        this.pad(f, t, rand(5, 7), 0.07, vowel);
+        if (Math.random() < 0.6) this.pad(f * 1.498, t + 0.8, 5, 0.04, vowel);
+        break;
+      }
+      case 'whisper':
+        S.noise(o, t, 2.6, 0.05, 'bandpass', rand(1800, 2600), rand(3000, 4200), 4, 1);
+        S.noise(o, t + 1.4, 2.2, 0.04, 'bandpass', rand(2400, 3400), rand(1600, 2200), 5, 0.8);
+        break;
+      case 'swell':
+        this.swell(root * 2 * pick(scale), t, rand(2.5, 4), 0.07);
+        if (Math.random() < 0.5) this.swell(root * 2 * 1.414, t, 3, 0.04, 'square');
+        break;
+      case 'glass': {
+        const f = root * 8 * pick(scale);
+        for (let i = 0; i < 3; i++) {
+          S.osc(o, 'sine', f, f, t + i * 0.9, 2.5, 0.03, 0.01);
+          S.osc(o, 'sine', f * 1.006, f * 1.006, t + i * 0.9, 2.5, 0.03, 0.01);
+        }
+        break;
+      }
+      case 'shimmer':
+        for (let i = 0; i < 4; i++) {
+          const f = root * 8 * scale[randInt(0, scale.length - 1)];
+          S.osc(o, 'sine', f, f * 1.003, t + i * 0.35, 6, 0.018, 2.2);
+        }
+        break;
+      case 'crystal': {
+        const n = randInt(3, 6);
+        for (let i = 0; i < n; i++) {
+          const f = root * 8 * scale[(scale.length - 1 - i * 2 + scale.length * 4) % scale.length];
+          S.osc(o, 'triangle', f, f, t + i * 0.22, 1.4, 0.035, 0.003);
+          S.osc(o, 'triangle', f, f, t + i * 0.22 + 0.66, 1.2, 0.012, 0.003);
+        }
+        break;
+      }
+      case 'wind':
+        S.noise(o, t, 7, 0.12, 'bandpass', 300, 900, 3, 3);
+        break;
+      default: break;
+    }
+  },
+
+  // Один шаг (шестнадцатая) боевого ритма.
+  combatStep(kind, step, t, len) {
+    const S = Sound, o = this.combat, root = this.root;
+    const s = step % 16, bar = Math.floor(step / 16);
+    const kick = (vol = 0.5, f = 95) => S.osc(o, 'sine', f, 38, t, 0.28, vol, 0.002);
+    const snare = (vol = 0.22) => S.noise(o, t, 0.16, vol, 'bandpass', 1900, 1200, 0.8, 0.002);
+    const hat = (vol = 0.05) => S.noise(o, t, 0.045, vol, 'highpass', 7000, 7000, 0.7, 0.001);
+    const bass = (f, dur, vol = 0.09, type = 'sawtooth') => {
+      S.osc(o, type, f, f, t, dur, vol, 0.004);
+      S.osc(o, 'sine', f / 2, f / 2, t, dur, vol * 1.2, 0.004);
+    };
+    switch (kind) {
+      case 'industrial': {
+        // E1: тяжёлый механический бит, пилящий бас и лязг на сильных долях
+        if ([0, 6, 8, 11].includes(s) || (bar % 4 === 3 && s === 14)) kick();
+        if (s === 4 || s === 12) { snare(); S.noise(o, t, 0.3, 0.06, 'bandpass', 600, 400, 10, 0.002); }
+        if (s % 2 === 1) hat(s % 4 === 3 ? 0.06 : 0.035);
+        const line = [1, 0, 0, 1, 0, 0, 1.189, 0, 1, 0, 1.335, 0, 0, 0, 1.189, 0];
+        if (line[s]) bass(root * line[s], len * 1.6);
+        if (s === 0 && bar % 2 === 0) S.noise(o, t, 1.2, 0.08, 'bandpass', 900, 500, 16, 0.003);
+        break;
+      }
+      case 'ritual': {
+        // E2: там-тамы, глухой барабан и колокол раз в два такта
+        const tom = (f, vol) => S.osc(o, 'sine', f, f * 0.55, t, 0.35, vol, 0.002);
+        if (s === 0 || s === 8) kick(0.45, 80);
+        if ([3, 6, 10, 13].includes(s)) tom(150, 0.28);
+        if ([12, 14, 15].includes(s) && bar % 2 === 1) tom(200, 0.22);
+        if (s % 4 === 2) S.noise(o, t, 0.08, 0.04, 'bandpass', 3000, 2500, 2, 0.002);
+        if (s === 0 && bar % 2 === 0) this.bell(root * 4, t, 0.045, 3);
+        if (s === 0) bass(root * (bar % 4 === 3 ? 1.067 : 1), len * 7, 0.06, 'triangle');
+        break;
+      }
+      case 'pulse': {
+        // E3: учащённое сердцебиение и тритоновый пульс баса восьмыми
+        if (s === 0 || s === 2 || s === 8 || s === 10) kick(s % 8 === 0 ? 0.5 : 0.35, 70);
+        if (s % 2 === 0) bass(root * (bar % 2 ? 1.414 : 1) * (s === 6 || s === 14 ? 1.059 : 1), len * 1.2, 0.07, 'square');
+        if (s % 4 === 3) hat(0.04);
+        if (s === 12) S.noise(o, t, 0.5, 0.08, 'bandpass', 400, 2600, 6, 0.3);
+        break;
+      }
+      case 'cosmic': {
+        // E4: редкие глубокие удары и арпеджио из колокольчиков
+        if (s === 0 || s === 10) kick(0.45, 60);
+        if (s === 8) S.noise(o, t, 0.6, 0.06, 'lowpass', 900, 200, 1, 0.002);
+        const sc = MUSIC_STYLES.e4.scale;
+        if (s % 2 === 0) {
+          const f = root * 8 * sc[(s / 2 + bar * 3) % sc.length];
+          S.osc(o, 'triangle', f, f, t, len * 3, 0.03, 0.003);
+          S.osc(o, 'sine', f * 2, f * 2, t + len * 3, len * 3, 0.01, 0.003);
+        }
+        if (s === 0 && bar % 2 === 0) S.osc(o, 'sine', root, root, t, len * 30, 0.12, 0.8);
+        break;
+      }
+      default: break;
     }
   },
 
@@ -386,16 +703,143 @@ const Music = {
     if (!this.playing) return;
     this.playing = false;
     clearTimeout(this.timer);
+    clearInterval(this.ticker);
     const ctx = Sound.ctx;
     const out = this.out;
     const nodes = this.nodes;
     this.nodes = [];
     this.out = null;
+    this.combat = null; this.bed = null; this.lp = null;
     if (out) {
       out.gain.cancelScheduledValues(ctx.currentTime);
       out.gain.setValueAtTime(out.gain.value, ctx.currentTime);
       out.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
     }
     setTimeout(() => nodes.forEach((n) => { try { n.stop(); } catch (e) { /* уже остановлен */ } }), 1400);
+  },
+};
+
+// Фоновые звуки уровня: петли рядом с героем (факелы, лава, слизь, вода, машины,
+// Пустота, слипгейты) и ветер под открытым небом. Звучат не больше восьми ближайших,
+// громкость падает с расстоянием, панорама — по положению источника.
+const Ambient = {
+  buffers: null,
+  srcs: [],
+  active: new Map(),
+  wind: null,
+  outdoor: 0,
+  MAX: 8,
+
+  // Петли собираются кодом один раз: шум, всплески, гул; края сведены, чтобы не щёлкало.
+  makeBuffers() {
+    const ctx = Sound.ctx, sr = ctx.sampleRate;
+    const loop = (sec, fn) => {
+      const n = Math.floor(sr * sec), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
+      fn(d, n, sr);
+      const fade = Math.floor(sr * 0.25);
+      for (let i = 0; i < fade; i++) { const k = i / fade; d[i] = d[i] * k + d[n - fade + i] * (1 - k); }
+      return b;
+    };
+    const brown = (d, n, amp) => { let v = 0; for (let i = 0; i < n; i++) { v = (v + (Math.random() * 2 - 1) * 0.02) * 0.995; d[i] += v * amp * 3; } };
+    const burst = (d, sr, at, len, amp, tone) => {
+      const s0 = Math.floor(at * sr), L = Math.floor(len * sr);
+      for (let i = 0; i < L && s0 + i < d.length; i++) {
+        const e = Math.pow(1 - i / L, 3);
+        d[s0 + i] += (tone ? Math.sin(i / sr * TAU * tone * (1 + i / L * 0.8)) : Math.random() * 2 - 1) * e * amp;
+      }
+    };
+    return {
+      crackle: loop(3, (d, n, sr) => { brown(d, n, 0.25); for (let k = 0; k < 55; k++) burst(d, sr, Math.random() * 2.9, rand(0.002, 0.008), rand(0.2, 0.7), 0); }),
+      lava: loop(4, (d, n, sr) => { brown(d, n, 0.6); for (let k = 0; k < 14; k++) burst(d, sr, Math.random() * 3.8, rand(0.06, 0.14), rand(0.25, 0.5), rand(70, 160)); }),
+      slime: loop(4, (d, n, sr) => { brown(d, n, 0.25); for (let k = 0; k < 18; k++) burst(d, sr, Math.random() * 3.8, rand(0.04, 0.09), rand(0.2, 0.35), rand(180, 360)); }),
+      water: loop(4, (d, n, sr) => { let a = 0, b = 0; for (let i = 0; i < n; i++) { a = a * 0.97 + (Math.random() * 2 - 1) * 0.03; b = b * 0.6 + a * 0.4; d[i] = b * (0.6 + 0.4 * Math.sin(i / sr * TAU * 0.5)) * 1.6; } }),
+      hum: loop(2, (d, n, sr) => { for (let i = 0; i < n; i++) { const t = i / sr; d[i] = (Math.sin(t * TAU * 55) * 0.35 + Math.sin(t * TAU * 110) * 0.2 + Math.sin(t * TAU * 165) * 0.08) * (0.85 + 0.15 * Math.sin(t * TAU * 2)) + (Math.random() * 2 - 1) * 0.03; } }),
+      void: loop(4, (d, n, sr) => { for (let i = 0; i < n; i++) { const t = i / sr; d[i] = (Math.sin(t * TAU * 110) + Math.sin(t * TAU * 165) * 0.7 + Math.sin(t * TAU * 220.25) * 0.5) * 0.12 * (0.6 + 0.4 * Math.sin(t * TAU * 0.25)); } }),
+      wind: loop(6, (d, n, sr) => { let lp = 0, bp = 0; for (let i = 0; i < n; i++) { const t = i / sr; const k = 0.02 + 0.05 * (0.5 + 0.5 * Math.sin(t * TAU / 6)); lp += k * ((Math.random() * 2 - 1) - lp); bp = bp * 0.9 + lp * 0.1; d[i] = (lp - bp) * 2.2 * (0.5 + 0.5 * Math.sin(t * TAU / 3 + 1)); } }),
+    };
+  },
+
+  // Источники нового уровня (вызывается при загрузке).
+  setLevel(lv) {
+    this.stopAll();
+    const srcs = [];
+    const add = (kind, x, y, r, vol) => srcs.push({ kind, x, y, r, vol, id: srcs.length });
+    for (const d of lv.decor) if (d.kind === 'torch') add('crackle', d.x, d.y, 240, 0.55);
+    const amb = lv.amb || {};
+    for (const f of amb.fogs || []) {
+      const kind = f.kind === 'lava' ? 'lava' : f.kind === 'slime' ? 'slime' : 'void';
+      const step = kind === 'void' ? 220 : 140;
+      for (let x = f.x0 + 40; x < f.x1; x += step) add(kind, x, f.y, kind === 'lava' ? 360 : 300, kind === 'lava' ? 0.9 : kind === 'void' ? 0.45 : 0.5);
+    }
+    for (const v of amb.vents || []) if (lv.theme === 'base') add('hum', v.x, v.y, 220, 0.4);
+    for (const s of amb.strips || []) add('hum', s.x + 7, s.y, 110, 0.12);
+    for (const e of lv.exits.concat(lv.teleports)) add('void', e.cx, e.bottom - 20, 220, 0.35);
+    // поверхность воды: тихий плеск
+    for (let y = 1; y < lv.h - 1; y++) {
+      let run = -1;
+      for (let x = 0; x <= lv.w; x++) {
+        const surf = x < lv.w && lv.tile(x, y) === T.WATER && lv.tile(x, y - 1) !== T.WATER && !lv.tileSolid(x, y - 1);
+        if (surf && run < 0) run = x;
+        if (!surf && run >= 0) { for (let xx = run; xx < x; xx += 10) add('water', xx * TILE + 8, y * TILE, 230, 0.35); run = -1; }
+      }
+    }
+    this.srcs = srcs;
+    this.outdoor = 0;
+  },
+
+  stopAll() {
+    for (const a of this.active.values()) this.fadeOut(a);
+    this.active.clear();
+    if (this.wind) { this.fadeOut(this.wind); this.wind = null; }
+  },
+
+  fadeOut(a) {
+    const t = Sound.ctx.currentTime;
+    a.gain.gain.cancelScheduledValues(t);
+    a.gain.gain.setTargetAtTime(0, t, 0.15);
+    try { a.node.stop(t + 0.8); } catch (e) { /* уже остановлен */ }
+  },
+
+  start(kind) {
+    const ctx = Sound.ctx;
+    const node = ctx.createBufferSource();
+    node.buffer = this.buffers[kind];
+    node.loop = true;
+    const gain = ctx.createGain(); gain.gain.value = 0;
+    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    node.connect(gain);
+    if (pan) { gain.connect(pan); pan.connect(Sound.ambBus); } else gain.connect(Sound.ambBus);
+    node.start(0, Math.random() * node.buffer.duration);
+    return { node, gain, pan };
+  },
+
+  // Раз в долю секунды: оставить восемь ближайших источников, обновить громкость и панораму.
+  update(lx, ly, paused) {
+    const ctx = Sound.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    if (!this.buffers) this.buffers = this.makeBuffers();
+    const t = ctx.currentTime;
+    const near = [];
+    if (!paused) {
+      for (const s of this.srcs) {
+        const d = dist(s.x, s.y, lx, ly);
+        if (d < s.r) near.push({ s, d });
+      }
+      near.sort((a, b) => a.d / a.s.r - b.d / b.s.r);
+      near.length = Math.min(near.length, this.MAX);
+    }
+    const keep = new Set(near.map((n) => n.s));
+    for (const [s, a] of this.active) if (!keep.has(s)) { this.fadeOut(a); this.active.delete(s); }
+    for (const { s, d } of near) {
+      let a = this.active.get(s);
+      if (!a) { a = this.start(s.kind); this.active.set(s, a); }
+      const v = s.vol * Math.pow(1 - d / s.r, 1.6);
+      a.gain.gain.setTargetAtTime(v, t, 0.25);
+      if (a.pan) a.pan.pan.setTargetAtTime(clamp((s.x - lx) / 300, -1, 1) * 0.8, t, 0.2);
+    }
+    // ветер под открытым небом
+    const wv = paused ? 0 : this.outdoor * 0.32;
+    if (wv > 0.01 && !this.wind) this.wind = this.start('wind');
+    if (this.wind) this.wind.gain.gain.setTargetAtTime(wv, t, 0.6);
   },
 };

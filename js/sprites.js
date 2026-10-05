@@ -1650,55 +1650,260 @@ function drawMonsterSprite(ctx, x, y, m) {
 }
 
 // ---------------- предметы ----------------
+// Картинки подбираемых предметов собираются один раз: ящики со светотенью,
+// эмблемы, контур. Точка привязки — середина низа.
+const OUTLINE = '#140c08';
+
+// Ящик: контур, светлая крышка, левая кромка в свету, правая грань и низ в тени.
+function itemBox(c, x, y, w, h, hex, lid = 2) {
+  const r = ramp(hex);
+  const f = (a, b, ww, hh, col) => { c.fillStyle = col; c.fillRect(a, b, ww, hh); };
+  f(x, y, w, h, OUTLINE);
+  f(x + 1, y + 1, w - 2, h - 2, r[2]);
+  f(x + 1, y + 1, w - 2, lid, r[3]);
+  f(x + 1, y + 1, w - 3, 1, r[4]);
+  f(x + 1, y + 1 + lid, 1, h - 3 - lid, r[3]);
+  f(x + w - 2, y + 1 + lid, 1, h - 2 - lid, r[1]);
+  f(x + 1, y + h - 2, w - 2, 1, r[0]);
+  // скруглённые углы
+  c.clearRect(x, y, 1, 1); c.clearRect(x + w - 1, y, 1, 1);
+  c.clearRect(x, y + h - 1, 1, 1); c.clearRect(x + w - 1, y + h - 1, 1, 1);
+  return r;
+}
+
+// Красный крест с объёмом: центр (cx, cy), длина плеча и толщина.
+function itemCross(c, cx, cy, arm, th) {
+  const r = ramp('#c81818');
+  const f = (a, b, ww, hh, col) => { c.fillStyle = col; c.fillRect(a, b, ww, hh); };
+  const h0 = Math.floor(th / 2);
+  f(cx - h0, cy - arm, th, arm * 2 + 1, r[2]);
+  f(cx - arm, cy - h0, arm * 2 + 1, th, r[2]);
+  f(cx - h0, cy - arm, th, 1, r[3]); f(cx - arm, cy - h0, arm - h0, 1, r[3]);
+  f(cx - h0 + th - 1, cy - arm + 1, 1, arm - h0, r[1]); f(cx + th - h0, cy - h0 + th - 1, arm - th + h0 + 1, 1, r[1]);
+  f(cx - h0 + th - 1, cy + th - h0, 1, arm - th + h0 + 1, r[1]);
+}
+
+// Картинка по маске: '#' — тело, контур дорисовывается сам, цвет точки задаёт shadeAt(x, y).
+function maskArt(rows, shadeAt) {
+  const h = rows.length, w = rows[0].length;
+  const c = makeCanvas(w, h), x = c.getContext('2d');
+  const at = (i, j) => j >= 0 && j < h && i >= 0 && i < w && rows[j][i] !== '.';
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      if (!at(i, j)) continue;
+      const edge = !at(i - 1, j) || !at(i + 1, j) || !at(i, j - 1) || !at(i, j + 1);
+      x.fillStyle = edge ? OUTLINE : shadeAt(i, j, !at(i, j - 2));
+      x.fillRect(i, j, 1, 1);
+    }
+  }
+  return c;
+}
+
+const ARMOR_MASK = [
+  '..####...####..',
+  '.#####...#####.',
+  '.######.######.',
+  '###############',
+  '###############',
+  '###############',
+  '###############',
+  '.#############.',
+  '.#############.',
+  '.#############.',
+  '..###########..',
+  '..###########..',
+  '...#########...',
+];
+const PACK_MASK = [
+  '....######....',
+  '...########...',
+  '..##########..',
+  '.############.',
+  '.############.',
+  '##############',
+  '##############',
+  '##############',
+  '##############',
+  '##############',
+  '##############',
+  '.############.',
+  '..##########..',
+];
+
+const itemCache = new Map();
+function itemImg(kind) {
+  if (itemCache.has(kind)) return itemCache.get(kind);
+  let c = null;
+  const px = (cv, a, b, w, h, col) => { const x = cv.getContext('2d'); x.fillStyle = col; x.fillRect(a, b, w, h); };
+  switch (kind) {
+    case '+': {
+      // малая аптечка: эмалированный ящик с крестом
+      c = makeCanvas(13, 10);
+      const x = c.getContext('2d');
+      itemBox(x, 1, 1, 11, 9, '#cfc6b4', 2);
+      itemCross(x, 6, 5, 2, 2);
+      px(c, 2, 8, 9, 1, '#8a8274');
+      break;
+    }
+    case 'H': {
+      // большая аптечка: ручка сверху, защёлки, крупный крест
+      c = makeCanvas(17, 14);
+      const x = c.getContext('2d');
+      px(c, 6, 0, 5, 1, OUTLINE); px(c, 5, 1, 1, 2, OUTLINE); px(c, 11, 1, 1, 2, OUTLINE);
+      px(c, 6, 1, 5, 1, '#6a6a72');
+      itemBox(x, 1, 2, 15, 12, '#d8d0c0', 3);
+      px(c, 2, 5, 13, 1, '#a8a090');
+      itemCross(x, 8, 9, 3, 3);
+      px(c, 2, 4, 2, 1, '#6a6a72'); px(c, 13, 4, 2, 1, '#6a6a72');
+      break;
+    }
+    case 'M': {
+      // мегаздоровье: светящаяся сфера с белым крестом
+      c = makeCanvas(15, 15);
+      const x = c.getContext('2d');
+      const r = ['#101c78', '#1c34c0', '#3058f0', '#6a8cff', '#b8c8ff'];
+      // сфера кольцами от тени к блику, блик смещён влево-вверх
+      x.fillStyle = OUTLINE; x.beginPath(); x.arc(7.5, 7.5, 7.5, 0, TAU); x.fill();
+      [[6.5, 0, 0], [5.6, -0.5, -0.5], [4.3, -1, -1], [2.6, -1.8, -1.8], [1.2, -2.4, -2.4]].forEach(([rad, dx, dy], i) => {
+        x.fillStyle = r[i]; x.beginPath(); x.arc(7.5 + dx, 7.5 + dy, rad, 0, TAU); x.fill();
+      });
+      px(c, 6, 4, 3, 7, '#f4f4ff'); px(c, 4, 6, 7, 3, '#f4f4ff');
+      px(c, 8, 5, 1, 6, '#9fb0f0'); px(c, 4, 8, 7, 1, '#9fb0f0');
+      // пиксели без полутонов
+      const d = x.getImageData(0, 0, 15, 15);
+      for (let i = 3; i < d.data.length; i += 4) d.data[i] = d.data[i] > 100 ? 255 : 0;
+      x.putImageData(d, 0, 0);
+      break;
+    }
+    case 'A': case 'Y': case 'R': {
+      // бронежилет: наплечники, вырез ворота, пластины и шов
+      const r = ramp({ A: '#3a8a2e', Y: '#c8a428', R: '#b42420' }[kind]);
+      c = maskArt(ARMOR_MASK, (i, j, top) => {
+        if (top) return r[4];
+        if (j === 7 || j === 10 || (i === 7 && j >= 4)) return r[1];
+        if ((i === 3 || i === 11) && j === 5) return r[4];
+        return i < 4 ? r[3] : i > 11 ? r[1] : r[2];
+      });
+      break;
+    }
+    case 'U': {
+      // дробь: картонная коробка, из которой торчат пять патронов
+      c = makeCanvas(14, 13);
+      const x = c.getContext('2d');
+      const red = ramp('#d83020'), brass = ramp('#d8a840');
+      // пять гильз над краем коробки: красная гильза, светлый бок, тёмный загиб сверху
+      for (let i = 0; i < 5; i++) {
+        const sx = 2 + i * 2, top = i % 2 ? 1 : 0;
+        px(c, sx, top, 2, 6 - top, OUTLINE);
+        px(c, sx, top + 1, 2, 5 - top, red[2]);
+        px(c, sx, top + 1, 1, 5 - top, red[4]);
+        px(c, sx + 1, top + 1, 1, 1, red[0]);
+      }
+      px(c, 1, 1, 1, 5, OUTLINE); px(c, 12, 1, 1, 5, OUTLINE);
+      itemBox(x, 1, 5, 12, 8, '#7a2414', 1);
+      px(c, 2, 8, 10, 2, brass[2]); px(c, 2, 8, 10, 1, brass[3]); px(c, 11, 8, 1, 2, brass[1]);
+      px(c, 4, 9, 6, 1, '#6a3a10');
+      break;
+    }
+    case 'N': {
+      // гвозди: железный ящик с ручкой и рёбрами, на боку — гвоздь
+      c = makeCanvas(14, 12);
+      const x = c.getContext('2d');
+      px(c, 4, 0, 6, 1, OUTLINE); px(c, 4, 1, 1, 2, OUTLINE); px(c, 9, 1, 1, 2, OUTLINE); px(c, 5, 1, 4, 1, '#8a8a96');
+      const r = itemBox(x, 1, 2, 12, 10, '#5a6270', 2);
+      px(c, 2, 5, 10, 1, r[1]); px(c, 2, 6, 10, 1, r[3]);
+      // гвоздь на боку: шляпка, стержень, остриё
+      px(c, 3, 7, 1, 3, '#f0f0f8'); px(c, 4, 8, 6, 1, '#d0d0dc'); px(c, 10, 8, 1, 1, '#8a8a98');
+      px(c, 4, 9, 6, 1, r[1]);
+      break;
+    }
+    case 'K': {
+      // ракеты: две ракеты в деревянном ящике
+      c = makeCanvas(16, 16);
+      const x = c.getContext('2d');
+      const body = ramp('#8a8a80'), war = ramp('#c42818');
+      for (const rx of [3, 9]) {
+        px(c, rx + 1, 0, 2, 1, OUTLINE); px(c, rx, 1, 1, 9, OUTLINE); px(c, rx + 4, 1, 1, 9, OUTLINE);
+        px(c, rx + 1, 1, 3, 3, war[2]); px(c, rx + 1, 1, 1, 3, war[3]); px(c, rx + 2, 0, 1, 1, war[1]);
+        px(c, rx + 1, 4, 3, 6, body[2]); px(c, rx + 1, 4, 1, 6, body[4]); px(c, rx + 3, 4, 1, 6, body[1]);
+        px(c, rx + 1, 4, 3, 1, OUTLINE);
+      }
+      itemBox(x, 1, 9, 14, 7, '#7a5430', 1);
+      px(c, 5, 11, 1, 4, '#3a2410'); px(c, 10, 11, 1, 4, '#3a2410');
+      px(c, 2, 12, 12, 1, '#a07a48');
+      break;
+    }
+    case 'C': {
+      // батарея: клеммы сверху, светящаяся молния, вентиляционные щели
+      c = makeCanvas(14, 14);
+      const x = c.getContext('2d');
+      px(c, 3, 0, 3, 3, OUTLINE); px(c, 8, 0, 3, 3, OUTLINE);
+      px(c, 4, 1, 1, 2, '#d03020'); px(c, 9, 1, 1, 2, '#8a8a90');
+      const r = itemBox(x, 1, 2, 12, 12, '#46553a', 2);
+      const bolt = ['...YY', '..YY.', '.YYYY', '..YY.', '.YY..', 'YY...'];
+      bolt.forEach((row, j) => { for (let i = 0; i < 5; i++) if (row[i] === 'Y') px(c, 4 + i, 6 + j, 1, 1, i + j < 5 ? '#fff0a0' : '#f0c830'); });
+      for (let j = 6; j < 12; j += 2) px(c, 11, j, 1, 1, r[0]);
+      break;
+    }
+    case 'backpack': {
+      // рюкзак: клапан с пряжкой, ремни, нижний карман
+      const r = ramp('#6e6034');
+      c = maskArt(PACK_MASK, (i, j, top) => {
+        if (top) return r[4];
+        if ((i === 6 || i === 7) && (j === 5 || j === 6)) return '#e0b840';
+        if (j === 5 && i > 1 && i < 12) return r[0];
+        if ((i === 3 || i === 10) && j > 5) return r[1];
+        if (j >= 8 && j <= 11 && i >= 5 && i <= 8) return j === 8 ? r[0] : r[3];
+        return j < 5 ? r[3] : i < 3 ? r[3] : i > 10 ? r[1] : r[2];
+      });
+      break;
+    }
+    default: break;
+  }
+  itemCache.set(kind, c);
+  return c;
+}
+
+// Маленькие значки патронов для строки состояния.
+const AMMO_ICON_PAL = { k: OUTLINE, R: '#e04830', r: '#a82010', Y: '#f0d070', y: '#b88a30', W: '#f0f0f8', w: '#a0a0b0', m: '#5a5a66', G: '#6a7a52', g: '#46553a' };
+const AMMO_ICONS = {
+  shells: ['.kk.kk.', 'kRrkRrk', 'kRrkRrk', 'kRrkRrk', 'kRrkRrk', 'kYykYyk', 'kYykYyk', '.kk.kk.'],
+  nails: ['kkkkkkk', 'kWkWkWk', 'kwkwkwk', 'kwkwkwk', 'kwkwkwk', 'kwkwkwk', '.k.k.k.'],
+  rockets: ['..k..', '.kRk.', 'kRrrk', 'kWwmk', 'kWwmk', 'kWwmk', 'kWwmk', 'kmkmk', 'k...k'],
+  cells: ['.k...k.', 'kkkkkkk', 'kGgYggk', 'kggYYgk', 'kgYYYgk', 'kgYYggk', 'kgYgggk', 'kkkkkkk'],
+};
+function ammoIcon(kind) { return part('ammo-' + kind, AMMO_ICONS[kind], AMMO_ICON_PAL); }
+
 function drawItem(ctx, x, y, it, t) {
   const ch = it.ch;
   const bob = it.dropped ? 0 : Math.round(Math.sin(t * 3 + it.phase) * 1.5) - 1;
   ctx.save();
   ctx.translate(x, y + bob);
+  const img = itemImg(ch);
+  if (img) {
+    ctx.drawImage(img, -(img.width >> 1), -img.height);
+    const ph = it.phase || 0;
+    if (ch === 'M') {
+      // мегаздоровье пульсирует светлым ореолом
+      const p = Math.sin(t * 5 + ph) * 0.5 + 0.5;
+      ctx.strokeStyle = `rgba(150,175,255,${0.25 + p * 0.35})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(0, -7.5, 8.5 + p * 1.5, 0, TAU); ctx.stroke();
+    } else if (ch === 'C') {
+      // молния на батарее вспыхивает
+      const k = Math.sin(t * 7 + ph);
+      if (k > 0.6) { ctx.fillStyle = `rgba(255,250,200,${(k - 0.6) * 1.5})`; ctx.fillRect(-3, -8, 5, 6); }
+    }
+    // блик пробегает по крышке раз в несколько секунд
+    const g = ((t * 0.35 + ph) % 1) * 30 - 8;
+    if (g > -img.width / 2 && g < img.width / 2 - 2 && ch !== 'A' && ch !== 'Y' && ch !== 'R' && ch !== 'backpack') {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillRect(Math.round(g), -img.height + (ch === 'H' ? 3 : ch === 'K' ? 10 : ch === 'U' ? 5 : 2), 2, 1);
+    }
+    ctx.restore();
+    return;
+  }
   switch (ch) {
-    case '+':
-      R(ctx, -4, -6, 8, 6, '#b8b0a0'); R(ctx, -4, -6, 8, 1, '#e0d8c8'); R(ctx, -1, -5, 2, 4, '#c01010'); R(ctx, -3, -4, 6, 2, '#c01010');
-      break;
-    case 'H':
-      R(ctx, -6, -9, 12, 9, '#9a9488'); R(ctx, -6, -9, 12, 1, '#d8d0c0'); R(ctx, -5, -8, 10, 7, '#c8c0b0');
-      R(ctx, -1, -7, 2, 5, '#c01010'); R(ctx, -3, -5, 6, 2, '#c01010'); R(ctx, -6, -1, 12, 1, '#6a645a');
-      break;
-    case 'M': {
-      const p = Math.sin(t * 5) * 0.5 + 0.5;
-      ctx.fillStyle = '#3040c0'; ctx.beginPath(); ctx.arc(0, -6, 6, 0, TAU); ctx.fill();
-      ctx.fillStyle = mix('#6080ff', '#c0d0ff', p); ctx.beginPath(); ctx.arc(0, -6, 4.5, 0, TAU); ctx.fill();
-      R(ctx, -2, -9, 2, 2, '#ffffff');
-      break;
-    }
-    case 'A': case 'Y': case 'R': {
-      const col = ch === 'A' ? '#3a8a2e' : ch === 'Y' ? '#c0a020' : '#b02020';
-      R(ctx, -6, -11, 12, 11, col);
-      R(ctx, -2, -11, 4, 2, '#000000');
-      R(ctx, -6, -11, 4, 1, mix(col, '#ffffff', 0.35));
-      R(ctx, 2, -11, 4, 1, mix(col, '#ffffff', 0.35));
-      R(ctx, -1, -9, 2, 9, shade(col, 0.6));
-      R(ctx, 4, -10, 2, 10, shade(col, 0.7));
-      R(ctx, -6, -1, 12, 1, shade(col, 0.5));
-      break;
-    }
-    case 'U':
-      R(ctx, -5, -7, 10, 7, '#8a2a1a'); R(ctx, -5, -7, 10, 1, '#aa4a2a');
-      for (let i = 0; i < 4; i++) { R(ctx, -4 + i * 2, -9, 1, 2, '#a02010'); R(ctx, -4 + i * 2, -10, 1, 1, '#d0a040'); }
-      break;
-    case 'N':
-      R(ctx, -5, -7, 10, 7, '#5a5a60'); R(ctx, -5, -7, 10, 1, '#7a7a82');
-      for (let i = 0; i < 4; i++) R(ctx, -4 + i * 2, -9, 1, 2, '#b0b0b8');
-      R(ctx, -3, -4, 6, 1, '#3a3a40');
-      break;
-    case 'K':
-      R(ctx, -5, -6, 10, 6, '#6a4a2a'); R(ctx, -5, -6, 10, 1, '#8a6a3a');
-      R(ctx, -3, -11, 2, 5, '#7a7a70'); R(ctx, 1, -11, 2, 5, '#7a7a70');
-      R(ctx, -3, -12, 2, 1, '#b02010'); R(ctx, 1, -12, 2, 1, '#b02010');
-      break;
-    case 'C':
-      R(ctx, -5, -8, 10, 8, '#4a5a3a'); R(ctx, -5, -8, 10, 1, '#6a7a52');
-      R(ctx, 0, -7, 2, 3, '#e0c030'); R(ctx, -1, -4, 3, 1, '#e0c030'); R(ctx, -1, -3, 2, 2, '#e0c030');
-      break;
     case 'Q': {
       const k = Math.sin(t * 2);
       const w = Math.max(2, Math.round(Math.abs(k) * 10));
@@ -1734,10 +1939,6 @@ function drawItem(ctx, x, y, it, t) {
       drawKeyIcon(ctx, 0, -6, col);
       break;
     }
-    case 'backpack':
-      R(ctx, -5, -9, 10, 9, '#6a5030'); R(ctx, -5, -9, 10, 1, '#8a6a40'); R(ctx, -4, -6, 8, 3, '#5a4028');
-      R(ctx, -2, -10, 4, 1, '#4a3a20'); R(ctx, 3, -8, 1, 7, '#4a3a20');
-      break;
     default:
       if (ch >= '3' && ch <= '9') {
         R(ctx, -9, -2, 18, 2, '#2a2420');
@@ -1747,38 +1948,209 @@ function drawItem(ctx, x, y, it, t) {
   ctx.restore();
 }
 
+// Оружие на полу светится: отсвет на полу, светлый контур, бегущий блик, искры вверх.
+function drawWeaponGlow(ctx, x, y, it, t) {
+  const ph = it.phase || 0;
+  const bob = it.dropped ? 0 : Math.round(Math.sin(t * 3 + ph) * 1.5) - 1;
+  const pulse = 0.5 + Math.sin(t * 3 + ph) * 0.5;
+  const img = gunImg(+it.ch);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  // отсвет на полу
+  const g = ctx.createRadialGradient(x, y - 1, 0, x, y - 1, 16);
+  g.addColorStop(0, `rgba(255,200,110,${0.32 + pulse * 0.14})`);
+  g.addColorStop(1, 'rgba(255,170,60,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(x - 16, y - 7, 32, 9);
+  if (img) {
+    // сам ствол чуть подсвечен — силуэт читается и в темноте
+    const gx = Math.round(x - 7), gy = Math.round(y + bob - 5 - img.height / 2 + 1);
+    ctx.globalAlpha = 0.22 + pulse * 0.12;
+    ctx.drawImage(img, gx, gy);
+    // блик пробегает вдоль ствола раз в две секунды
+    const k = ((t * 0.5 + ph) % 1) * 2;
+    if (k < 1) {
+      ctx.globalAlpha = 0.8 * Math.sin(k * Math.PI);
+      ctx.fillStyle = '#fff4d0';
+      ctx.fillRect(gx + Math.round(k * img.width), gy + 1, 2, Math.max(1, img.height - 3));
+    }
+  }
+  // искры поднимаются и гаснут
+  for (let i = 0; i < 3; i++) {
+    const k = (t * 0.6 + ph + i / 3) % 1;
+    ctx.globalAlpha = 0.7 * (1 - k);
+    ctx.fillStyle = '#ffd890';
+    ctx.fillRect(Math.round(x - 8 + ((i * 7 + Math.floor(ph * 10)) % 16)), Math.round(y - 3 - k * 16 + bob), 1, 1);
+  }
+  ctx.restore();
+}
+
+// Подсветка припасов: отсвет на полу цветом по смыслу, подсвеченный силуэт и искорки.
+function drawPickupGlow(ctx, x, y, it, t, col) {
+  const ph = it.phase || 0;
+  const bob = it.dropped ? 0 : Math.round(Math.sin(t * 3 + ph) * 1.5) - 1;
+  const pulse = 0.5 + Math.sin(t * 3 + ph) * 0.5;
+  const img = itemImg(it.ch);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  // ореол вокруг предмета и отсвет на полу
+  const cy = y + bob - (img ? img.height / 2 : 6);
+  const halo = ctx.createRadialGradient(x, cy, 0, x, cy, 15);
+  halo.addColorStop(0, `rgba(${col},${0.2 + pulse * 0.1})`);
+  halo.addColorStop(1, `rgba(${col},0)`);
+  ctx.fillStyle = halo;
+  ctx.fillRect(x - 15, cy - 15, 30, 30);
+  const g = ctx.createRadialGradient(x, y - 1, 0, x, y - 1, 14);
+  g.addColorStop(0, `rgba(${col},${0.36 + pulse * 0.14})`);
+  g.addColorStop(1, `rgba(${col},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(x - 14, y - 6, 28, 8);
+  if (img) {
+    ctx.globalAlpha = 0.2 + pulse * 0.12;
+    ctx.drawImage(img, x - (img.width >> 1), y + bob - img.height);
+  }
+  // две искорки поднимаются и гаснут
+  for (let i = 0; i < 2; i++) {
+    const k = (t * 0.5 + ph + i / 2) % 1;
+    ctx.globalAlpha = 0.6 * (1 - k);
+    ctx.fillStyle = `rgb(${col})`;
+    ctx.fillRect(Math.round(x - 5 + ((i * 9 + Math.floor(ph * 10)) % 10)), Math.round(y - 4 - k * 12 + bob), 1, 1);
+  }
+  ctx.restore();
+}
+
 // ---------------- лицо героя для HUD ----------------
+// Лицо героя в строке состояния, как в Quake: смотрит по сторонам, морщится от боли,
+// с каждой ступенью ранения — больше крови и синяков. Рисуется на сетке 32×32 в кэш
+// и выводится без сглаживания в те же 16×16 единиц интерфейса.
+const FACE_CACHE = new Map();
 function drawFace(ctx, x, y, s, p, t) {
-  const r = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x + a * s, y + b * s, w * s, h * s); };
   const hp = p.health;
   const tier = !p.alive ? 5 : hp >= 80 ? 0 : hp >= 60 ? 1 : hp >= 40 ? 2 : hp >= 20 ? 3 : 4;
-  let skin = '#c09070', sh = '#96684e';
-  if (p.pent > 0) { skin = '#d07060'; sh = '#a04a3a'; }
-  if (tier === 5) { skin = '#8a7a6a'; sh = '#5a4a3a'; }
-  r(3, 1, 10, 14, sh);
-  r(3, 1, 9, 13, skin);
-  r(2, 0, 12, 4, '#3a3020');
-  r(2, 3, 2, 5, '#3a3020');
-  r(12, 3, 2, 4, '#3a3020');
-  r(2, 6, 1, 3, sh);
-  r(13, 6, 1, 3, sh);
-  const look = tier === 5 ? 0 : Math.round(Math.sin(t * 0.7) * 1.2);
-  const pain = p.faceT > 0 || tier === 5;
-  if (pain) {
-    r(4, 7, 3, 1, '#2a1a10'); r(9, 7, 3, 1, '#2a1a10');
-  } else {
-    r(4, 6, 3, 2, p.quad > 0 ? '#80a0ff' : '#e8e0d0');
-    r(9, 6, 3, 2, p.quad > 0 ? '#80a0ff' : '#e8e0d0');
-    r(5 + look, 6, 1, 2, p.pent > 0 ? '#ff2010' : '#2a1a10');
-    r(10 + look, 6, 1, 2, p.pent > 0 ? '#ff2010' : '#2a1a10');
+  // взгляд: как в Quake, раз в пару секунд косится влево или вправо
+  const ph = (t * 0.45) % 3;
+  const look = tier === 5 ? 0 : ph < 0.5 ? -1 : ph > 1.5 && ph < 2 ? 1 : 0;
+  const pain = tier < 5 && p.faceT > 0;
+  const mode = p.ring > 0 ? 'ring' : p.pent > 0 ? 'pent' : p.quad > 0 ? 'quad' : '';
+  const key = `${tier}|${look}|${pain ? 1 : 0}|${mode}`;
+  let img = FACE_CACHE.get(key);
+  if (!img) { img = paintFace(tier, look, pain, mode); FACE_CACHE.set(key, img); }
+  const sm = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, Math.round(x), Math.round(y), Math.round(16 * s), Math.round(16 * s));
+  ctx.imageSmoothingEnabled = sm;
+}
+
+function paintFace(tier, look, pain, mode) {
+  const cv = makeCanvas(32, 32);
+  const g = cv.getContext('2d');
+  const px = (a, b, c, w = 1, h = 1) => { g.fillStyle = c; g.fillRect(a, b, w, h); };
+  const dead = tier === 5;
+  // кожа: от света к тени; под пентаграммой — красноватая, у мёртвого — серая
+  let S = ['#ecbc96', '#d2986e', '#b27852', '#8a5638', '#5a3220'];
+  if (mode === 'pent') S = ['#f0a090', '#d8786a', '#b0564a', '#843a32', '#52201a'];
+  if (dead) S = ['#b4a898', '#988a7a', '#7a6c5e', '#5a4e44', '#3a302a'];
+  const HAIR = ['#3a2616', '#4e3420', '#6e4c30'];
+  const cx = 16;
+  // очертание головы: полуширина по рядам (квадратная челюсть)
+  const HW = { 4: 7, 5: 9, 6: 10, 7: 10, 8: 11, 9: 11, 10: 11, 11: 11, 12: 11, 13: 11, 14: 11, 15: 11, 16: 11, 17: 11, 18: 11, 19: 10, 20: 10, 21: 10, 22: 10, 23: 9, 24: 9, 25: 9, 26: 8, 27: 7, 28: 6 };
+  for (let y = 4; y <= 28; y++) {
+    const hw = HW[y];
+    for (let x = cx - hw; x < cx + hw; x++) {
+      const e = (x - (cx - hw)) / (hw * 2);          // 0 — левый край (свет), 1 — правый (тень)
+      let c = S[1];
+      if (e < 0.12) c = S[2]; else if (e < 0.32) c = S[0]; else if (e > 0.86) c = S[3]; else if (e > 0.7) c = S[2];
+      if (y >= 26) c = e > 0.6 ? S[3] : S[2];        // тень под подбородком
+      px(x, y, c);
+    }
   }
-  r(4, 5, 3, 1, '#4a3a28'); r(9, 5, 3, 1, '#4a3a28');
-  r(7, 8, 2, 3, sh);
-  r(6, 12, 4, 1, pain ? '#3a1010' : '#6a3a2a');
-  if (pain) r(6, 11, 4, 1, '#3a1010');
-  if (tier >= 1) r(11, 9, 2, 3, '#8a0a08');
-  if (tier >= 2) { r(3, 2, 2, 2, '#8a0a08'); r(10, 12, 3, 2, '#7a0a08'); }
-  if (tier >= 3) { r(4, 9, 2, 4, '#7a0a08'); r(8, 1, 3, 2, '#9a1010'); }
-  if (tier >= 4) { r(5, 3, 6, 1, '#6a0806'); r(3, 13, 9, 2, '#6a0806'); }
-  if (p.ring > 0) { ctx.fillStyle = 'rgba(10,8,6,0.75)'; ctx.fillRect(x + 2 * s, y, 12 * s, 15 * s); r(5, 6, 1, 1, '#ffe080'); r(10, 6, 1, 1, '#ffe080'); }
+  // уши
+  px(cx - 12, 14, S[2], 1, 5); px(cx - 13, 15, S[3], 1, 3); px(cx + 11, 14, S[3], 1, 5); px(cx + 12, 15, S[4], 1, 3);
+  // шея и ворот брони
+  px(cx - 5, 28, S[3], 10, 2);
+  px(cx - 10, 30, '#3a4a28', 20, 2); px(cx - 10, 30, '#56683a', 20, 1); px(cx - 2, 29, '#2a3420', 4, 2);
+  // волосы: короткая стрижка, виски, чуть темнее сверху
+  for (let y = 1; y <= 8; y++) {
+    const hw = y < 4 ? 5 + (y - 1) * 2 : Math.min(12, (HW[y] || 11) + 1);
+    px(cx - hw, y, HAIR[y < 3 ? 0 : 1], hw * 2, 1);
+  }
+  for (let i = 0; i < 9; i++) px(cx - 9 + i * 2 + (i % 2), 2 + (i % 3), HAIR[2], 1, 2);   // блики в волосах
+  px(cx - 12, 9, HAIR[1], 3, 5); px(cx + 9, 9, HAIR[1], 3, 5);   // виски
+  for (let i = 0; i < 6; i++) px(cx - 8 + i * 3, 3 + (i % 2), HAIR[2], 2, 1);   // пряди
+  px(cx - 9, 9, HAIR[0], 18, 1);                                     // линия роста волос
+  // лоб и надбровья
+  px(cx - 9, 11, S[1], 18, 1);
+  // брови: сдвинуты к переносице (решимость); от боли — ниже и круче
+  const by = pain ? 13 : 12;
+  px(cx - 8, by, '#2a1c12', 5, 1); px(cx - 4, by + 1, '#2a1c12', 2, 1);
+  px(cx + 3, by, '#2a1c12', 5, 1); px(cx + 2, by + 1, '#2a1c12', 2, 1);
+  // глаза
+  const eyeY = 15;
+  if (mode === 'ring') {
+    // кольцо теней: голова растворяется во тьме (только она, не фон), видны глаза
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = 'rgba(8,6,4,0.86)'; g.fillRect(0, 0, 32, 32);
+    g.globalCompositeOperation = 'source-over';
+    px(cx - 6, eyeY, '#ffe080', 2, 1); px(cx + 4, eyeY, '#ffe080', 2, 1);
+    return cv;
+  }
+  if (dead) {
+    px(cx - 7, eyeY, S[4], 4, 1); px(cx + 3, eyeY, S[4], 4, 1);
+  } else if (pain) {
+    px(cx - 7, eyeY, '#2a1810', 4, 1); px(cx + 3, eyeY, '#2a1810', 4, 1);
+    px(cx - 7, eyeY + 1, S[3], 4, 1); px(cx + 3, eyeY + 1, S[3], 4, 1);
+  } else {
+    const white = '#ece4d6', iris = mode === 'quad' ? '#90b0ff' : mode === 'pent' ? '#ff3a20' : '#4a6a86';
+    px(cx - 7, eyeY, white, 4, 2); px(cx + 3, eyeY, white, 4, 2);
+    const ix = 1 + look;
+    px(cx - 7 + ix, eyeY, iris, 2, 2); px(cx + 3 + ix, eyeY, iris, 2, 2);
+    px(cx - 7 + ix + (look > 0 ? 1 : 0), eyeY, '#100c0a'); px(cx + 3 + ix + (look > 0 ? 1 : 0), eyeY, '#100c0a');
+    px(cx - 7, eyeY - 1, S[3], 4, 1); px(cx + 3, eyeY - 1, S[3], 4, 1);   // верхнее веко
+    if (mode === 'quad') { g.fillStyle = 'rgba(140,170,255,0.35)'; g.fillRect(cx - 8, eyeY - 1, 6, 4); g.fillRect(cx + 2, eyeY - 1, 6, 4); }
+  }
+  px(cx - 7, eyeY + 2, S[2], 4, 1); px(cx + 3, eyeY + 2, S[3], 4, 1);     // тень под глазами
+  // нос: переносица, тень справа, кончик и ноздри
+  px(cx, 15, S[2], 1, 5); px(cx + 1, 16, S[3], 1, 5); px(cx - 1, 19, S[0]);
+  px(cx - 2, 21, S[3], 5, 1); px(cx - 2, 21, S[4]); px(cx + 2, 21, S[4]);
+  // скулы
+  px(cx - 9, 18, S[0], 2, 2); px(cx + 7, 18, S[3], 2, 2);
+  // щетина
+  for (let i = 0; i < 26; i++) {
+    const sx = cx - 8 + Math.floor(hash2(i, 1, 201) * 16), sy = 22 + Math.floor(hash2(i, 2, 202) * 6);
+    if (Math.abs(sx - cx) + (sy - 22) < 14) px(sx, sy, dead ? S[3] : 'rgba(70,40,24,0.5)');
+  }
+  // рот: сжат; от боли — оскал с зубами; у мёртвого — приоткрыт
+  if (pain) { px(cx - 4, 23, '#3a1410', 8, 3); px(cx - 3, 23, '#e8e0d0', 6, 1); px(cx - 3, 25, '#c8c0b0', 6, 1); }
+  else if (dead) { px(cx - 3, 24, '#2a1410', 6, 2); }
+  else { px(cx - 4, 24, '#5a2a1c', 8, 1); px(cx - 3, 25, S[0], 6, 1); px(cx + 4, 23, '#5a2a1c'); }
+  // подбородок
+  px(cx - 2, 27, S[1], 4, 1);
+  // ранения
+  const B = ['#9a0c0a', '#6a0806', '#c01810'];
+  if (tier >= 1) { px(cx + 8, 10, B[0], 2, 1); px(cx + 9, 11, B[0], 1, 4); px(cx + 9, 15, B[1]); }          // рассечён висок
+  if (tier >= 2) { px(cx - 1, 22, B[0], 1, 2); px(cx + 1, 22, B[1], 1, 3); px(cx - 3, 26, B[0], 2, 1); }   // кровь из носа, губа
+  if (tier >= 3) {
+    g.fillStyle = 'rgba(90,40,90,0.55)'; g.fillRect(cx - 8, eyeY - 1, 6, 4);                               // синяк под глазом
+    px(cx - 5, 9, B[2], 6, 1); px(cx - 4, 10, B[0], 1, 4); px(cx - 1, 10, B[0], 1, 3);                      // рана на лбу
+    px(cx - 10, 19, B[1], 1, 5);
+  }
+  if (tier >= 4) {
+    px(cx + 3, eyeY, S[3], 4, 1);                                                                          // заплывший глаз
+    px(cx - 9, 20, B[0], 3, 6); px(cx + 6, 22, B[1], 3, 5); px(cx - 8, 28, B[1], 16, 1);
+    px(cx + 2, 9, B[2], 3, 1); px(cx + 3, 10, B[0], 1, 3);     // ещё одна рана у линии волос
+  }
+  if (dead) { px(cx - 6, 6, B[1], 12, 2); px(cx - 9, 12, B[0], 2, 10); px(cx + 7, 11, B[1], 2, 12); }
+  outlineSprite(g, 32, 32, '#0c0805');
+  return cv;
+}
+
+// Тёмный контур в пиксель вокруг непрозрачного: силуэт читается на любом фоне.
+function outlineSprite(g, w, h, col) {
+  const img = g.getImageData(0, 0, w, h), d = img.data;
+  const solid = (x, y) => x >= 0 && y >= 0 && x < w && y < h && d[(y * w + x) * 4 + 3] > 40;
+  g.fillStyle = col;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (solid(x, y)) continue;
+    if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1)) g.fillRect(x, y, 1, 1);
+  }
 }

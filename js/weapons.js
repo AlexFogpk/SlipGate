@@ -42,7 +42,7 @@ function hitscan(attacker, x0, y0, ang, pellets, dmg, spread, range = 900) {
     const a = ang + (Math.random() + Math.random() - 1) * spread;
     const cx = Math.cos(a), cy = Math.sin(a);
     const dx = cx * range, dy = cy * range;
-    const hit = lv.rayCast(x0, y0, x0 + dx, y0 + dy);
+    const hit = lv.rayCast(x0, y0, x0 + dx, y0 + dy, false, true);
     let best = hit.t, tgt = null;
     for (const t of targets) {
       const tt = rayBox(x0, y0, dx, dy, t.x, t.y, t.w, t.h);
@@ -51,6 +51,10 @@ function hitscan(attacker, x0, y0, ang, pellets, dmg, spread, range = 900) {
     for (const b of lv.buttons) {
       const tt = rayBox(x0, y0, dx, dy, b.x, b.y, b.w, b.h);
       if (tt >= 0 && tt < best && !b.pressed) lv.pressButton(b);
+    }
+    for (const b of lv.liftButtons) {
+      const tt = rayBox(x0, y0, dx, dy, b.x, b.y, b.w, 8);
+      if (tt >= 0 && tt < best && attacker && attacker.isPlayer) lv.pressLiftButton(b);
     }
     const hx = x0 + dx * best, hy = y0 + dy * best;
     if (tgt) {
@@ -70,7 +74,7 @@ function hitscan(attacker, x0, y0, ang, pellets, dmg, spread, range = 900) {
 function lightningRay(attacker, x0, y0, ang, range, dmg) {
   const lv = Game.level;
   const dx = Math.cos(ang) * range, dy = Math.sin(ang) * range;
-  const hit = lv.rayCast(x0, y0, x0 + dx, y0 + dy);
+  const hit = lv.rayCast(x0, y0, x0 + dx, y0 + dy, false, true);
   let best = hit.t, tgt = null;
   for (const t of Game.shootTargets(attacker)) {
     const tt = rayBox(x0, y0, dx, dy, t.x, t.y, t.w, t.h);
@@ -88,6 +92,10 @@ function lightningRay(attacker, x0, y0, ang, range, dmg) {
   for (const b of lv.buttons) {
     const tt = rayBox(x0, y0, dx, dy, b.x, b.y, b.w, b.h);
     if (tt >= 0 && tt < best && !b.pressed) lv.pressButton(b);
+  }
+  for (const b of lv.liftButtons) {
+    const tt = rayBox(x0, y0, dx, dy, b.x, b.y, b.w, 8);
+    if (tt >= 0 && tt < best && attacker && attacker.isPlayer) lv.pressLiftButton(b);
   }
   return { x: hx, y: hy, target: tgt };
 }
@@ -130,7 +138,8 @@ class Projectile {
     if (this.kind === 'voreball' || this.kind === 'lavaball') {
       if (Math.random() < 0.5) FX.add({ kind: 'spark', x: this.x, y: this.y, vx: rand(-20, 20), vy: rand(-20, 20), life: 0.3, max: 0.3, size: 1, col: this.kind === 'voreball' ? '#d080ff' : '#ff9030', grav: 0, bright: true });
     }
-    if (this.homing && this.target && this.target.alive) {
+    // самонаведение не находит невидимого героя
+    if (this.homing && this.target && this.target.alive && !(this.target.isPlayer && this.target.ring > 0)) {
       const want = Math.atan2(this.target.cy - this.y, this.target.cx - this.x);
       const cur = Math.atan2(this.vy, this.vx);
       const na = cur + clamp(angleDiff(cur, want), -this.homing * dt, this.homing * dt);
@@ -141,7 +150,7 @@ class Projectile {
     this.vy += this.grav * dt;
     this.spin += dt * 12;
     const nx = this.x + this.vx * dt, ny = this.y + this.vy * dt;
-    const hit = lv.rayCast(this.x, this.y, nx, ny);
+    const hit = lv.rayCast(this.x, this.y, nx, ny, false, true);
     let best = hit.hit ? hit.t : 1, tgt = null;
     const pad = this.kind === 'lavaball' ? 4 : 1;
     for (const t of Game.shootTargets(this.owner)) {
@@ -149,6 +158,9 @@ class Projectile {
       if (tt >= 0 && tt <= best) { best = tt; tgt = t; }
     }
     const hx = this.x + (nx - this.x) * best, hy = this.y + (ny - this.y) * best;
+    if (this.owner && this.owner.isPlayer) {
+      for (const b of lv.liftButtons) if (rayBox(this.x, this.y, nx - this.x, ny - this.y, b.x, b.y, b.w, 8) >= 0) lv.pressLiftButton(b);
+    }
     if (tgt) { this.hitEntity(tgt, hx, hy); return; }
     if (hit.hit) { this.hitWall(hx, hy, hit); return; }
     this.x = nx; this.y = ny;

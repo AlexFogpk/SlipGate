@@ -11,5 +11,6 @@ window.addEventListener('load', () => {
     }
   } catch (e) { /* шрифты подгрузятся позже или останутся запасные */ }
   Game.init(canvas);
+  App.init();
   window.__game = Game;
 });

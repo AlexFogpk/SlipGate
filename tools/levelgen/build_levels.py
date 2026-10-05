@@ -10,7 +10,8 @@
 общие приёмы (засады, тайники) — в ldtools.py.
 """
 import json, os, sys
-from ldtools import trap, floor_secret, wall_secret
+from ldtools import trap, floor_secret, wall_secret, add_near, secret_exit
+from supply_moves import SUPPLY_MOVES
 
 class M:
     def __init__(self, w, h):
@@ -137,40 +138,108 @@ LEVELS = []
 
 def level(meta, m):
     meta = dict(meta)
+    # припасы от старта — на маршрут (см. supply_moves.py)
+    for fx, fy, ch, tx, ty, back in SUPPLY_MOVES.get(meta['id'], []):
+        assert m.g[fy][fx] == ch, (meta['id'], fx, fy, ch, m.g[fy][fx])
+        assert m.g[ty][tx] in ' ,', (meta['id'], tx, ty, m.g[ty][tx])
+        m.g[fy][fx] = back
+        m.g[ty][tx] = ch
+    health_in_secrets(m)
     meta['map'] = m.rows()
     LEVELS.append(meta)
 
+
+def health_in_secrets(m):
+    """В каждом тайнике без лечения — аптечка: найти тайник должно быть за что.
+    Тайник — клетки за стеной '$', до которых не дойти от старта в обход неё
+    (так же считает игра, когда прячет комнату). Комнату со слипгейтом не трогаем."""
+    W, H = m.w, m.h
+    g = m.g
+    wall = lambda x, y: g[y][x] in '#%'
+    main = set()
+    st = [(x, y) for y in range(H) for x in range(W) if g[y][x] in 'P<']
+    main.update(st)
+    while st:
+        x, y = st.pop()
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if 0 <= nx < W and 0 <= ny < H and (nx, ny) not in main and not wall(nx, ny) and g[ny][nx] != '$':
+                main.add((nx, ny)); st.append((nx, ny))
+    seen = set()
+    for y0 in range(H):
+        for x0 in range(W):
+            if g[y0][x0] != '$' or (x0, y0) in seen:
+                continue
+            # стена тайника целиком и комната за ней
+            walls, st = {(x0, y0)}, [(x0, y0)]
+            while st:
+                x, y = st.pop()
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if g[ny][nx] == '$' and (nx, ny) not in walls:
+                        walls.add((nx, ny)); st.append((nx, ny))
+            seen |= walls
+            room, st = set(), list(walls)
+            while st:
+                x, y = st.pop()
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if 0 <= nx < W and 0 <= ny < H and (nx, ny) not in room and (nx, ny) not in main and not wall(nx, ny) and g[ny][nx] != '$':
+                        room.add((nx, ny)); st.append((nx, ny))
+            # тайник, за которым нет скрытой комнаты, виден с уровня — так нельзя
+            assert room, ('тайник виден: комната за ним соединена с уровнем', (x0, y0))
+            if any(g[y][x] in '+HMZ' for x, y in room):
+                continue
+            spots = sorted((abs(x - x0) + abs(y - y0), x, y) for x, y in room
+                           if g[y][x] in ' ,~' and g[y + 1][x] in '#%-~' and g[y][x] not in 'PE')
+            if spots:
+                _, x, y = spots[-1]   # подальше от входа — в глубине тайника
+                g[y][x] = 'H'
+
 # ---------------------------------------------------------------- START
 def start():
-    m = M(72, 25)
-    m.fill(1, 1, 24, 16, ',')
-    m.fill(26, 7, 70, 16, ' ')
-    m.fill(25, 14, 25, 16, 'D')
-    for x in (28, 34, 46, 58, 68):
-        m.put(x, 7, '*')
-    for x in (34, 46, 58):
-        m.put(x - 1, 16, '%%%')
-        m.put(x, 15, 'E')
-    m.put(4, 16, 'P')
-    m.fill(66, 17, 67, 17, ' ')
-    # подводный ход к «Кошмару»
-    m.fill(26, 18, 33, 20, ' ')
-    m.fill(66, 18, 67, 20, '~')
-    m.fill(26, 21, 29, 21, '%')
-    m.fill(30, 21, 67, 21, '~')
-    m.fill(30, 22, 67, 23, '~')
-    m.put(28, 20, 'E')
-    m.put(31, 19, 'L')
+    # Зал выбора сложности — башня: «чем выше, тем сложнее». Герой появляется на первом
+    # этаже, лёгкие врата — прямо по ходу, в конце этажа. Лестница площадок — во дворе
+    # позади героя: с неё свои входы на второй (нормальный) и третий (сложный) этажи.
+    # Так ни одни врата и ни одна площадка не стоят на пути к другим. «Кошмар», как в
+    # Quake, спрятан под водой — колодец во дворе.
+    m = M(80, 40)
+    m.fill(1, 1, 24, 30, ',')
+    m.fill(25, 28, 25, 30, 'D')
+    m.fill(26, 8, 77, 30, ' ')
+    m.put(29, 30, 'P')
+    # этажи башни и входы на них со двора
+    m.fill(26, 24, 77, 24, '#')
+    m.fill(26, 17, 77, 17, '#')
+    m.fill(25, 21, 25, 23, ' ')
+    m.fill(25, 14, 25, 16, ' ')
+    m.fill(18, 24, 24, 24, '#')
+    m.fill(18, 17, 24, 17, '#')
+    # лестница площадок во дворе
+    m.ladder(6, 12, 30, 16, w=4)
+    # врата вплотную к торцевой стене этажа — их не перепрыгнуть и не проскочить
+    m.put(77, 30, 'E'); m.put(77, 23, 'E'); m.put(77, 16, 'E')
+    for x in (32, 46, 60, 74):
+        m.put(x, 8, '*'); m.put(x, 18, '*'); m.put(x, 25, '*')
+    for (top, bottom) in ((9, 16), (18, 23), (25, 30)):
+        m.columns(40, 72, top, bottom, step=14, w=1)
+    # подводный ход к «Кошмару»: колодец во дворе, тоннель под залом и воздушный карман
+    m.fill(2, 31, 3, 31, ',')
+    m.fill(2, 32, 3, 34, '~')
+    m.fill(2, 35, 29, 37, '~')
+    m.fill(26, 32, 33, 34, ' ')
+    m.fill(30, 35, 33, 35, '%')
+    m.put(32, 34, 'E')
+    m.put(28, 33, 'L')
     level({
         'id': 'start', 'name': 'START', 'title': 'Вступление', 'theme': 'base', 'next': 'e1m1', 'music': 55,
-        'skillPortals': [0, 1, 2, 3],
-        'intro': 'Войдите в слипгейт,\nчтобы выбрать сложность',
+        # врата в порядке разбора карты (сверху вниз): сложный, нормальный, лёгкий, кошмар
+        'skillPortals': [2, 1, 0, 3],
+        'intro': 'Лёгкий — прямо, в конце зала.\nНормальный и сложный — выше:\nлестница во дворе позади вас',
         'labels': [
-            {'x': 34, 'y': 11.4, 'text': 'ЛЁГКИЙ'},
-            {'x': 46, 'y': 11.4, 'text': 'НОРМАЛЬНЫЙ'},
-            {'x': 58, 'y': 11.4, 'text': 'СЛОЖНЫЙ'},
-            {'x': 29, 'y': 17.3, 'text': 'КОШМАР', 'color': '#e05040'},
-            {'x': 12, 'y': 10, 'text': 'SLIPGATE', 'color': '#c89050'},
+            {'x': 75, 'y': 26.6, 'text': 'ЛЁГКИЙ'},
+            {'x': 74, 'y': 19.6, 'text': 'НОРМАЛЬНЫЙ'},
+            {'x': 75, 'y': 12.6, 'text': 'СЛОЖНЫЙ'},
+            {'x': 32, 'y': 31.3, 'text': 'КОШМАР', 'color': '#e05040'},
+            {'x': 12, 'y': 13, 'text': 'ВЫШЕ — СЛОЖНЕЕ', 'color': '#a08060'},
+            {'x': 12, 'y': 6, 'text': 'SLIPGATE', 'color': '#c89050'},
         ],
     }, m)
 
@@ -186,6 +255,9 @@ def e1m1():
     m.fill(7, 29, 7, 30, '~')
     m.put(3, 30, 'A'); m.put(5, 30, '+')
     m.plat(8, 27, 20)
+    # мостки-ступени у обоих берегов: из воды на них, с них — на берег или мост
+    m.plat(8, 10, 23)
+    m.plat(25, 27, 23)
     for x in (13, 20):
         m.deco(x, 21, x, 24, over=',')
     m.ledge(31, 35, 14)
@@ -258,6 +330,8 @@ def e1m1():
     m.put(126, 20, 'R'); m.put(127, 20, 'K')
     m.put(140, 23, 'g'); m.put(138, 31, 'd')
     m.put(132, 31, 'U'); m.put(148, 30, 'H')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 84, 32, 'YU')
     level({
         'id': 'e1m1', 'name': 'E1M1', 'title': 'Шлюзовой комплекс', 'theme': 'base', 'episode': 1, 'next': 'e1m2', 'music': 49,
         'kit': {'weapons': [1, 2], 'ammo': {'shells': 25}},
@@ -305,7 +379,7 @@ def e1m2():
     m.fill(81, 13, 100, 16, ' ')
     m.put(90, 13, 'L')
     m.put(94, 16, 'g')
-    floor_secret(m, 88, 17, 'AK')
+    floor_secret(m, 90, 17, 'AK')
     # дверь в подземелье и шахта вниз
     m.fill(81, 22, 81, 24, 'D')
     m.fill(82, 22, 86, 24, ' ')
@@ -355,8 +429,13 @@ def e1m2():
     m.plat(148, 153, 21)
     m.put(151, 20, 'g'); m.put(155, 24, 'k'); m.put(157, 23, 'g'); m.put(150, 12, 's')
     m.put(143, 17, 'H'); m.put(144, 17, 'U')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    wall_secret(m, 99, 30, 96, 98, '7K')
+    # секретный выход на E1M7 — за тайной стеной в конце нижнего зала
+    secret_exit(m, 121, 41)
     level({
         'id': 'e1m2', 'name': 'E1M2', 'title': 'Замок проклятых', 'theme': 'castle', 'episode': 1, 'next': 'e1m3', 'music': 46.25,
+        'secretNext': 'e1m7',
         'kit': {'weapons': [1, 2, 3], 'ammo': {'shells': 40}},
         'traps': [
             trap(76, 14, 80, 16, [(44, 24, 'k'), (54, 24, 'k'), (70, 24, 'd')]),
@@ -434,6 +513,8 @@ def e1m3():
     m.put(166, 29, 'k'); m.put(169, 29, 'o'); m.put(163, 29, 'U')
     m.columns(164, 175, 21, 28, step=5, w=1)
     m.deco(142, 26, 160, 26)
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 123, 40, 'MN')
     level({
         'id': 'e1m3', 'name': 'E1M3', 'title': 'Некрополь', 'theme': 'crypt', 'episode': 1, 'next': 'e1m4', 'music': 41.2,
         'kit': {'weapons': [1, 2, 3, 4, 6], 'ammo': {'shells': 40, 'nails': 60, 'rockets': 10}},
@@ -501,6 +582,8 @@ def e1m4():
     m.roughen(46, 10, 95, 26, seed=12, ceil=3, walls=2)
     m.roughen(140, 14, 185, 26, seed=13, ceil=3, walls=1, floor_bumps=0.08)
     m.roughen(140, 2, 185, 12, seed=14, ceil=2, walls=1, floor_bumps=0.06)
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    wall_secret(m, 107, 35, 104, 106, 'VK')
     level({
         'id': 'e1m4', 'name': 'E1M4', 'title': 'Жуткий грот', 'theme': 'cave', 'episode': 1, 'next': 'e1m5', 'music': 43.65,
         'kit': {'weapons': [1, 2, 3, 4, 6, 7], 'ammo': {'shells': 50, 'nails': 80, 'rockets': 15}, 'armor': 100},
@@ -518,7 +601,7 @@ def e1m5():
     m.fill(1, 40, 26, 50, ' ')
     m.put(3, 50, 'P'); m.put(8, 44, 'L'); m.put(20, 44, 'L')
     m.put(10, 50, 'U'); m.put(12, 50, 'N'); m.put(14, 50, 'K')
-    m.put(22, 50, 'n')
+    m.put(22, 50, 'k')
     m.fill(27, 48, 27, 50, 'D')
     # B: лавовая река
     m.fill(28, 36, 80, 50, ' ')
@@ -556,7 +639,7 @@ def e1m5():
     wall_secret(m, 92, 50, 93, 98, 'QK', h=2)
     for (x, y) in ((85, 30), (100, 26), (132, 26), (148, 30), (116, 20), (88, 44), (145, 44)):
         m.put(x, y, 'L')
-    m.put(100, 44, 'v'); m.put(133, 44, 'v'); m.put(110, 38, 'n'); m.put(122, 38, 'n')
+    m.put(100, 44, 'o'); m.put(133, 44, 'o'); m.put(110, 38, 'n'); m.put(122, 38, 'k')
     m.put(144, 50, 'm'); m.put(88, 50, 'k'); m.put(95, 47, 'e'); m.put(138, 47, 'e')
     m.put(84, 50, 'H'); m.put(104, 41, 'U'); m.put(128, 41, 'N')
     m.fill(151, 48, 151, 50, ']')
@@ -576,17 +659,22 @@ def e1m5():
     # E: выход за золотой дверью
     m.fill(152, 42, 175, 50, ' ')
     m.put(172, 50, 'E'); m.put(156, 45, 'L'); m.put(170, 45, 'L')
-    m.put(160, 50, 'n'); m.put(166, 50, 'v'); m.put(154, 50, 'H')
+    m.put(160, 50, 'n'); m.put(166, 50, 'o'); m.put(154, 50, 'H')
     m.fill(176, 49, 176, 50, '$')
     m.fill(177, 47, 181, 50, ' ')
     m.put(179, 50, 'R'); m.put(180, 50, 'C')
+    # снабжение: патронов и лечения не хватало на всех монстров
+    add_near(m, 104, 41, 'K'); add_near(m, 154, 50, 'U')
+    add_near(m, 84, 50, 'H'); add_near(m, 128, 41, 'H')
+    # ещё один тайник (место подобрано tools/dev/secret-spots.js)
+    floor_secret(m, 126, 42, 'MK')
     level({
         'id': 'e1m5', 'name': 'E1M5', 'title': 'Древний мир', 'theme': 'elder', 'episode': 1, 'next': 'e1m6', 'music': 38.9,
         'kit': {'weapons': [1, 2, 3, 4, 5, 6, 7], 'ammo': {'shells': 60, 'nails': 120, 'rockets': 20}, 'armor': 100},
         'traps': [
             trap(107, 36, 125, 38, [(90, 50, 'k'), (143, 50, 'k'), (94, 29, 's'), (138, 29, 's')]),
             trap(189, 18, 195, 20, [(160, 20, 'n'), (168, 20, 'e'), (184, 20, 'k')], 'Засада!'),
-            trap(166, 48, 170, 50, [(156, 50, 'n'), (174, 47, 'v')]),
+            trap(166, 48, 170, 50, [(156, 50, 'n'), (174, 47, 'o')]),
         ],
     }, m)
 
@@ -631,6 +719,8 @@ def e1m6():
     level({
         'id': 'e1m6', 'name': 'E1M6', 'title': 'Дом Хтона', 'theme': 'elder', 'episode': 1, 'next': 'e2m1', 'finale': 'e1', 'music': 36.7,
         'bossButtons': True, 'skyTheme': 'elder',
+        # за дверью арены — появление Хтона; лава поднимается по всей арене до решётки зала руны
+        'bossIntro': [42, 26, 50, 35], 'flood': [42, 120, 36],
         'traps': [
             trap(24, 33, 28, 35, [(10, 35, 'k'), (4, 35, 'k'), (16, 35, 'd')]),
         ],
@@ -651,6 +741,8 @@ import e3_levels
 e3_levels.build(M, level)
 import e4_levels
 e4_levels.build(M, level)
+import secret_levels
+secret_levels.build(M, level)
 
 if __name__ == '__main__':
     default = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js', 'levels.js')
