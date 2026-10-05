@@ -76,7 +76,20 @@ function dressLevel(lv, ctx) {
       }
     }
   }
+  // пояс-карниз на высоте пяти клеток от пола в высоких залах: делит стену, как в Quake
+  if (D.band) {
+    const rk = ramp(shade(col.rock, 1.1));
+    for (let y = 3; y < lv.h - 6; y++) {
+      for (let x = 1; x < lv.w - 1; x++) {
+        if (!open(x, y) || !open(x, y - 1) || !open(x, y - 2) || !solid(x, y + 5)) continue;
+        let ok = true;
+        for (let i = 1; i <= 4; i++) if (!open(x, y + i)) { ok = false; break; }
+        if (ok) drawStringCourse(ctx, x * TILE, y * TILE + 9, D.band, rk, x);
+      }
+    }
+  }
   dressArchitecture(lv, ctx, D, col, { free, open, solid, take, spaced });
+  dressInterior(lv, ctx, theme, col, { free, open, solid, take, spaced, busy: (x, y) => busy.has(x + ',' + y) });
   for (let y = 1; y < lv.h - 1; y++) {
     for (let x = 1; x < lv.w - 1; x++) {
       if (!free(x, y)) continue;
@@ -400,6 +413,27 @@ function drawSkull(ctx, x, bottom, k) {
   ctx.fillStyle = '#1a1612'; ctx.fillRect(x + 2, bottom - 3, 1, 1); ctx.fillRect(x + 1, bottom - 1, 3, 1);
   if (k > 0.4) { ctx.fillStyle = '#7a7262'; ctx.fillRect(x - 5, bottom - 1, 5, 1); ctx.fillRect(x + 5, bottom - 2, 1, 2); ctx.fillRect(x + 4, bottom - 1, 4, 1); }
 }
+// Пояс-карниз: каменная тяга с тенью снизу или стальной лоток с болтами (база).
+function drawStringCourse(ctx, px, y, style, rk, x) {
+  const f = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  if (style === 'metal') {
+    // стальной лоток вровень со стеной: тёмный шов сверху, болты, светлая нижняя кромка
+    f(px, y, TILE, 1, 'rgba(0,0,0,0.5)'); f(px, y + 1, TILE, 3, 'rgba(40,42,42,0.7)'); f(px, y + 4, TILE, 1, 'rgba(140,140,130,0.35)');
+    if (x % 2 === 0) { f(px + 3, y + 2, 1, 1, '#8a8a84'); f(px + 11, y + 2, 1, 1, '#8a8a84'); }
+    return;
+  }
+  // утопленная бороздка, а не выступ: сверху тень, снизу светлая кромка — чтобы пояс
+  // не читался как уступ, на который можно встать
+  ctx.globalAlpha = 0.55;
+  f(px, y, TILE, 1, rk[0]);
+  f(px, y + 1, TILE, 3, rk[1]);
+  f(px, y + 4, TILE, 1, rk[3]);
+  if (x % 2 === 0) f(px + 15, y + 1, 1, 3, rk[0]);   // швы между блоками
+  ctx.globalAlpha = 1;
+  if (style === 'skulls' && x % 3 === 0) drawSkull(ctx, px + 5, y + 4, 0.3);
+  if (style === 'rune' && x % 4 === 0) { f(px + 6, y + 1, 3, 2, rk[0]); f(px + 7, y + 1, 1, 2, rk[4]); }
+}
+
 // --- большая архитектура: окна, вентиляторы, ниши ---
 // Сначала крупное (ему нужна свободная стена), потом мелочь заполняет остальное.
 function dressArchitecture(lv, ctx, D, col, h) {

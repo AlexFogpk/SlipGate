@@ -984,6 +984,7 @@ class Level {
     const WIN = { night: [[0.55, 0.65, 1], 0.35], stained: [[0.5, 0.55, 1], 0.5], amber: [[1, 0.72, 0.38], 0.5], hell: [[1, 0.38, 0.15], 0.6] };
     for (const w of this.archWindows || []) { const [c, i] = WIN[w.kind]; L.push({ x: w.x + 24, y: w.y + 50, r: 96, c, i }); }
     for (const f of this.fans || []) L.push({ x: f.x, y: f.y, r: 40, c: [1, 0.75, 0.45], i: 0.3 });
+    for (const l of this.setLights || []) L.push(Object.assign({}, l));
     for (const d of this.decor) {
       if (d.kind === 'torch') L.push({ x: d.x, y: d.y - 4, r: 140, c: [1.0, 0.68, 0.38], i: 1.1 });
       else if (d.kind === 'lamp') L.push({ x: d.x, y: d.y + 3, r: 175, c: [1.0, 0.95, 0.82], i: 1.15 });
@@ -1368,6 +1369,7 @@ class Level {
   drawDecorBright(ctx, cam, t) {
     drawGlyphs(ctx, cam, this.glyphs, t);
     if (this.archWindows) drawArchGlows(ctx, cam, this.archWindows, t);
+    drawInteriorGlows(ctx, cam, this.setGlows, t);
     if (this.amb && this.amb.strips) {
       for (const s of this.amb.strips) {
         const x = Math.round(s.x - cam.x), y = Math.round(s.y - cam.y);

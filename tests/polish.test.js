@@ -8,6 +8,7 @@
 // • Факелы в начале E4M1, E4M2, E4M5 висят на колоннах; огонь без опоры — парящий.
 // • Арена Вестника: трамплины к столбу выхода с обеих сторон, аптечки и тайник с мегааптечкой.
 // • В тайниках есть лечение. Большие окна, вентиляторы и ниши расставлены по темам.
+// • Интерьер: в каждом большом уровне не меньше трёх разных вещей своей темы.
 const { openGame, check, noPageErrors } = require('./lib');
 
 module.exports = {
@@ -26,7 +27,7 @@ module.exports = {
           const inRoom = (ch) => lv.spawns.some((s) => s.ch === ch && lv.hidden[s.ty * lv.w + s.tx] === i);
           if (!inRoom('Z') && !'+HM'.split('').some(inRoom)) out.noHealth.push(`${d.id} (${m.x / 16},${m.y / 16})`);
         });
-        out.arch[d.id] = { theme: d.theme, windows: lv.archWindows.length, fans: lv.fans.length };
+        out.arch[d.id] = { theme: d.theme, windows: lv.archWindows.length, fans: lv.fans.length, kinds: Object.keys(lv.interior || {}).length, pieces: Object.values(lv.interior || {}).reduce((q, n) => q + n, 0), area: lv.w * lv.h, secret: !!d.secret };
         for (const dd of lv.decor) if (dd.free && /^e4m[125]$/.test(d.id) && dd.y > lv.pxH - 30 * 16) out.free.push(`${d.id} ${dd.kind} (${Math.floor(dd.x / 16)},${Math.floor(dd.y / 16)})`);
       }
       // 2. комната со слипгейтом на E2M3: до открытия не видна и не светит, после — светит
@@ -105,9 +106,13 @@ module.exports = {
     const noWin = themed.filter(([, a]) => ['castle', 'rune', 'nether', 'crypt'].includes(a.theme) && a.windows === 0).map(([id]) => id);
     check(!noWin.length, 'нет больших окон: ' + noWin.join(', '));
     check(themed.filter(([, a]) => a.theme === 'base').every(([, a]) => a.fans > 0), 'на базе нет вентиляторов');
+    // интерьер: в каждом большом зале темы — несколько разных вещей
+    const plain = themed.filter(([, a]) => a.theme !== 'void' && !a.secret && a.area > 6000 && a.kinds < (a.theme === 'cave' ? 2 : 3)).map(([id, a]) => `${id} (${a.kinds})`);
+    check(!plain.length, 'бедный интерьер: ' + plain.join(', '));
     noPageErrors(page);
     await page.close();
     const wins = themed.reduce((s, [, a]) => s + a.windows, 0);
-    return `тайники спрятаны и с лечением, окон ${wins}, копоть ${r.scorchSame} пятно → 0`;
+    const pieces = themed.reduce((q, [, a]) => q + a.pieces, 0);
+    return `тайники спрятаны и с лечением, окон ${wins}, вещей интерьера ${pieces}, копоть ${r.scorchSame} пятно → 0`;
   },
 };
