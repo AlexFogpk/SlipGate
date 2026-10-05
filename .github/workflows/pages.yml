@@ -1,0 +1,61 @@
+name: Сайт игры
+
+# Собирает игру как приложение для телефона (node tools/build.js --app) и выкладывает
+# на GitHub Pages. Пока Pages в настройках репозитория не включён, сборка всё равно
+# прикладывается к запуску архивом «slipgate-app» — его можно выложить на любой хостинг.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      pages: ${{ steps.pages.outputs.on }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Сборка приложения
+        run: node tools/build.js --app
+      - name: Архив сборки
+        uses: actions/upload-artifact@v4
+        with:
+          name: slipgate-app
+          path: dist/app
+      - name: Включён ли GitHub Pages
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/pages" --jq .build_type > /dev/null 2>&1; then
+            echo "on=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "Pages не включён: Settings → Pages → Source: GitHub Actions. Сборка — в архиве slipgate-app."
+          fi
+      - if: steps.pages.outputs.on == 'yes'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/app
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.pages == 'yes'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

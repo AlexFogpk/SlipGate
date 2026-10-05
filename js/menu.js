@@ -34,7 +34,7 @@ const Menu = {
           const def = LEVELS.find((l) => l.id === save.id);
           list.push({ label: `Продолжить: ${def.name}, ${SKILL_NAMES[save.skill].toLowerCase()}`, note: def.title, act: () => Game.continueGame() });
         }
-        return list.concat(this.mainItems());
+        return list.concat(this.mainItems(), App.menuItems());
       }
       case 'pause': return [
         { label: 'Продолжить', act: () => Game.resume() },
@@ -233,7 +233,7 @@ const Menu = {
       }
     });
     if (this.noteT > 0 && this.note) {
-      HUD.text(ctx, this.note, W / 2, y + items.length * lh + 4 * u, 6 * u, this.capturing ? '#ffe090' : '#c8a060', 'center');
+      this.note.split('\n').forEach((line, i) => HUD.text(ctx, line, W / 2, y + items.length * lh + 4 * u + i * 9 * u, 6 * u, this.capturing ? '#ffe090' : '#c8a060', 'center'));
     } else if (this.screen === 'keys') {
       HUD.text(ctx, 'Enter — назначить клавишу. Цифры 1–8, Esc и P заняты.', W / 2, y + items.length * lh + 4 * u, 5 * u, '#806040', 'center');
     }

@@ -424,7 +424,7 @@ const HUD = {
       { name: 'full', x: W - 73 * u, y: 18 * u, r: 11 * u, label: '⛶' },
       { name: 'next', x: W - 26 * u, y: by - 86 * u, r: 15 * u, label: '⇄' },
       { name: 'jump', x: W - 32 * u, y: by - 42 * u, r: 22 * u, label: '▲' },
-    ];
+    ].filter((b) => b.name !== 'full' || !App.installed);   // с главного экрана игра и так во весь экран
   },
 
   // Сенсорные кнопки и два стика: левый — бег (вверх — прыжок, вниз — спрыгнуть),
