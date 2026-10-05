@@ -110,7 +110,7 @@ class Monster {
     if (type === 'chthon') this.y += 14; // Хтон по пояс в лаве
     if (type === 'shub') this.facing = 1;
     if (d.static) { this.counted = false; this.facing = 1; }
-    if (type === 'herald' || type === 'elder') { this.health = Math.round(d.hp * ([0.7, 1, 1.2, 1.4][Game.skill] || 1)); this.maxHealth = this.health; this.homeX = this.x; this.homeY = this.y; }
+    if (type === 'herald' || type === 'elder') { this.health = Math.round(d.hp * Game.skillBossHp()); this.maxHealth = this.health; this.homeX = this.x; this.homeY = this.y; }
     this.blinkCd = rand(1, 3);
     this.baseY = this.y;
     // у каждого стрелка своя удобная дистанция, чтобы толпа не стояла строем
@@ -256,9 +256,13 @@ class Monster {
           // гаргулья после пике взмывает вверх
           if (this.stateT > 0.75 || this.leapHit || this.blockedX) {
             this.state = 'chase'; this.vy = -150; this.vx *= 0.3;
-            this.cd = rand(...this.def.cd) * Game.skillCdScale();
+            this.cd = rand(...this.def.cd) * Game.skillLeapCd();
           }
-        } else if (this.onGround && this.stateT > 0.15) { this.state = 'chase'; this.cd = rand(...this.def.cd) * Game.skillCdScale(); }
+        } else if (this.onGround && this.stateT > 0.15) {
+          // прыжки учащаются со сложностью вдвое слабее атак — изверг, бьющий прыжком на 30–40,
+          // от полного ускорения креп вдвое сильнее остальных
+          this.state = 'chase'; this.cd = rand(...this.def.cd) * Game.skillLeapCd();
+        }
         break;
       case 'down':
         this.stateT -= dt;
@@ -845,7 +849,7 @@ class Monster {
       this.fleeT = rand(1, 1.8);
     }
     if (this.def.blink && this.blinkCd <= 0 && this.target && Math.random() < 0.45) { this.blinkNear(this.target); return; }
-    if (Math.random() < this.def.pain * Game.skillPainScale() && this.state !== 'leap' && this.state !== 'pain') {
+    if (Math.random() < Game.skillPainChance(this.def.pain) && this.state !== 'leap' && this.state !== 'pain') {
       this.state = 'pain';
       this.stateT = this.def.painT;
       Sound.play('mpain', this.cx, this.cy, { p: this.def.voice * rand(0.9, 1.1), gap: 0.1 });
@@ -978,7 +982,7 @@ class Monster {
         this.cd -= dt;
         if (this.cd <= 0 && p && p.alive && !Game.cine) {
           // чем больше ран, тем чаще бросает и тем шире залп
-          this.cd = rand(...this.def.cd) * Game.skillCdScale() * (this.hits >= 2 ? 0.7 : this.hits >= 1 ? 0.85 : 1);
+          this.cd = rand(...this.def.cd) * Game.skillBossCd() * (this.hits >= 2 ? 0.7 : this.hits >= 1 ? 0.85 : 1);
           this.throwT = 0.6;
           const volley = this.hits >= 2 ? [-70, 0, 70] : [0];
           Game.later(0.3, () => {
@@ -1095,7 +1099,7 @@ class Monster {
 
   updateElectrodes(dt) {
     const els = this.electrodes();
-    const hold = [24, 16, 13, 11][Game.skill] || 16;
+    const hold = [24, 16, 15, 14][Game.skill] || 16;   // пульты в 74 клетках друг от друга, за озером
     for (const e of els) {
       if (e.est === 'charging') {
         e.et += dt;
@@ -1156,13 +1160,13 @@ class Monster {
         if (this.phase >= 2 && p && p.alive && !Game.cine) {
           this.tentT -= dt;
           if (this.tentT <= 0) {
-            this.tentT = (this.phase >= 3 ? rand(2.2, 3.2) : rand(3.5, 5)) * Game.skillCdScale();
+            this.tentT = (this.phase >= 3 ? rand(2.2, 3.2) : rand(3.5, 5)) * Game.skillBossCd();
             Game.addStrike(p.cx + p.vx * 0.35, 'tentacle', 0.9);
             if (this.phase >= 3) Game.addStrike(p.cx + (chance(0.5) ? 1 : -1) * rand(50, 90), 'tentacle', 1.1);
           }
         }
         if (this.cd <= 0 && p && p.alive) {
-          this.cd = rand(...this.def.cd) * Game.skillCdScale() * (this.phase >= 3 ? 0.7 : 1);
+          this.cd = rand(...this.def.cd) * Game.skillBossCd() * (this.phase >= 3 ? 0.7 : 1);
           const sx = this.cx, sy = this.y + 40;
           if (Game.level.los(sx, sy, p.cx, p.cy)) {
             spawnProjectile('voreball', this, sx, sy, Math.atan2(p.cy - sy, p.cx - sx) - 0.4 + Math.random() * 0.8, { target: p });
@@ -1172,7 +1176,7 @@ class Monster {
         if (this.spawnCd <= 0) {
           // пока телепорт спит, отродья нужны герою — Мать порождает их чаще
           const gate = Game.shubGate && !Game.shubGate.open;
-          this.spawnCd = (this.phase >= 3 ? rand(2.5, 4) : gate ? rand(3.5, 5.5) : rand(5, 8)) * Game.skillCdScale();
+          this.spawnCd = (this.phase >= 3 ? rand(2.5, 4) : gate ? rand(3.5, 5.5) : rand(5, 8)) * Game.skillBossCd();
           const alive = Game.monsters.filter((m) => m.minion && m.alive).length;
           if (alive < (this.phase >= 3 ? 6 : 5)) this.spawnMinion();
         }
@@ -1329,7 +1333,7 @@ class Monster {
     if (this.storm && p && p.alive && !Game.cine) {
       this.stormT -= dt;
       if (this.stormT <= 0) {
-        this.stormT = rand(2.4, 3.2) * Game.skillCdScale();
+        this.stormT = rand(2.4, 3.2) * Game.skillBossCd();
         Game.addStrike(p.cx + p.vx * 0.5, 'bolt', 1);
         for (const s of [-1, 1]) Game.addStrike(p.cx + s * rand(50, 100), 'bolt', 1.15);
       }
@@ -1346,7 +1350,7 @@ class Monster {
     if (p) this.facing = p.cx >= this.cx ? 1 : -1;
     this.cd -= dt;
     if (this.cd > 0 || !p || !p.alive) return;
-    this.cd = rand(...this.def.cd) * Game.skillCdScale() * (shielded ? 1 : 0.75);
+    this.cd = rand(...this.def.cd) * Game.skillBossCd() * (shielded ? 1 : 0.75);
     const sx = this.cx + this.facing * 16, sy = this.y + 20;
     const aim = Math.atan2(p.cy - sy, p.cx - sx);
     this.castT = 0.4;
@@ -1638,7 +1642,7 @@ class Monster {
     if (p) this.facing = p.cx >= this.cx ? 1 : -1;
     this.cd -= dt;
     if (this.cd > 0 || !p || !p.alive) return;
-    this.cd = rand(...this.def.cd) * Game.skillCdScale() * (shielded ? 1.15 : 1 - this.rage * 0.18);
+    this.cd = rand(...this.def.cd) * Game.skillBossCd() * (shielded ? 1.15 : 1 - this.rage * 0.18);
     const sx = this.cx + this.facing * 18, sy = this.y + 26;
     const aim = Math.atan2(p.cy - sy, p.cx - sx);
     this.castT = 0.45;
