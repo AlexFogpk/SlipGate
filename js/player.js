@@ -98,8 +98,11 @@ class Player {
     }
 
     const move = Input.moveAxis();
-    const jumpHeld = Input.jumpHeld();
-    // быстрый тап по кнопке на телефоне (нажали и отпустили между кадрами) — тоже прыжок
+    // тап по кнопке прыжка на телефоне (нажали и отпустили, даже между кадрами) — полный
+    // прыжок: кнопка будто удерживается, пока герой набирает высоту
+    if (Input.buttonPresses.has('jump')) this.tapJumpT = 0.3;
+    this.tapJumpT = Math.max(0, (this.tapJumpT || 0) - dt);
+    const jumpHeld = Input.jumpHeld() || this.tapJumpT > 0;
     const jumpPressed = (jumpHeld && !this.prevJump) || Input.buttonPresses.has('jump');
     this.prevJump = jumpHeld;
     if (jumpPressed) this.jumpBuf = 0.12; else this.jumpBuf -= dt;

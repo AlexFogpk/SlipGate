@@ -32,13 +32,19 @@ module.exports = {
       const b = name[0] === 'w' ? Input.slotRects.find((r) => 'w' + r.n === name) : Input.touchButtons.find((q) => q.name === name);
       return b.w ? { x: (b.x + b.w / 2) / k, y: (b.y + b.h / 2) / k } : { x: b.x / k, y: b.y / k };
     }, name);
-    // кнопка прыжка — настоящим касанием
+    // кнопка прыжка — настоящим касанием; высоту меряем на каждом шаге игры (на медленной
+    // машине за кадр проходит несколько шагов), тап должен давать полный прыжок
     const jb = await css('jump');
-    await page.evaluate(() => { Game.paused = false; });
-    let jumped = false;
+    await page.evaluate(async () => {
+      for (let i = 0; i < 300 && !Game.player.onGround; i++) await new Promise((r) => requestAnimationFrame(r));
+      window.__y0 = Game.player.y; window.__minY = Game.player.y;
+      const update = Game.update;
+      Game.update = function (dt) { update.call(this, dt); window.__minY = Math.min(window.__minY, Game.player.y); };
+    });
     await page.touchscreen.tap(jb.x, jb.y);
-    for (let i = 0; i < 20 && !jumped; i++) { await page.waitForTimeout(16); jumped = await page.evaluate(() => Game.player.vy < -100); }
-    check(jumped, 'касание кнопки прыжка на экране с плотностью 2 не прыгает');
+    let rise = 0;
+    for (let i = 0; i < 50 && rise <= 40; i++) { await page.waitForTimeout(100); rise = await page.evaluate(() => window.__y0 - window.__minY); }
+    check(rise > 40, `тап по кнопке прыжка на экране с плотностью 2: подъём ${Math.round(rise)} px`);
     // ячейка оружия — настоящим касанием
     const ws = await css('w1');
     await page.touchscreen.tap(ws.x, ws.y);
