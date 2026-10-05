@@ -22,9 +22,15 @@ module.exports = {
       const ph = new Monster('phantom', p.cx + 90, p.y + p.h);
       Game.monsters.push(ph);
       ph.alert(p, false);
-      const x0 = ph.x;
+      // мерцание — скачок на новое место; отступ от исходной точки не годится: фантом может
+      // возникнуть рядом с ней, а за 18 попаданий он погибает
+      ph.health = 1e4;
       let blinked = false;
-      for (let i = 0; i < 20 && !blinked; i++) { ph.blinkCd = 0; ph.takeDamage(5, p, 'nail'); if (Math.abs(ph.x - x0) > 20) blinked = true; }
+      for (let i = 0; i < 20 && !blinked; i++) {
+        const bx = ph.x, by = ph.y;
+        ph.blinkCd = 0; ph.takeDamage(5, p, 'nail');
+        if (ph.x !== bx || ph.y !== by) blinked = true;
+      }
       out.blinked = blinked;
       Game.monsters = [];
       const g = new Monster('guardian', p.cx + 120, p.y + p.h);

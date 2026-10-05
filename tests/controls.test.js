@@ -31,9 +31,14 @@ module.exports = {
 
     // --- клавиши: главное меню → Настройки → Клавиши → «Прыжок» = K ---
     check(!(await page.evaluate(() => Menu.items()[0].label.startsWith('Продолжить'))), 'без сохранения есть «Продолжить»');
-    await press(page, 'ArrowDown'); await press(page, 'ArrowDown');
-    await press(page, 'Enter');
-    check(await page.evaluate(() => Menu.screen === 'options'), 'не открылись настройки');
+    // след нажатий: экран, пункт и число шагов игры — чтобы провал было видно по логу
+    await page.evaluate(() => { const u = Game.update; window.__steps = 0; Game.update = function (dt) { window.__steps++; return u.call(this, dt); };
+      window.__ev = [];
+      for (const t of ['keydown', 'keyup', 'pointermove', 'pointerdown']) window.addEventListener(t, (e) => window.__ev.push(t + ':' + (e.code || `${e.pointerType} ${e.clientX},${e.clientY}`)), true); });
+    const menuState = () => page.evaluate(() => `${Game.state}/${Menu.screen}/${Menu.sel} шагов ${window.__steps} события ${window.__ev.splice(0).join(' ') || '-'}`);
+    const trail = [await menuState()];
+    for (const key of ['ArrowDown', 'ArrowDown', 'Enter']) { await press(page, key); trail.push(key + ' → ' + await menuState()); }
+    check(await page.evaluate(() => Menu.screen === 'options'), 'не открылись настройки:\n' + trail.join('\n'));
     const keysIdx = await page.evaluate(() => Menu.items().findIndex((it) => it.label === 'Клавиши'));
     check(keysIdx >= 0, 'в настройках нет пункта «Клавиши»');
     for (let i = 0; i < keysIdx; i++) await press(page, 'ArrowDown');

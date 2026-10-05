@@ -140,11 +140,13 @@ function nudgeMonster(m, dx) {
   if (m.blockedX || !dx) return;
   const lv = Game.level, nx = m.x + dx;
   if (!lv.boxFree(nx, m.y, m.w, m.h)) return;
-  if (m.onGround && !m.def.fly) {
-    // ведущий край после сдвига должен стоять на опоре, а не над провалом или лавой
+  if (!m.def.fly) {
     const ex = dx > 0 ? nx + m.w - 2 : nx + 2;
-    const g = groundBelow(ex, m.y + m.h + 1, 1);
-    if (g === null || g === -1) return;
+    if (m.onGround) {
+      // ведущий край после сдвига должен стоять на опоре, а не над провалом или лавой
+      const g = groundBelow(ex, m.y + m.h + 1, 1);
+      if (g === null || g === -1) return;
+    } else if (dropCheck(ex, m.y + m.h) === 'hazard') return;   // в прыжке тоже не сталкиваем в лаву: порождение скачет почти без передышки
   }
   m.x = nx;
 }

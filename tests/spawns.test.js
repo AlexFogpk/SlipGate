@@ -2,7 +2,8 @@
 // Монстры не оказываются в стенах, лаве, слизи и пустоте.
 // • Точки появления: монстры карты, засад и волн арены — в свободном месте, не в жидкости,
 //   ходячие — не над лавой (Хтон по пояс в лаве и угри в воде — так задумано).
-// • Расталкивание: двое вплотную расходятся только в свободное место и не с края.
+// • Расталкивание: двое вплотную расходятся только в свободное место и не с края,
+//   в том числе когда один из них в прыжке над лавой.
 // • Живая игра: на уровнях с лавой и кислотой монстры гонятся за героем и не попадают
 //   в стены и в лаву сами (отброс от попадания — канон Quake, его не считаем).
 // • Кочки над кислотой E1M1: солдат перепрыгивает их и не падает.
@@ -51,6 +52,15 @@ module.exports = {
       Game.monsters.push(a, b);
       for (let i = 0; i < 180; i++) { Game.player.x = 4 * 16; Game.separateMonsters(1 / 60); }
       out.pushWall = [a, b].filter((m) => !lv5.boxFree(m.x, m.y, m.w, m.h)).length;
+      // в прыжке: порождение скачет над краем острова в лаве E2M3, огр вжимается в него —
+      // раньше край проверялся только у стоящих, и порождение сталкивало в лаву
+      Game.startFromSelect('e2m3', 2); Game.god = true; Game.monsters = [];
+      const sp = new Monster('spawn', 0, 0), og = new Monster('ogre', 0, 0);
+      sp.x = 60 * 16 + 1; sp.y = 46 * 16 - sp.h - 12; sp.onGround = false;
+      og.y = 46 * 16 - og.h; og.onGround = true;
+      Game.monsters.push(sp, og);
+      for (let i = 0; i < 60; i++) { og.x = sp.x + 6; Game.separateMonsters(1 / 60); }
+      out.pushAir = dropCheck(sp.cx, sp.y + sp.h);
       // 3. живая игра на уровнях с лавой и кислотой (отброс уроном — канон, его не считаем)
       let frame = 0;
       const takeDamage = Monster.prototype.takeDamage;
@@ -81,6 +91,9 @@ module.exports = {
       Game.startFromSelect('e1m1', 2); Game.god = true; Game.monsters = [];
       const p = Game.player;
       const g = new Monster('grunt', 123 * 16 + 8, 32 * 16);
+      // дистанция стрелка без случайного разброса: с дальней (до 121 px) он законно
+      // остаётся на крайней кочке и стреляет оттуда, не доходя до героя
+      g.pref = g.def.keep;
       Game.monsters.push(g); g.alert(p, false);
       out.stones = 'не дошёл';
       for (let i = 0; i < 60 * 15; i++) {
@@ -111,6 +124,7 @@ module.exports = {
     });
     check(!r.static.length, 'плохие точки появления:\n' + r.static.join('\n'));
     check(r.pushWall === 0, 'расталкивание вдавило монстра в стену');
+    check(r.pushAir === 'safe', 'расталкивание столкнуло порождение в прыжке в лаву');
     check(!r.live.wall.length, 'монстры в стенах:\n' + r.live.wall.join('\n'));
     check(r.live.liquid.length === 0, 'монстры сами зашли в лаву или слизь:\n' + r.live.liquid.join('\n'));
     check(r.stones === 'перешёл', 'кочки над кислотой: солдат ' + r.stones);
