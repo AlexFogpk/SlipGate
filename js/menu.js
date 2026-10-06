@@ -51,6 +51,7 @@ const Menu = {
         { label: 'Передний план: ' + (Game.fgOn ? 'вкл' : 'выкл'), act: () => { Game.fgOn = !Game.fgOn; Store.set('fg', Game.fgOn); } },
         { label: 'Клавиши', act: () => this.open('keys') },
         { label: 'Во весь экран', act: () => Game.toggleFullscreen() },
+        { label: 'Язык: ' + (I18N.lang === 'en' ? 'English' : 'Русский'), act: () => I18N.set(I18N.lang === 'en' ? 'ru' : 'en') },
         { label: 'Назад', act: () => this.back() },
       ];
       case 'episodes':
@@ -198,7 +199,7 @@ const Menu = {
       y += 26 * u;
     } else {
       const ep = EPISODES.find((e) => e.id === this.pendingEpisode) || EPISODES[0];
-      const hdr = { options: 'НАСТРОЙКИ', keys: 'КЛАВИШИ', episodes: 'НОВАЯ ИГРА', levelEp: 'ВЫБОР УРОВНЯ', levels: `ЭПИЗОД ${ep.id}: ${ep.title.toUpperCase()}`, skill: 'СЛОЖНОСТЬ', help: 'УПРАВЛЕНИЕ' }[this.screen];
+      const hdr = I18N.t({ options: 'НАСТРОЙКИ', keys: 'КЛАВИШИ', episodes: 'НОВАЯ ИГРА', levelEp: 'ВЫБОР УРОВНЯ', levels: `ЭПИЗОД ${ep.id}: ${ep.title.toUpperCase()}`, skill: 'СЛОЖНОСТЬ', help: 'УПРАВЛЕНИЕ' }[this.screen]);
       ctx.font = `${Math.round(Math.min(18 * u, W / 22))}px ${TITLE_FONT}`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillStyle = '#1a0e06'; ctx.fillText(hdr, W / 2 + u, y + u);
@@ -224,7 +225,7 @@ const Menu = {
       const col = it.disabled ? '#4a3a2a' : selected ? '#fff0c0' : '#c8a060';
       HUD.text(ctx, it.label, W / 2, iy, size, col, 'center');
       ctx.font = `${Math.round(size)}px ${UI_FONT}`;
-      const tw = ctx.measureText(it.label).width;
+      const tw = ctx.measureText(I18N.t(it.label)).width;
       this.hitboxes.push({ x: W / 2 - tw / 2 - 20 * u, y: iy - lh * 0.25, w: tw + 40 * u, h: lh, i });
       if (selected) {
         drawRune(ctx, W / 2 - tw / 2 - 14 * u, iy + size / 2, size * 0.7, t);

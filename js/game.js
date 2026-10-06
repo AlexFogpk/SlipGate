@@ -1344,14 +1344,15 @@ const Game = {
     ctx.fillStyle = band;
     ctx.fillRect(0, H * 0.62 - size * 0.4, W, size * 2.4);
     ctx.font = `${Math.round(size)}px ${TITLE_FONT}`;
-    const wide = ctx.measureText(card.name).width;
+    const name = I18N.t(card.name);
+    const wide = ctx.measureText(name).width;
     if (wide > W * 0.86) { size *= W * 0.86 / wide; ctx.font = `${Math.round(size)}px ${TITLE_FONT}`; }
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     const y = H * 0.62;
-    ctx.fillStyle = '#05080c'; ctx.fillText(card.name, W / 2 + size * 0.05, y + size * 0.06);
+    ctx.fillStyle = '#05080c'; ctx.fillText(name, W / 2 + size * 0.05, y + size * 0.06);
     const g = ctx.createLinearGradient(0, y, 0, y + size);
     g.addColorStop(0, card.cols[0]); g.addColorStop(0.5, card.cols[1]); g.addColorStop(1, card.cols[2]);
-    ctx.fillStyle = g; ctx.fillText(card.name, W / 2, y);
+    ctx.fillStyle = g; ctx.fillText(name, W / 2, y);
     HUD.text(ctx, sub, W / 2, y + size * 1.15, 7 * u, card.subCol, 'center');
     ctx.fillStyle = card.line;
     ctx.fillRect(W / 2 - 90 * u * a, y + size * 1.08, 180 * u * a, Math.max(1, u * 0.6));
@@ -1638,7 +1639,7 @@ const Game = {
     const size = Math.min(7 * u, W / 48);
     const chars = Math.floor(t * 38);
     let used = 0;
-    const text = FINALES[this.finaleKey] || FINALES.e1;
+    const text = (FINALES[this.finaleKey] || FINALES.e1).map((line) => I18N.t(line));
     text.forEach((line, i) => {
       const n = clamp(chars - used, 0, line.length);
       used += line.length + 4;

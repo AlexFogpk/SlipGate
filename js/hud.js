@@ -84,6 +84,7 @@ const HUD = {
   },
 
   text(ctx, str, x, y, size, color = '#e8d8b0', align = 'left', shadow = true) {
+    str = I18N.t(str);
     ctx.font = `${Math.round(size)}px ${UI_FONT}`;
     ctx.textAlign = align;
     ctx.textBaseline = 'top';
@@ -381,7 +382,7 @@ const HUD = {
     ctx.globalAlpha = 1;
     if (this.centerT > 0 && Game.state === 'playing') {
       ctx.globalAlpha = clamp(this.centerT * 2, 0, 1);
-      const lines = this.centerText.split('\n');
+      const lines = this.centerText.split('\n').map((l) => I18N.t(l));
       const size = Math.min(9 * u, (W * 0.9) / Math.max(...lines.map((l) => l.length)));
       lines.forEach((l, i) => this.text(ctx, l, W / 2, H * 0.3 + i * size * 1.5, size, '#f0d898', 'center'));
       ctx.globalAlpha = 1;
@@ -489,6 +490,7 @@ const HUD = {
 
   // Таблица уровня (Tab) и итоги (антракт).
   stats(ctx, W, H, u, title, rows, footer, t) {
+    title = I18N.t(title);
     ctx.fillStyle = 'rgba(12,8,5,0.82)';
     const pw = Math.min(W - 16 * u, 300 * u), ph = (46 + rows.length * 18) * u + (footer ? 16 * u : 0);
     const px = (W - pw) / 2, py = (H - ph) / 2 - 10 * u;
