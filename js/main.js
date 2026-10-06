@@ -2,6 +2,7 @@
 // Точка входа.
 
 window.addEventListener('load', () => {
+  I18N.init();
   const canvas = document.getElementById('game');
   Input.init(canvas);
   try {

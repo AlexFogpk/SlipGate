@@ -19,7 +19,13 @@ async function launchBrowser() {
   const { chromium } = loadPlaywright();
   const opts = { args: ['--autoplay-policy=no-user-gesture-required'] };
   if (process.env.CHROMIUM_PATH) opts.executablePath = process.env.CHROMIUM_PATH;
-  return chromium.launch(opts);
+  const browser = await chromium.launch(opts);
+  // Игра выбирает язык по браузеру; тесты проверяют русский интерфейс, если не попросили другой.
+  for (const fn of ['newContext', 'newPage']) {
+    const orig = browser[fn].bind(browser);
+    browser[fn] = (o = {}) => orig(Object.assign({ locale: 'ru-RU' }, o));
+  }
+  return browser;
 }
 
 // Открывает игру в новой вкладке и собирает ошибки страницы в page.errors.

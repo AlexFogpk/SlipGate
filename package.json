@@ -2,6 +2,7 @@
   "name": "slipgate",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "SLIPGATE — двумерный шутер в духе Quake 1 на чистом JavaScript и Canvas 2D",
   "scripts": {
     "test": "npm run test:levels && npm run test:game",
